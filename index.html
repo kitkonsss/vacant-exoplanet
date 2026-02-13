@@ -1,0 +1,838 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gold Vol2Vol — Intraday Expected Range & OI</title>
+    <script src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        :root {
+            --bg-primary: #0a0a0f;
+            --bg-secondary: #111118;
+            --bg-panel: #16161e;
+            --border: #2a2a3a;
+            --text-primary: #e4e4ef;
+            --text-secondary: #8888a0;
+            --text-muted: #555570;
+            --gold: #f0b90b;
+            --gold-dim: #b8890a;
+            --orange: #ff9800;
+            --orange-dim: rgba(255, 152, 0, 0.25);
+            --cyan: #00bcd4;
+            --pink: #ff4081;
+            --green: #4caf50;
+            --red: #f44336;
+            --call-color: #4fc3f7;
+            --put-color: #ffb74d;
+        }
+
+        body {
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            font-family: 'Segoe UI', 'Inter', -apple-system, sans-serif;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        /* Header */
+        .header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 8px 16px;
+            background: var(--bg-secondary);
+            border-bottom: 1px solid var(--border);
+            flex-shrink: 0;
+        }
+
+        .header-left {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+        }
+
+        .logo {
+            font-size: 18px;
+            font-weight: 700;
+            color: var(--gold);
+            letter-spacing: 1px;
+        }
+
+        .contract-info {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            font-size: 13px;
+        }
+
+        .contract-name {
+            color: var(--text-primary);
+            font-weight: 600;
+            font-size: 15px;
+        }
+
+        .contract-detail {
+            color: var(--text-secondary);
+        }
+
+        .price-display {
+            font-size: 20px;
+            font-weight: 700;
+            color: var(--gold);
+        }
+
+        .price-change {
+            font-size: 13px;
+            font-weight: 600;
+            padding: 2px 8px;
+            border-radius: 4px;
+        }
+
+        .price-change.up { color: var(--green); background: rgba(76, 175, 80, 0.12); }
+        .price-change.down { color: var(--red); background: rgba(244, 67, 54, 0.12); }
+
+        .header-right {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .refresh-btn {
+            background: rgba(240, 185, 11, 0.1);
+            border: 1px solid rgba(240, 185, 11, 0.3);
+            color: var(--gold);
+            padding: 6px 14px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 12px;
+            font-weight: 600;
+            transition: all 0.2s;
+        }
+
+        .refresh-btn:hover {
+            background: rgba(240, 185, 11, 0.2);
+            border-color: var(--gold);
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--green);
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.4; }
+        }
+
+        .last-update {
+            font-size: 11px;
+            color: var(--text-muted);
+        }
+
+        /* Main Area */
+        .main-container {
+            display: flex;
+            flex: 1;
+            overflow: hidden;
+        }
+
+        /* OI Panel (Left Side) */
+        .oi-panel {
+            width: 220px;
+            background: var(--bg-secondary);
+            border-right: 1px solid var(--border);
+            display: flex;
+            flex-direction: column;
+            flex-shrink: 0;
+        }
+
+        .oi-panel-header {
+            padding: 10px 12px;
+            border-bottom: 1px solid var(--border);
+            font-size: 12px;
+            font-weight: 700;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .oi-legend {
+            display: flex;
+            gap: 10px;
+            font-size: 10px;
+            font-weight: 500;
+        }
+
+        .oi-legend-call { color: var(--call-color); }
+        .oi-legend-put { color: var(--put-color); }
+
+        .oi-container {
+            flex: 1;
+            overflow-y: auto;
+            padding: 4px 0;
+        }
+
+        .oi-container::-webkit-scrollbar { width: 4px; }
+        .oi-container::-webkit-scrollbar-track { background: var(--bg-secondary); }
+        .oi-container::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+        .oi-row {
+            display: flex;
+            align-items: center;
+            padding: 2px 8px;
+            height: 22px;
+            font-size: 11px;
+            transition: background 0.15s;
+            cursor: default;
+        }
+
+        .oi-row:hover {
+            background: rgba(255, 255, 255, 0.03);
+        }
+
+        .oi-row.round-number {
+            background: rgba(255, 152, 0, 0.05);
+        }
+
+        .oi-strike {
+            width: 48px;
+            text-align: right;
+            color: var(--text-secondary);
+            font-weight: 500;
+            font-size: 10px;
+            flex-shrink: 0;
+        }
+
+        .oi-strike.round-number {
+            color: var(--orange);
+            font-weight: 700;
+        }
+
+        .oi-bars-container {
+            flex: 1;
+            display: flex;
+            align-items: center;
+            gap: 1px;
+            margin-left: 6px;
+            height: 14px;
+        }
+
+        .oi-bar {
+            height: 100%;
+            min-width: 0;
+            border-radius: 1px;
+            transition: width 0.3s ease;
+        }
+
+        .oi-bar-call { background: var(--call-color); opacity: 0.8; }
+        .oi-bar-put { background: var(--put-color); opacity: 0.8; }
+
+        .oi-total {
+            width: 38px;
+            text-align: right;
+            font-size: 10px;
+            color: var(--text-muted);
+            flex-shrink: 0;
+            margin-left: 4px;
+        }
+
+        /* Chart Area */
+        .chart-area {
+            flex: 1;
+            position: relative;
+            background: var(--bg-primary);
+        }
+
+        #chart-container {
+            width: 100%;
+            height: 100%;
+        }
+
+        /* Info Panel (Bottom) */
+        .info-panel {
+            display: flex;
+            align-items: center;
+            padding: 6px 16px;
+            background: var(--bg-secondary);
+            border-top: 1px solid var(--border);
+            flex-shrink: 0;
+            gap: 24px;
+            font-size: 12px;
+        }
+
+        .info-item {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .info-label {
+            color: var(--text-muted);
+        }
+
+        .info-value {
+            color: var(--text-primary);
+            font-weight: 600;
+        }
+
+        .info-value.gold { color: var(--gold); }
+        .info-value.cyan { color: var(--cyan); }
+        .info-value.pink { color: var(--pink); }
+
+        /* DTE badge */
+        .dte-badge {
+            background: rgba(0, 188, 212, 0.12);
+            color: var(--cyan);
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-weight: 700;
+            font-size: 12px;
+        }
+
+        /* Loading overlay */
+        .loading-overlay {
+            position: fixed;
+            inset: 0;
+            background: rgba(10, 10, 15, 0.92);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+            transition: opacity 0.4s;
+        }
+
+        .loading-overlay.hidden {
+            opacity: 0;
+            pointer-events: none;
+        }
+
+        .spinner {
+            width: 48px;
+            height: 48px;
+            border: 3px solid var(--border);
+            border-top-color: var(--gold);
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+        }
+
+        @keyframes spin { to { transform: rotate(360deg); } }
+
+        .loading-text {
+            margin-top: 16px;
+            color: var(--text-secondary);
+            font-size: 14px;
+        }
+
+        /* Tooltip for chart price lines */
+        .strike-tooltip {
+            position: absolute;
+            background: var(--bg-panel);
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            padding: 4px 8px;
+            font-size: 11px;
+            color: var(--text-primary);
+            pointer-events: none;
+            white-space: nowrap;
+            z-index: 10;
+        }
+    </style>
+</head>
+<body>
+
+    <!-- Loading Overlay -->
+    <div class="loading-overlay" id="loading">
+        <div class="spinner"></div>
+        <div class="loading-text">Fetching Vol2Vol Data...</div>
+    </div>
+
+    <!-- Header -->
+    <div class="header">
+        <div class="header-left">
+            <div class="logo">⚡ Vol2Vol</div>
+            <div class="contract-info">
+                <span class="contract-name" id="contractName">Gold (GC)</span>
+                <span class="contract-detail" id="contractDetail">Loading...</span>
+                <span class="price-display" id="priceDisplay">—</span>
+                <span class="price-change" id="priceChange">—</span>
+            </div>
+        </div>
+        <div class="header-right">
+            <span class="dte-badge" id="dteBadge">DTE —</span>
+            <button class="refresh-btn" onclick="refreshData()">⟳ Refresh</button>
+            <div class="status-dot" id="statusDot"></div>
+            <span class="last-update" id="lastUpdate">—</span>
+        </div>
+    </div>
+
+    <!-- Main Area -->
+    <div class="main-container">
+        <!-- OI Panel Left -->
+        <div class="oi-panel">
+            <div class="oi-panel-header">
+                <span>Open Interest</span>
+                <div class="oi-legend">
+                    <span class="oi-legend-call">● Call</span>
+                    <span class="oi-legend-put">● Put</span>
+                </div>
+            </div>
+            <div class="oi-container" id="oiContainer"></div>
+        </div>
+
+        <!-- Chart -->
+        <div class="chart-area">
+            <div id="chart-container"></div>
+        </div>
+    </div>
+
+    <!-- Info Panel -->
+    <div class="info-panel">
+        <div class="info-item">
+            <span class="info-label">Vol Settle (ATM):</span>
+            <span class="info-value cyan" id="volSettleATM">—</span>
+        </div>
+        <div class="info-item">
+            <span class="info-label">Expected Range:</span>
+            <span class="info-value gold" id="expectedRange">—</span>
+        </div>
+        <div class="info-item">
+            <span class="info-label">Max OI Strike:</span>
+            <span class="info-value pink" id="maxOIStrike">—</span>
+        </div>
+        <div class="info-item">
+            <span class="info-label">Total Call OI:</span>
+            <span class="info-value" id="totalCallOI">—</span>
+        </div>
+        <div class="info-item">
+            <span class="info-label">Total Put OI:</span>
+            <span class="info-value" id="totalPutOI">—</span>
+        </div>
+        <div class="info-item">
+            <span class="info-label">P/C Ratio:</span>
+            <span class="info-value" id="pcRatio">—</span>
+        </div>
+    </div>
+
+    <script>
+    // ========== CONFIGURATION ==========
+    const CONFIG = {
+        intradayUrl: 'https://raw.githubusercontent.com/pageth/Vol2VolData/main/IntradayData.txt',
+        oiUrl: 'https://raw.githubusercontent.com/pageth/Vol2VolData/main/OIData.txt',
+        roundNumberInterval: 25,      // Draw lines every $25
+        refreshIntervalMs: 60000,     // Auto-refresh every 60 seconds
+        visibleStrikeRange: 300,      // Show strikes within ±$300 of underlying
+        oiBarMaxWidth: 120,           // Max pixel width for OI bars
+    };
+
+    // ========== STATE ==========
+    let state = {
+        intradayData: null,
+        oiData: null,
+        chart: null,
+        candleSeries: null,
+        priceLines: [],
+        refreshTimer: null,
+    };
+
+    // ========== DATA PARSING ==========
+    function parseVol2VolData(text) {
+        const lines = text.trim().split('\n');
+        if (lines.length < 2) return null;
+
+        // Parse header: "Gold (OG|GC) OG2G6 (0.64 DTE) vs 4999.8 (+51.4) - Intraday Volume"
+        const header = lines[0];
+        const dteMatch = header.match(/\(([\d.]+)\s*DTE\)/);
+        const priceMatch = header.match(/vs\s+([\d.]+)/);
+        const changeMatch = header.match(/\(([+-]?[\d.]+)\)/g);
+        const typeMatch = header.match(/- (.+)$/);
+        const contractMatch = header.match(/\)\s+(\S+)\s+\(/);
+
+        const dte = dteMatch ? parseFloat(dteMatch[1]) : 0;
+        const underlying = priceMatch ? parseFloat(priceMatch[1]) : 0;
+        // Get the last parenthetical match for the price change (skip DTE match)
+        let change = 0;
+        if (changeMatch && changeMatch.length >= 2) {
+            const lastMatch = changeMatch[changeMatch.length - 1];
+            change = parseFloat(lastMatch.replace(/[()]/g, ''));
+        }
+        const dataType = typeMatch ? typeMatch[1].trim() : 'Unknown';
+        const contract = contractMatch ? contractMatch[1] : '';
+
+        // Parse data rows
+        const strikes = [];
+        for (let i = 2; i < lines.length; i++) {
+            const parts = lines[i].split(',');
+            if (parts.length >= 4) {
+                strikes.push({
+                    strike: parseFloat(parts[0]),
+                    call: parseInt(parts[1]),
+                    put: parseInt(parts[2]),
+                    volSettle: parseFloat(parts[3]),
+                    total: parseInt(parts[1]) + parseInt(parts[2]),
+                });
+            }
+        }
+
+        return { header, dte, underlying, change, dataType, contract, strikes };
+    }
+
+    // ========== FETCH DATA ==========
+    async function fetchData() {
+        try {
+            const [intradayRes, oiRes] = await Promise.all([
+                fetch(CONFIG.intradayUrl + '?t=' + Date.now()),
+                fetch(CONFIG.oiUrl + '?t=' + Date.now()),
+            ]);
+
+            if (!intradayRes.ok || !oiRes.ok) throw new Error('Fetch failed');
+
+            const intradayText = await intradayRes.text();
+            const oiText = await oiRes.text();
+
+            state.intradayData = parseVol2VolData(intradayText);
+            state.oiData = parseVol2VolData(oiText);
+
+            return true;
+        } catch (err) {
+            console.error('Failed to fetch data:', err);
+            return false;
+        }
+    }
+
+    // ========== GENERATE SAMPLE CANDLE DATA ==========
+    // Generate sample gold price candles around the underlying price
+    function generateSampleCandles(underlying) {
+        const candles = [];
+        const now = new Date();
+        const baseTime = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0);
+
+        // Generate 5 days of hourly candles
+        for (let d = -4; d <= 0; d++) {
+            for (let h = 0; h < 24; h++) {
+                const time = new Date(baseTime);
+                time.setDate(time.getDate() + d);
+                time.setHours(h);
+
+                const dayOffset = d * 15 + (Math.random() - 0.5) * 30;
+                const hourNoise = (Math.random() - 0.5) * 20;
+                const base = underlying + dayOffset + hourNoise;
+                const range = 5 + Math.random() * 15;
+
+                const open = base + (Math.random() - 0.5) * range;
+                const close = base + (Math.random() - 0.5) * range;
+                const high = Math.max(open, close) + Math.random() * range * 0.5;
+                const low = Math.min(open, close) - Math.random() * range * 0.5;
+
+                candles.push({
+                    time: Math.floor(time.getTime() / 1000),
+                    open: Math.round(open * 10) / 10,
+                    high: Math.round(high * 10) / 10,
+                    low: Math.round(low * 10) / 10,
+                    close: Math.round(close * 10) / 10,
+                });
+            }
+        }
+
+        return candles;
+    }
+
+    // ========== CHART SETUP ==========
+    function createChart() {
+        const container = document.getElementById('chart-container');
+
+        state.chart = LightweightCharts.createChart(container, {
+            layout: {
+                background: { type: 'solid', color: '#0a0a0f' },
+                textColor: '#8888a0',
+                fontFamily: "'Segoe UI', 'Inter', sans-serif",
+                fontSize: 11,
+            },
+            grid: {
+                vertLines: { color: 'rgba(42, 42, 58, 0.5)' },
+                horzLines: { color: 'rgba(42, 42, 58, 0.5)' },
+            },
+            crosshair: {
+                mode: LightweightCharts.CrosshairMode.Normal,
+                vertLine: { color: 'rgba(240, 185, 11, 0.3)', labelBackgroundColor: '#2a2a3a' },
+                horzLine: { color: 'rgba(240, 185, 11, 0.3)', labelBackgroundColor: '#2a2a3a' },
+            },
+            rightPriceScale: {
+                borderColor: '#2a2a3a',
+                scaleMargins: { top: 0.05, bottom: 0.05 },
+            },
+            timeScale: {
+                borderColor: '#2a2a3a',
+                timeVisible: true,
+                secondsVisible: false,
+            },
+            handleScroll: true,
+            handleScale: true,
+        });
+
+        state.candleSeries = state.chart.addCandlestickSeries({
+            upColor: '#4caf50',
+            downColor: '#f44336',
+            borderUpColor: '#4caf50',
+            borderDownColor: '#f44336',
+            wickUpColor: '#4caf50',
+            wickDownColor: '#f44336',
+        });
+
+        // Auto-resize
+        const resizeObserver = new ResizeObserver(() => {
+            state.chart.applyOptions({
+                width: container.clientWidth,
+                height: container.clientHeight,
+            });
+        });
+        resizeObserver.observe(container);
+    }
+
+    // ========== DRAW ROUND NUMBER LINES ==========
+    function drawRoundNumberLines(underlying, intradayData) {
+        // Clear existing price lines
+        state.priceLines.forEach(pl => {
+            try { state.candleSeries.removePriceLine(pl); } catch(e) {}
+        });
+        state.priceLines = [];
+
+        // Build a map of vol settle by strike from intraday data
+        const volSettleMap = {};
+        if (intradayData && intradayData.strikes) {
+            intradayData.strikes.forEach(s => {
+                volSettleMap[s.strike] = s.volSettle;
+            });
+        }
+
+        const dte = intradayData ? intradayData.dte : 1;
+        const interval = CONFIG.roundNumberInterval;
+        const minStrike = underlying - CONFIG.visibleStrikeRange;
+        const maxStrike = underlying + CONFIG.visibleStrikeRange;
+
+        // Find first round number above minStrike
+        let startStrike = Math.ceil(minStrike / interval) * interval;
+
+        for (let strike = startStrike; strike <= maxStrike; strike += interval) {
+            // Calculate expected range from vol settle
+            let volSettle = volSettleMap[strike] || 0;
+
+            // If exact strike not found, interpolate from nearest
+            if (volSettle === 0) {
+                const lower = Math.floor(strike / 5) * 5;
+                const upper = lower + 5;
+                const lowerVS = volSettleMap[lower] || 0;
+                const upperVS = volSettleMap[upper] || 0;
+                if (lowerVS > 0 && upperVS > 0) {
+                    volSettle = lowerVS + (upperVS - lowerVS) * ((strike - lower) / 5);
+                } else {
+                    volSettle = lowerVS || upperVS;
+                }
+            }
+
+            // Expected move = underlying × volSettle × sqrt(DTE/365) 
+            const expectedMove = underlying * volSettle * Math.sqrt(dte / 365);
+            const expectedLevel = underlying - expectedMove;
+
+            // Determine color based on position relative to underlying
+            const isAbove = strike >= underlying;
+            const distance = Math.abs(strike - underlying);
+            const maxDist = CONFIG.visibleStrikeRange;
+            const alpha = Math.max(0.2, 1 - distance / maxDist * 0.6);
+
+            const lineColor = `rgba(255, 152, 0, ${alpha.toFixed(2)})`;
+
+            let title = `${strike}`;
+            if (volSettle > 0) {
+                title += ` (${expectedLevel.toFixed(1)})`;
+            }
+
+            const priceLine = state.candleSeries.createPriceLine({
+                price: strike,
+                color: lineColor,
+                lineWidth: 1,
+                lineStyle: LightweightCharts.LineStyle.Dashed,
+                axisLabelVisible: true,
+                title: title,
+            });
+
+            state.priceLines.push(priceLine);
+        }
+    }
+
+    // ========== RENDER OI PANEL ==========
+    function renderOIPanel(oiData) {
+        const container = document.getElementById('oiContainer');
+        if (!oiData || !oiData.strikes) {
+            container.innerHTML = '<div style="padding:16px;color:var(--text-muted);text-align:center">No OI data</div>';
+            return;
+        }
+
+        const underlying = oiData.underlying;
+        const interval = CONFIG.roundNumberInterval;
+
+        // Filter strikes within visible range
+        const filtered = oiData.strikes.filter(s =>
+            s.strike >= underlying - CONFIG.visibleStrikeRange &&
+            s.strike <= underlying + CONFIG.visibleStrikeRange &&
+            s.total > 0
+        );
+
+        // Find max OI for scaling
+        const maxTotal = Math.max(...filtered.map(s => s.total), 1);
+        const maxSingle = Math.max(...filtered.map(s => Math.max(s.call, s.put)), 1);
+
+        // Sort by strike descending (high prices at top)
+        filtered.sort((a, b) => b.strike - a.strike);
+
+        let html = '';
+        for (const s of filtered) {
+            const isRound = s.strike % interval === 0;
+            const roundClass = isRound ? 'round-number' : '';
+
+            const callWidth = Math.max(0, (s.call / maxSingle) * CONFIG.oiBarMaxWidth);
+            const putWidth = Math.max(0, (s.put / maxSingle) * CONFIG.oiBarMaxWidth);
+
+            html += `
+                <div class="oi-row ${roundClass}">
+                    <span class="oi-strike ${roundClass}">${s.strike}</span>
+                    <div class="oi-bars-container">
+                        <div class="oi-bar oi-bar-call" style="width:${callWidth}px" title="Call: ${s.call}"></div>
+                        <div class="oi-bar oi-bar-put" style="width:${putWidth}px" title="Put: ${s.put}"></div>
+                    </div>
+                    <span class="oi-total">${s.total}</span>
+                </div>
+            `;
+        }
+
+        container.innerHTML = html;
+    }
+
+    // ========== UPDATE HEADER & INFO ==========
+    function updateUI(intradayData, oiData) {
+        const data = oiData || intradayData;
+        if (!data) return;
+
+        // Header
+        document.getElementById('contractName').textContent = 'Gold (GC)';
+        document.getElementById('contractDetail').textContent = data.contract || '';
+        document.getElementById('priceDisplay').textContent = data.underlying.toFixed(1);
+
+        const changeEl = document.getElementById('priceChange');
+        const sign = data.change >= 0 ? '+' : '';
+        changeEl.textContent = `${sign}${data.change.toFixed(1)}`;
+        changeEl.className = `price-change ${data.change >= 0 ? 'up' : 'down'}`;
+
+        document.getElementById('dteBadge').textContent = `DTE ${data.dte.toFixed(2)}`;
+        document.getElementById('lastUpdate').textContent = `Updated: ${new Date().toLocaleTimeString()}`;
+
+        // Info panel
+        if (intradayData && intradayData.strikes) {
+            // Find ATM vol settle (closest to underlying)
+            let atmStrike = intradayData.strikes.reduce((prev, curr) =>
+                Math.abs(curr.strike - data.underlying) < Math.abs(prev.strike - data.underlying) ? curr : prev
+            );
+            if (atmStrike.volSettle > 0) {
+                document.getElementById('volSettleATM').textContent = (atmStrike.volSettle * 100).toFixed(2) + '%';
+
+                // Expected range
+                const er = data.underlying * atmStrike.volSettle * Math.sqrt(data.dte / 365);
+                document.getElementById('expectedRange').textContent = `±${er.toFixed(1)} ($${(data.underlying - er).toFixed(0)} - $${(data.underlying + er).toFixed(0)})`;
+            }
+        }
+
+        if (oiData && oiData.strikes) {
+            // Max OI strike
+            const maxOI = oiData.strikes.reduce((prev, curr) => curr.total > prev.total ? curr : prev);
+            document.getElementById('maxOIStrike').textContent = `${maxOI.strike} (${maxOI.total})`;
+
+            // Totals
+            let totalCall = 0, totalPut = 0;
+            oiData.strikes.forEach(s => { totalCall += s.call; totalPut += s.put; });
+            document.getElementById('totalCallOI').textContent = totalCall.toLocaleString();
+            document.getElementById('totalPutOI').textContent = totalPut.toLocaleString();
+
+            const ratio = totalCall > 0 ? (totalPut / totalCall).toFixed(2) : '—';
+            document.getElementById('pcRatio').textContent = ratio;
+        }
+    }
+
+    // ========== REFRESH ==========
+    async function refreshData() {
+        const btn = document.querySelector('.refresh-btn');
+        btn.textContent = '⟳ Loading...';
+        btn.disabled = true;
+
+        const success = await fetchData();
+
+        if (success) {
+            const underlying = state.oiData?.underlying || state.intradayData?.underlying || 5000;
+
+            // Update candle data
+            const candles = generateSampleCandles(underlying);
+            state.candleSeries.setData(candles);
+
+            // Draw lines
+            drawRoundNumberLines(underlying, state.intradayData);
+
+            // Render OI
+            renderOIPanel(state.oiData);
+
+            // Update UI
+            updateUI(state.intradayData, state.oiData);
+        }
+
+        btn.textContent = '⟳ Refresh';
+        btn.disabled = false;
+    }
+
+    // ========== INIT ==========
+    async function init() {
+        createChart();
+
+        const success = await fetchData();
+
+        if (success) {
+            const underlying = state.oiData?.underlying || state.intradayData?.underlying || 5000;
+
+            // Load sample candles
+            const candles = generateSampleCandles(underlying);
+            state.candleSeries.setData(candles);
+
+            // Draw round number lines
+            drawRoundNumberLines(underlying, state.intradayData);
+
+            // Render OI panel
+            renderOIPanel(state.oiData);
+
+            // Update UI
+            updateUI(state.intradayData, state.oiData);
+
+            // Focus chart around underlying
+            state.chart.priceScale('right').applyOptions({
+                autoScale: true,
+            });
+        }
+
+        // Hide loading
+        document.getElementById('loading').classList.add('hidden');
+
+        // Auto-refresh timer
+        state.refreshTimer = setInterval(refreshData, CONFIG.refreshIntervalMs);
+    }
+
+    // Start
+    init();
+    </script>
+</body>
+</html>
