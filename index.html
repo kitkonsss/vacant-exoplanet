@@ -188,19 +188,21 @@
 
         /* ===== MAIN LAYOUT ===== */
         .main-container {
-            display: flex;
+            display: grid;
+            grid-template-columns: 260px 1fr 200px;
             flex: 1;
             overflow: hidden;
+            min-height: 0;
         }
 
         /* ===== OI PANEL (LEFT) ===== */
         .oi-panel {
-            width: 260px;
             background: var(--bg-secondary);
             border-right: 1px solid var(--border);
             display: flex;
             flex-direction: column;
-            flex-shrink: 0;
+            overflow: hidden;
+            z-index: 10;
         }
 
         .oi-panel-header {
@@ -354,34 +356,37 @@
             font-weight: 700;
         }
 
-        /* ===== CHART + LEVELS ===== */
-        .chart-and-levels {
-            flex: 1;
-            display: flex;
-            flex-direction: column;
+        /* ===== CHART AREA ===== */
+        .chart-area {
+            position: relative;
             overflow: hidden;
+            background: var(--bg-primary);
+            min-width: 0;
+            min-height: 0;
         }
 
-        .chart-area {
-            flex: 1;
-            position: relative;
-            background: var(--bg-primary);
+        .chart-area .tradingview-widget-container,
+        .chart-area .tradingview-widget-container__widget {
+            position: absolute !important;
+            inset: 0 !important;
+            width: 100% !important;
+            height: 100% !important;
         }
 
         .chart-area iframe {
-            width: 100%;
-            height: 100%;
-            border: none;
+            width: 100% !important;
+            height: 100% !important;
+            border: none !important;
         }
 
         /* ===== LEVELS PANEL (RIGHT) ===== */
         .levels-panel {
-            width: 200px;
             background: var(--bg-secondary);
             border-left: 1px solid var(--border);
             display: flex;
             flex-direction: column;
-            flex-shrink: 0;
+            overflow: hidden;
+            z-index: 10;
         }
 
         .levels-header {
