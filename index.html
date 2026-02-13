@@ -18,9 +18,7 @@
             --bg-primary: #0c0c14;
             --bg-secondary: #12121c;
             --bg-panel: #181824;
-            --bg-card: #1e1e2e;
             --border: #2a2a3e;
-            --border-glow: rgba(240, 185, 11, 0.15);
             --text-primary: #e8e8f0;
             --text-secondary: #9090a8;
             --text-muted: #606078;
@@ -33,9 +31,7 @@
             --green: #00e676;
             --red: #ff1744;
             --call-color: #4fc3f7;
-            --call-bg: rgba(79, 195, 247, 0.12);
             --put-color: #ffb74d;
-            --put-bg: rgba(255, 183, 77, 0.12);
         }
 
         body {
@@ -54,9 +50,10 @@
             align-items: center;
             justify-content: space-between;
             padding: 10px 20px;
-            background: linear-gradient(180deg, var(--bg-secondary) 0%, var(--bg-primary) 100%);
+            background: var(--bg-secondary);
             border-bottom: 1px solid var(--border);
             flex-shrink: 0;
+            z-index: 100;
         }
 
         .header-left {
@@ -70,8 +67,8 @@
             font-weight: 800;
             background: linear-gradient(135deg, var(--gold), #ffd54f);
             -webkit-background-clip: text;
+            background-clip: text;
             -webkit-text-fill-color: transparent;
-            letter-spacing: 0.5px;
         }
 
         .contract-info {
@@ -123,7 +120,7 @@
         }
 
         .dte-badge {
-            background: linear-gradient(135deg, rgba(0, 229, 255, 0.12), rgba(0, 229, 255, 0.05));
+            background: rgba(0, 229, 255, 0.12);
             border: 1px solid rgba(0, 229, 255, 0.25);
             color: var(--cyan);
             padding: 4px 12px;
@@ -133,7 +130,7 @@
         }
 
         .refresh-btn {
-            background: linear-gradient(135deg, rgba(240, 185, 11, 0.15), rgba(240, 185, 11, 0.05));
+            background: rgba(240, 185, 11, 0.12);
             border: 1px solid rgba(240, 185, 11, 0.3);
             color: var(--gold);
             padding: 7px 16px;
@@ -142,14 +139,12 @@
             font-size: 12px;
             font-weight: 700;
             font-family: 'Inter', sans-serif;
-            transition: all 0.25s;
+            transition: all 0.2s;
         }
 
         .refresh-btn:hover {
             background: rgba(240, 185, 11, 0.25);
             border-color: var(--gold);
-            box-shadow: 0 0 16px var(--gold-glow);
-            transform: translateY(-1px);
         }
 
         .status-indicator {
@@ -172,12 +167,10 @@
             0%,
             100% {
                 opacity: 1;
-                box-shadow: 0 0 8px rgba(0, 230, 118, 0.5);
             }
 
             50% {
-                opacity: 0.5;
-                box-shadow: 0 0 4px rgba(0, 230, 118, 0.2);
+                opacity: 0.4;
             }
         }
 
@@ -186,13 +179,13 @@
             color: var(--text-muted);
         }
 
-        /* ===== MAIN LAYOUT ===== */
+        /* ===== MAIN 3-COLUMN LAYOUT ===== */
         .main-container {
-            display: grid;
-            grid-template-columns: 260px 1fr 200px;
             flex: 1;
-            overflow: hidden;
+            display: grid;
+            grid-template-columns: 260px 1fr 210px;
             min-height: 0;
+            overflow: hidden;
         }
 
         /* ===== OI PANEL (LEFT) ===== */
@@ -202,11 +195,10 @@
             display: flex;
             flex-direction: column;
             overflow: hidden;
-            z-index: 10;
         }
 
         .oi-panel-header {
-            padding: 12px 14px;
+            padding: 10px 12px;
             border-bottom: 1px solid var(--border);
             display: flex;
             justify-content: space-between;
@@ -223,7 +215,7 @@
 
         .oi-legend {
             display: flex;
-            gap: 12px;
+            gap: 10px;
             font-size: 10px;
             font-weight: 600;
         }
@@ -281,7 +273,6 @@
             padding: 1px 10px;
             height: 24px;
             font-size: 11px;
-            transition: background 0.15s;
             cursor: default;
             border-left: 2px solid transparent;
         }
@@ -329,15 +320,14 @@
             height: 100%;
             min-width: 0;
             border-radius: 2px;
-            transition: width 0.4s cubic-bezier(0.22, 1, 0.36, 1);
         }
 
         .oi-bar-call {
-            background: linear-gradient(90deg, var(--call-color), rgba(79, 195, 247, 0.6));
+            background: linear-gradient(90deg, var(--call-color), rgba(79, 195, 247, 0.5));
         }
 
         .oi-bar-put {
-            background: linear-gradient(90deg, var(--put-color), rgba(255, 183, 77, 0.6));
+            background: linear-gradient(90deg, var(--put-color), rgba(255, 183, 77, 0.5));
         }
 
         .oi-total {
@@ -356,27 +346,21 @@
             font-weight: 700;
         }
 
-        /* ===== CHART AREA ===== */
+        /* ===== CHART (CENTER) — direct iframe ===== */
         .chart-area {
             position: relative;
             overflow: hidden;
-            background: var(--bg-primary);
             min-width: 0;
             min-height: 0;
         }
 
-        .chart-area .tradingview-widget-container,
-        .chart-area .tradingview-widget-container__widget {
-            position: absolute !important;
-            inset: 0 !important;
-            width: 100% !important;
-            height: 100% !important;
-        }
-
         .chart-area iframe {
-            width: 100% !important;
-            height: 100% !important;
-            border: none !important;
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            border: none;
         }
 
         /* ===== LEVELS PANEL (RIGHT) ===== */
@@ -386,11 +370,10 @@
             display: flex;
             flex-direction: column;
             overflow: hidden;
-            z-index: 10;
         }
 
         .levels-header {
-            padding: 12px 14px;
+            padding: 10px 14px;
             border-bottom: 1px solid var(--border);
             font-size: 11px;
             font-weight: 700;
@@ -421,7 +404,6 @@
         .level-row {
             padding: 6px 14px;
             border-bottom: 1px solid rgba(42, 42, 62, 0.3);
-            transition: background 0.15s;
         }
 
         .level-row:hover {
@@ -484,6 +466,7 @@
             gap: 28px;
             font-size: 12px;
             flex-wrap: wrap;
+            z-index: 100;
         }
 
         .info-item {
@@ -513,14 +496,6 @@
 
         .info-value.pink {
             color: var(--pink);
-        }
-
-        .info-value.green {
-            color: var(--green);
-        }
-
-        .info-value.red {
-            color: var(--red);
         }
 
         /* ===== LOADING ===== */
@@ -594,96 +569,60 @@
         </div>
     </div>
 
-    <!-- Main -->
+    <!-- ===== MAIN 3-COLUMN ===== -->
     <div class="main-container">
-        <!-- OI Panel Left -->
+
+        <!-- LEFT: OI Panel -->
         <div class="oi-panel">
             <div class="oi-panel-header">
                 <span class="oi-panel-title">Open Interest</span>
                 <div class="oi-legend">
                     <div class="oi-legend-item">
-                        <div class="oi-legend-dot call"></div>
-                        <span class="oi-legend-call">Call</span>
+                        <div class="oi-legend-dot call"></div><span class="oi-legend-call">Call</span>
                     </div>
                     <div class="oi-legend-item">
-                        <div class="oi-legend-dot put"></div>
-                        <span class="oi-legend-put">Put</span>
+                        <div class="oi-legend-dot put"></div><span class="oi-legend-put">Put</span>
                     </div>
                 </div>
             </div>
             <div class="oi-container" id="oiContainer">
-                <div style="padding:20px;color:var(--text-muted);text-align:center;font-size:12px">Loading...</div>
+                <div style="padding:20px;color:var(--text-muted);text-align:center;font-size:12px">Loading OI...</div>
             </div>
         </div>
 
-        <!-- TradingView Chart -->
-        <div class="chart-area" id="chartArea">
-            <!-- TradingView Advanced Chart Widget -->
-            <div class="tradingview-widget-container" style="height:100%;width:100%;">
-                <div class="tradingview-widget-container__widget" style="height:100%;width:100%;" id="tvWidget"></div>
-            </div>
+        <!-- CENTER: TradingView Chart (direct iframe) -->
+        <div class="chart-area">
+            <iframe
+                src="https://www.tradingview.com/widgetembed/?hideideas=1&overrides=%7B%7D&enabled_features=%5B%5D&disabled_features=%5B%5D&locale=en#%7B%22symbol%22%3A%22BLACKBULL%3AGOLD.F%22%2C%22frameElementId%22%3A%22tvFrame%22%2C%22interval%22%3A%2260%22%2C%22hide_top_toolbar%22%3A%220%22%2C%22hide_legend%22%3A%220%22%2C%22save_image%22%3A%221%22%2C%22studies%22%3A%5B%5D%2C%22theme%22%3A%22dark%22%2C%22style%22%3A%221%22%2C%22timezone%22%3A%22Asia%2FBangkok%22%2C%22studies_overrides%22%3A%7B%7D%7D"
+                allowtransparency="true" allowfullscreen>
+            </iframe>
         </div>
 
-        <!-- Levels Panel Right -->
+        <!-- RIGHT: Levels Panel -->
         <div class="levels-panel">
             <div class="levels-header">$25 Levels & Range</div>
             <div class="levels-container" id="levelsContainer">
                 <div style="padding:20px;color:var(--text-muted);text-align:center;font-size:12px">Loading...</div>
             </div>
         </div>
+
     </div>
 
     <!-- Info Panel -->
     <div class="info-panel">
-        <div class="info-item">
-            <span class="info-label">Vol Settle (ATM):</span>
-            <span class="info-value cyan" id="volSettleATM">—</span>
-        </div>
-        <div class="info-item">
-            <span class="info-label">Expected Range:</span>
-            <span class="info-value gold" id="expectedRange">—</span>
-        </div>
-        <div class="info-item">
-            <span class="info-label">Max OI Strike:</span>
-            <span class="info-value pink" id="maxOIStrike">—</span>
-        </div>
-        <div class="info-item">
-            <span class="info-label">Total Call OI:</span>
-            <span class="info-value" id="totalCallOI">—</span>
-        </div>
-        <div class="info-item">
-            <span class="info-label">Total Put OI:</span>
-            <span class="info-value" id="totalPutOI">—</span>
-        </div>
-        <div class="info-item">
-            <span class="info-label">P/C Ratio:</span>
-            <span class="info-value" id="pcRatio">—</span>
+        <div class="info-item"><span class="info-label">Vol Settle (ATM):</span><span class="info-value cyan"
+                id="volSettleATM">—</span></div>
+        <div class="info-item"><span class="info-label">Expected Range:</span><span class="info-value gold"
+                id="expectedRange">—</span></div>
+        <div class="info-item"><span class="info-label">Max OI Strike:</span><span class="info-value pink"
+                id="maxOIStrike">—</span></div>
+        <div class="info-item"><span class="info-label">Total Call OI:</span><span class="info-value"
+                id="totalCallOI">—</span></div>
+        <div class="info-item"><span class="info-label">Total Put OI:</span><span class="info-value"
+                id="totalPutOI">—</span></div>
+        <div class="info-item"><span class="info-label">P/C Ratio:</span><span class="info-value" id="pcRatio">—</span>
         </div>
     </div>
-
-    <!-- TradingView Widget Script -->
-    <script type="text/javascript" src="https://s3.tradingview.com/external-embedding/embed-widget-advanced-chart.js"
-        async>
-            {
-                "autosize": true,
-                    "symbol": "BLACKBULL:GOLD.F",
-                        "interval": "60",
-                            "timezone": "Asia/Bangkok",
-                                "theme": "dark",
-                                    "style": "1",
-                                        "locale": "en",
-                                            "hide_top_toolbar": false,
-                                                "hide_legend": false,
-                                                    "allow_symbol_change": true,
-                                                        "save_image": true,
-                                                            "calendar": false,
-                                                                "support_host": "https://www.tradingview.com",
-                                                                    "container_id": "tvWidget",
-                                                                        "backgroundColor": "rgba(12, 12, 20, 1)",
-                                                                            "gridColor": "rgba(42, 42, 62, 0.4)",
-                                                                                "hide_volume": false
-            }
-        </script>
 
     <script>
         // ========== CONFIG ==========
@@ -696,49 +635,33 @@
             oiBarMaxWidth: 110,
         };
 
-        // ========== STATE ==========
-        let state = {
-            intradayData: null,
-            oiData: null,
-            refreshTimer: null,
-        };
+        let state = { intradayData: null, oiData: null, refreshTimer: null };
 
-        // ========== PARSE DATA ==========
+        // ========== PARSE ==========
         function parseVol2VolData(text) {
             const lines = text.trim().split('\n');
             if (lines.length < 2) return null;
-
             const header = lines[0];
             const dteMatch = header.match(/\(([\d.]+)\s*DTE\)/);
             const priceMatch = header.match(/vs\s+([\d.]+)/);
             const changeMatches = header.match(/\(([+-]?[\d.]+)\)/g);
             const typeMatch = header.match(/- (.+)$/);
             const contractMatch = header.match(/\)\s+(\S+)\s+\(/);
-
             const dte = dteMatch ? parseFloat(dteMatch[1]) : 0;
             const underlying = priceMatch ? parseFloat(priceMatch[1]) : 0;
             let change = 0;
             if (changeMatches && changeMatches.length >= 2) {
-                const lastMatch = changeMatches[changeMatches.length - 1];
-                change = parseFloat(lastMatch.replace(/[()]/g, ''));
+                change = parseFloat(changeMatches[changeMatches.length - 1].replace(/[()]/g, ''));
             }
             const dataType = typeMatch ? typeMatch[1].trim() : '';
             const contract = contractMatch ? contractMatch[1] : '';
-
             const strikes = [];
             for (let i = 2; i < lines.length; i++) {
-                const parts = lines[i].split(',');
-                if (parts.length >= 4) {
-                    strikes.push({
-                        strike: parseFloat(parts[0]),
-                        call: parseInt(parts[1]),
-                        put: parseInt(parts[2]),
-                        volSettle: parseFloat(parts[3]),
-                        total: parseInt(parts[1]) + parseInt(parts[2]),
-                    });
+                const p = lines[i].split(',');
+                if (p.length >= 4) {
+                    strikes.push({ strike: parseFloat(p[0]), call: parseInt(p[1]), put: parseInt(p[2]), volSettle: parseFloat(p[3]), total: parseInt(p[1]) + parseInt(p[2]) });
                 }
             }
-
             return { header, dte, underlying, change, dataType, contract, strikes };
         }
 
@@ -750,174 +673,81 @@
                     fetch(CONFIG.oiUrl + '?t=' + Date.now()),
                 ]);
                 if (!intRes.ok || !oiRes.ok) throw new Error('Fetch failed');
-
                 state.intradayData = parseVol2VolData(await intRes.text());
                 state.oiData = parseVol2VolData(await oiRes.text());
                 return true;
-            } catch (e) {
-                console.error('Fetch error:', e);
-                return false;
-            }
+            } catch (e) { console.error('Fetch error:', e); return false; }
         }
 
-        // ========== RENDER OI PANEL ==========
+        // ========== RENDER OI ==========
         function renderOIPanel(oiData) {
             const container = document.getElementById('oiContainer');
-            if (!oiData?.strikes) {
-                container.innerHTML = '<div style="padding:20px;color:var(--text-muted);text-align:center;font-size:12px">No OI data</div>';
-                return;
-            }
-
+            if (!oiData?.strikes) { container.innerHTML = '<div style="padding:20px;color:var(--text-muted);text-align:center;font-size:12px">No OI data</div>'; return; }
             const underlying = oiData.underlying;
             const interval = CONFIG.roundNumberInterval;
-
-            const filtered = oiData.strikes.filter(s =>
-                s.strike >= underlying - CONFIG.visibleStrikeRange &&
-                s.strike <= underlying + CONFIG.visibleStrikeRange &&
-                s.total > 0
-            );
-
+            const filtered = oiData.strikes.filter(s => s.strike >= underlying - CONFIG.visibleStrikeRange && s.strike <= underlying + CONFIG.visibleStrikeRange && s.total > 0);
             const maxSingle = Math.max(...filtered.map(s => Math.max(s.call, s.put)), 1);
-            const p90 = Math.max(...filtered.map(s => s.total).sort((a, b) => a - b).slice(0, Math.floor(filtered.length * 0.9)), 1);
-
+            const totals = filtered.map(s => s.total).sort((a, b) => a - b);
+            const p90 = totals[Math.floor(totals.length * 0.9)] || 1;
             filtered.sort((a, b) => b.strike - a.strike);
-
-            // Find closest strike to underlying
-            let closestStrike = filtered.reduce((prev, curr) =>
-                Math.abs(curr.strike - underlying) < Math.abs(prev.strike - underlying) ? curr : prev
-                , filtered[0]);
-
+            let closestStrike = filtered.reduce((prev, curr) => Math.abs(curr.strike - underlying) < Math.abs(prev.strike - underlying) ? curr : prev, filtered[0]);
             let html = '';
             for (const s of filtered) {
                 const isRound = s.strike % interval === 0;
                 const isATM = s === closestStrike;
-                let classes = 'oi-row';
-                if (isRound) classes += ' round-number';
-                if (isATM) classes += ' atm';
-
+                let cls = 'oi-row'; if (isRound) cls += ' round-number'; if (isATM) cls += ' atm';
                 const callW = Math.max(0, (s.call / maxSingle) * CONFIG.oiBarMaxWidth);
                 const putW = Math.max(0, (s.put / maxSingle) * CONFIG.oiBarMaxWidth);
-                const isHigh = s.total > p90;
-
-                html += `
-                <div class="${classes}" title="Call: ${s.call} | Put: ${s.put}">
-                    <span class="oi-strike ${isRound ? 'round-number' : ''}">${s.strike}</span>
-                    <div class="oi-bars-wrapper">
-                        ${s.call > 0 ? `<div class="oi-bar oi-bar-call" style="width:${callW}px"></div>` : ''}
-                        ${s.put > 0 ? `<div class="oi-bar oi-bar-put" style="width:${putW}px"></div>` : ''}
-                    </div>
-                    <span class="oi-total ${isHigh ? 'high' : ''}">${s.total}</span>
-                </div>
-            `;
+                html += `<div class="${cls}" title="Call: ${s.call} | Put: ${s.put}"><span class="oi-strike ${isRound ? 'round-number' : ''}">${s.strike}</span><div class="oi-bars-wrapper">${s.call > 0 ? `<div class="oi-bar oi-bar-call" style="width:${callW}px"></div>` : ''}${s.put > 0 ? `<div class="oi-bar oi-bar-put" style="width:${putW}px"></div>` : ''}</div><span class="oi-total ${s.total > p90 ? 'high' : ''}">${s.total}</span></div>`;
             }
             container.innerHTML = html;
         }
 
-        // ========== RENDER LEVELS PANEL ==========
+        // ========== RENDER LEVELS ==========
         function renderLevelsPanel(intradayData, oiData) {
             const container = document.getElementById('levelsContainer');
             const data = intradayData || oiData;
-            if (!data?.strikes) {
-                container.innerHTML = '<div style="padding:20px;color:var(--text-muted);text-align:center;font-size:12px">No data</div>';
-                return;
-            }
-
-            const underlying = data.underlying;
-            const dte = data.dte || 1;
-            const interval = CONFIG.roundNumberInterval;
-
-            // Build vol settle + OI maps
-            const vsMap = {};
-            if (intradayData?.strikes) {
-                intradayData.strikes.forEach(s => { vsMap[s.strike] = s.volSettle; });
-            }
-            const oiMap = {};
-            if (oiData?.strikes) {
-                oiData.strikes.forEach(s => { oiMap[s.strike] = s; });
-            }
-
-            const minS = underlying - CONFIG.visibleStrikeRange;
-            const maxS = underlying + CONFIG.visibleStrikeRange;
-            let start = Math.ceil(minS / interval) * interval;
-
+            if (!data?.strikes) { container.innerHTML = '<div style="padding:20px;color:var(--text-muted);text-align:center">No data</div>'; return; }
+            const underlying = data.underlying, dte = data.dte || 1, interval = CONFIG.roundNumberInterval;
+            const vsMap = {}; if (intradayData?.strikes) intradayData.strikes.forEach(s => { vsMap[s.strike] = s.volSettle; });
+            const oiMap = {}; if (oiData?.strikes) oiData.strikes.forEach(s => { oiMap[s.strike] = s; });
+            const minS = underlying - CONFIG.visibleStrikeRange, maxS = underlying + CONFIG.visibleStrikeRange;
             let html = '';
-            for (let strike = maxS; strike >= minS; strike -= interval) {
-                // Snap to interval
-                if (strike % interval !== 0) continue;
-
-                // Interpolate vol settle
+            for (let strike = Math.ceil(maxS / interval) * interval; strike >= minS; strike -= interval) {
                 let vs = vsMap[strike] || 0;
-                if (vs === 0) {
-                    const lo = Math.floor(strike / 5) * 5;
-                    const hi = lo + 5;
-                    const loVS = vsMap[lo] || 0;
-                    const hiVS = vsMap[hi] || 0;
-                    if (loVS > 0 && hiVS > 0) vs = loVS + (hiVS - loVS) * ((strike - lo) / 5);
-                    else vs = loVS || hiVS;
-                }
-
+                if (vs === 0) { const lo = Math.floor(strike / 5) * 5, hi = lo + 5; const lv = vsMap[lo] || 0, hv = vsMap[hi] || 0; vs = (lv > 0 && hv > 0) ? lv + (hv - lv) * ((strike - lo) / 5) : (lv || hv); }
                 const expMove = underlying * vs * Math.sqrt(dte / 365);
                 const expLevel = underlying - expMove;
-
-                const oi = oiMap[strike] || { call: 0, put: 0, total: 0 };
-                // Check nearby OI if exact strike not in OI data
-                let callOI = oi.call || 0;
-                let putOI = oi.put || 0;
-
+                const oi = oiMap[strike] || { call: 0, put: 0 };
                 const isNear = Math.abs(strike - underlying) <= 50;
-
-                html += `
-                <div class="level-row ${isNear ? 'near-price' : ''}">
-                    <div class="level-strike">${strike}</div>
-                    ${vs > 0 ? `<div class="level-expected">ExpRange: ${expLevel.toFixed(1)}</div>` : ''}
-                    ${vs > 0 ? `<div class="level-vs">IV: ${(vs * 100).toFixed(1)}%</div>` : ''}
-                    ${(callOI > 0 || putOI > 0) ? `
-                        <div class="level-oi-mini">
-                            <span class="level-call-val">C: ${callOI}</span>
-                            <span class="level-put-val">P: ${putOI}</span>
-                        </div>
-                    ` : ''}
-                </div>
-            `;
+                html += `<div class="level-row ${isNear ? 'near-price' : ''}"><div class="level-strike">${strike}</div>${vs > 0 ? `<div class="level-expected">Exp: ${expLevel.toFixed(1)}</div><div class="level-vs">IV: ${(vs * 100).toFixed(1)}%</div>` : ''}${(oi.call > 0 || oi.put > 0) ? `<div class="level-oi-mini"><span class="level-call-val">C:${oi.call}</span><span class="level-put-val">P:${oi.put}</span></div>` : ''}</div>`;
             }
             container.innerHTML = html;
         }
 
-        // ========== UPDATE HEADER & INFO ==========
+        // ========== UPDATE UI ==========
         function updateUI(intradayData, oiData) {
-            const data = oiData || intradayData;
-            if (!data) return;
-
+            const data = oiData || intradayData; if (!data) return;
             document.getElementById('contractName').textContent = 'Gold (GC)';
             document.getElementById('contractDetail').textContent = data.contract || '';
             document.getElementById('priceDisplay').textContent = data.underlying.toFixed(1);
-
-            const changeEl = document.getElementById('priceChange');
-            const sign = data.change >= 0 ? '+' : '';
-            changeEl.textContent = `${sign}${data.change.toFixed(1)}`;
-            changeEl.className = `price-change ${data.change >= 0 ? 'up' : 'down'}`;
-
+            const ce = document.getElementById('priceChange');
+            ce.textContent = `${data.change >= 0 ? '+' : ''}${data.change.toFixed(1)}`;
+            ce.className = `price-change ${data.change >= 0 ? 'up' : 'down'}`;
             document.getElementById('dteBadge').textContent = `DTE ${data.dte.toFixed(2)}`;
             document.getElementById('lastUpdate').textContent = new Date().toLocaleTimeString('th-TH');
-
             if (intradayData?.strikes) {
-                let atm = intradayData.strikes.reduce((p, c) =>
-                    Math.abs(c.strike - data.underlying) < Math.abs(p.strike - data.underlying) ? c : p
-                );
+                let atm = intradayData.strikes.reduce((p, c) => Math.abs(c.strike - data.underlying) < Math.abs(p.strike - data.underlying) ? c : p);
                 if (atm.volSettle > 0) {
                     document.getElementById('volSettleATM').textContent = (atm.volSettle * 100).toFixed(2) + '%';
                     const er = data.underlying * atm.volSettle * Math.sqrt(data.dte / 365);
-                    document.getElementById('expectedRange').textContent =
-                        `±${er.toFixed(1)} ($${(data.underlying - er).toFixed(0)} – $${(data.underlying + er).toFixed(0)})`;
+                    document.getElementById('expectedRange').textContent = `±${er.toFixed(1)} ($${(data.underlying - er).toFixed(0)} – $${(data.underlying + er).toFixed(0)})`;
                 }
             }
-
             if (oiData?.strikes) {
-                const maxOI = oiData.strikes.reduce((p, c) => c.total > p.total ? c : p);
-                document.getElementById('maxOIStrike').textContent = `${maxOI.strike} (${maxOI.total})`;
-
-                let tc = 0, tp = 0;
-                oiData.strikes.forEach(s => { tc += s.call; tp += s.put; });
+                const mx = oiData.strikes.reduce((p, c) => c.total > p.total ? c : p);
+                document.getElementById('maxOIStrike').textContent = `${mx.strike} (${mx.total})`;
+                let tc = 0, tp = 0; oiData.strikes.forEach(s => { tc += s.call; tp += s.put; });
                 document.getElementById('totalCallOI').textContent = tc.toLocaleString();
                 document.getElementById('totalPutOI').textContent = tp.toLocaleString();
                 document.getElementById('pcRatio').textContent = tc > 0 ? (tp / tc).toFixed(2) : '—';
@@ -927,32 +757,19 @@
         // ========== REFRESH ==========
         async function refreshData() {
             const btn = document.querySelector('.refresh-btn');
-            btn.textContent = '⟳ Loading...';
-            btn.disabled = true;
-
+            btn.textContent = '⟳ Loading...'; btn.disabled = true;
             const ok = await fetchData();
-            if (ok) {
-                renderOIPanel(state.oiData);
-                renderLevelsPanel(state.intradayData, state.oiData);
-                updateUI(state.intradayData, state.oiData);
-            }
-
-            btn.textContent = '⟳ Refresh';
-            btn.disabled = false;
+            if (ok) { renderOIPanel(state.oiData); renderLevelsPanel(state.intradayData, state.oiData); updateUI(state.intradayData, state.oiData); }
+            btn.textContent = '⟳ Refresh'; btn.disabled = false;
         }
 
         // ========== INIT ==========
         async function init() {
             const ok = await fetchData();
-            if (ok) {
-                renderOIPanel(state.oiData);
-                renderLevelsPanel(state.intradayData, state.oiData);
-                updateUI(state.intradayData, state.oiData);
-            }
+            if (ok) { renderOIPanel(state.oiData); renderLevelsPanel(state.intradayData, state.oiData); updateUI(state.intradayData, state.oiData); }
             document.getElementById('loading').classList.add('hidden');
             state.refreshTimer = setInterval(refreshData, CONFIG.refreshIntervalMs);
         }
-
         init();
     </script>
 </body>
