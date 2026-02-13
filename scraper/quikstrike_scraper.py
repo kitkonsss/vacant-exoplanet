@@ -78,17 +78,27 @@ def login_cme(driver, max_wait=120):
     while time.time() - start < max_wait:
         url = driver.current_url
 
-        # ✅ On QuikStrike Vol2Vol page
-        if 'quikstrike.net' in url and 'QuikStrikeView' in url:
-            print(f'[LOGIN] ✅ On Vol2Vol page!')
-            return True
-
-        # 📋 Disclaimer page — try to accept
-        if 'disclaimer' in url.lower() or 'Disclaimer' in url:
-            print('[LOGIN] Disclaimer page — trying to accept...')
+        # 📋 Disclaimer page — MUST check BEFORE QuikStrikeView!
+        # Because Disclaimer URL contains 'QuikStrikeView' in the ret= query param:
+        #   .../Disclaimer.aspx?ret=%2fUser%2fQuikStrikeView.aspx%3fpid%3d40%26pf%3d6
+        is_disclaimer = 'disclaimer' in url.lower()
+        if not is_disclaimer:
+            try:
+                title = driver.title or ''
+                if 'disclaimer' in title.lower():
+                    is_disclaimer = True
+            except:
+                pass
+        if is_disclaimer:
+            print('[LOGIN] Disclaimer page detected — auto-accepting...')
             _handle_disclaimer(driver)
             time.sleep(3)
             continue
+
+        # ✅ On QuikStrike Vol2Vol page (not disclaimer)
+        if 'quikstrike.net' in url and 'QuikStrikeView' in url:
+            print(f'[LOGIN] ✅ On Vol2Vol page!')
+            return True
 
         # 🔐 SSO Login page
         if 'login.cmegroup.com' in url:
@@ -125,42 +135,88 @@ def _try_auto_login(driver):
 
 
 def _handle_disclaimer(driver):
-    """Accept the QuikStrike disclaimer page."""
-    # Look for any submit/accept/agree buttons or checkboxes
+    """Accept the QuikStrike disclaimer page.
+    
+    The disclaimer page has:
+      - A checkbox: "I have read and agree with the above disclaimer"
+      - A "Continue" button (input[type="submit"] value="Continue")
+    The checkbox MUST be checked before the Continue button works.
+    """
+    # ── Step 1: Check the agreement checkbox ──
+    checkbox_checked = False
     try:
-        # First check for checkbox (some disclaimers require checking a box first)
-        checkboxes = driver.find_elements(By.CSS_SELECTOR, 'input[type="checkbox"]')
-        for cb in checkboxes:
-            if not cb.is_selected():
-                cb.click()
-                print('[DISCLAIMER] Checked checkbox')
-                time.sleep(1)
-    except:
-        pass
+        # Wait for checkbox to be present
+        cb = WebDriverWait(driver, 10).until(
+            EC.presence_of_element_located((By.CSS_SELECTOR, 'input[type="checkbox"]'))
+        )
+        if not cb.is_selected():
+            # Use JavaScript click — more reliable on ASP.NET pages
+            driver.execute_script('arguments[0].click();', cb)
+            time.sleep(0.5)
+            # Verify it's actually checked now
+            if cb.is_selected():
+                print('[DISCLAIMER] ✅ Checked agreement checkbox')
+                checkbox_checked = True
+            else:
+                # Fallback: set checked attribute directly
+                driver.execute_script('arguments[0].checked = true;', cb)
+                print('[DISCLAIMER] ✅ Checked checkbox (via attribute)')
+                checkbox_checked = True
+        else:
+            print('[DISCLAIMER] Checkbox already checked')
+            checkbox_checked = True
+    except Exception as e:
+        print(f'[DISCLAIMER] ⚠ Checkbox error: {e}')
 
-    # Now click the accept/submit button
-    for sel in [
-        'input[type="submit"]', 'button[type="submit"]',
-        'input[value*="ccept"]', 'input[value*="gree"]',
-        '[id*="ccept"]', '[id*="gree"]', '[id*="btnOK"]',
-        '#btnAccept', '#btnAgree', '#submit',
-    ]:
+    if not checkbox_checked:
+        # Try broader search for any unchecked checkbox
+        try:
+            for cb in driver.find_elements(By.CSS_SELECTOR, 'input[type="checkbox"]'):
+                if not cb.is_selected():
+                    driver.execute_script('arguments[0].click();', cb)
+                    print('[DISCLAIMER] ✅ Checked checkbox (fallback)')
+                    checkbox_checked = True
+                    time.sleep(0.5)
+                    break
+        except Exception as e:
+            print(f'[DISCLAIMER] ⚠ Checkbox fallback error: {e}')
+
+    time.sleep(1)
+
+    # ── Step 2: Click the Continue/Accept/Submit button ──
+    # Try specific selectors in priority order (Continue first, since that's
+    # what the QuikStrike disclaimer page uses)
+    button_selectors = [
+        'input[value="Continue"]',
+        'input[value="continue"]',
+        'input[value*="ontinue"]',
+        'input[value*="ccept"]',
+        'input[value*="gree"]',
+        'button[type="submit"]',
+        'input[type="submit"]',
+        '[id*="btnContinue"]',
+        '[id*="btnAccept"]',
+        '[id*="btnAgree"]',
+        '[id*="btnOK"]',
+        '#submit',
+    ]
+    for sel in button_selectors:
         try:
             btn = driver.find_element(By.CSS_SELECTOR, sel)
-            btn.click()
-            print(f'[DISCLAIMER] Clicked: {sel}')
+            driver.execute_script('arguments[0].click();', btn)
+            print(f'[DISCLAIMER] ✅ Clicked button: {sel} (value="{btn.get_attribute("value") or btn.text}")')
             time.sleep(3)
             return
         except:
             continue
 
-    # Fallback: click any visible button
+    # Fallback: click any submit/button element
     for el in driver.find_elements(By.CSS_SELECTOR, 'input[type="submit"], input[type="button"], button'):
         val = el.get_attribute('value') or el.text or ''
         if val:
-            print(f'[DISCLAIMER] Found button: "{val}"')
+            print(f'[DISCLAIMER] Found button: "{val}" — clicking...')
             try:
-                el.click()
+                driver.execute_script('arguments[0].click();', el)
                 time.sleep(3)
                 return
             except:
