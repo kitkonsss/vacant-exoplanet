@@ -281,14 +281,14 @@
             background: rgba(255, 255, 255, 0.02);
         }
 
-        .oi-row.round-number {
-            background: var(--orange-dim);
-            border-left-color: var(--orange);
-        }
-
         .oi-row.atm {
             background: rgba(240, 185, 11, 0.08);
             border-left-color: var(--gold);
+        }
+
+        .oi-row.hot {
+            background: rgba(255, 152, 0, 0.1);
+            border-left-color: var(--orange);
         }
 
         .oi-strike {
@@ -301,7 +301,7 @@
             font-variant-numeric: tabular-nums;
         }
 
-        .oi-strike.round-number {
+        .oi-strike.hot {
             color: var(--orange);
             font-weight: 800;
             font-size: 11px;
@@ -363,96 +363,13 @@
             border: none;
         }
 
-        /* ===== LEVELS PANEL (RIGHT) ===== */
-        .levels-panel {
+        /* ===== VOLUME PANEL (RIGHT) — same style as OI ===== */
+        .vol-panel {
             background: var(--bg-secondary);
             border-left: 1px solid var(--border);
             display: flex;
             flex-direction: column;
             overflow: hidden;
-        }
-
-        .levels-header {
-            padding: 10px 14px;
-            border-bottom: 1px solid var(--border);
-            font-size: 11px;
-            font-weight: 700;
-            color: var(--text-secondary);
-            text-transform: uppercase;
-            letter-spacing: 1.5px;
-        }
-
-        .levels-container {
-            flex: 1;
-            overflow-y: auto;
-            padding: 4px 0;
-        }
-
-        .levels-container::-webkit-scrollbar {
-            width: 3px;
-        }
-
-        .levels-container::-webkit-scrollbar-track {
-            background: transparent;
-        }
-
-        .levels-container::-webkit-scrollbar-thumb {
-            background: var(--border);
-            border-radius: 2px;
-        }
-
-        .level-row {
-            padding: 6px 14px;
-            border-bottom: 1px solid rgba(42, 42, 62, 0.3);
-        }
-
-        .level-row:hover {
-            background: rgba(255, 255, 255, 0.02);
-        }
-
-        .level-row.near-price {
-            background: rgba(240, 185, 11, 0.06);
-            border-left: 2px solid var(--gold);
-        }
-
-        .level-strike {
-            font-size: 14px;
-            font-weight: 800;
-            color: var(--orange);
-            font-variant-numeric: tabular-nums;
-        }
-
-        .level-expected {
-            font-size: 11px;
-            color: var(--text-muted);
-            margin-top: 2px;
-            font-variant-numeric: tabular-nums;
-        }
-
-        .level-vs {
-            font-size: 10px;
-            color: var(--cyan);
-            margin-top: 1px;
-            opacity: 0.7;
-        }
-
-        .level-oi-mini {
-            display: flex;
-            gap: 8px;
-            margin-top: 3px;
-            font-size: 10px;
-        }
-
-        .level-oi-mini span {
-            font-variant-numeric: tabular-nums;
-        }
-
-        .level-call-val {
-            color: var(--call-color);
-        }
-
-        .level-put-val {
-            color: var(--put-color);
         }
 
         /* ===== INFO PANEL (BOTTOM) ===== */
@@ -599,10 +516,21 @@
         </div>
 
         <!-- RIGHT: Levels Panel -->
-        <div class="levels-panel">
-            <div class="levels-header">$25 Levels & Range</div>
-            <div class="levels-container" id="levelsContainer">
-                <div style="padding:20px;color:var(--text-muted);text-align:center;font-size:12px">Loading...</div>
+        <!-- RIGHT: Intraday Volume Panel -->
+        <div class="vol-panel">
+            <div class="oi-panel-header">
+                <span class="oi-panel-title">Intraday Volume</span>
+                <div class="oi-legend">
+                    <div class="oi-legend-item">
+                        <div class="oi-legend-dot call"></div><span class="oi-legend-call">Call</span>
+                    </div>
+                    <div class="oi-legend-item">
+                        <div class="oi-legend-dot put"></div><span class="oi-legend-put">Put</span>
+                    </div>
+                </div>
+            </div>
+            <div class="oi-container" id="volContainer">
+                <div style="padding:20px;color:var(--text-muted);text-align:center;font-size:12px">Loading Vol...</div>
             </div>
         </div>
 
@@ -679,51 +607,32 @@
             } catch (e) { console.error('Fetch error:', e); return false; }
         }
 
-        // ========== RENDER OI ==========
-        function renderOIPanel(oiData) {
-            const container = document.getElementById('oiContainer');
-            if (!oiData?.strikes) { container.innerHTML = '<div style="padding:20px;color:var(--text-muted);text-align:center;font-size:12px">No OI data</div>'; return; }
-            const underlying = oiData.underlying;
-            const interval = CONFIG.roundNumberInterval;
-            const filtered = oiData.strikes.filter(s => s.strike >= underlying - CONFIG.visibleStrikeRange && s.strike <= underlying + CONFIG.visibleStrikeRange && s.total > 0);
+        // ========== RENDER BARS (shared for both panels) ==========
+        function renderBarsPanel(containerId, data, maxWidth) {
+            const container = document.getElementById(containerId);
+            if (!data?.strikes) { container.innerHTML = '<div style="padding:20px;color:var(--text-muted);text-align:center;font-size:12px">No data</div>'; return; }
+            const underlying = data.underlying;
+            const filtered = data.strikes.filter(s => s.strike >= underlying - CONFIG.visibleStrikeRange && s.strike <= underlying + CONFIG.visibleStrikeRange && s.total > 0);
+            if (filtered.length === 0) { container.innerHTML = '<div style="padding:20px;color:var(--text-muted);text-align:center;font-size:12px">No data in range</div>'; return; }
             const maxSingle = Math.max(...filtered.map(s => Math.max(s.call, s.put)), 1);
-            const totals = filtered.map(s => s.total).sort((a, b) => a - b);
-            const p90 = totals[Math.floor(totals.length * 0.9)] || 1;
             filtered.sort((a, b) => b.strike - a.strike);
             let closestStrike = filtered.reduce((prev, curr) => Math.abs(curr.strike - underlying) < Math.abs(prev.strike - underlying) ? curr : prev, filtered[0]);
             let html = '';
             for (const s of filtered) {
-                const isRound = s.strike % interval === 0;
                 const isATM = s === closestStrike;
-                let cls = 'oi-row'; if (isRound) cls += ' round-number'; if (isATM) cls += ' atm';
-                const callW = Math.max(0, (s.call / maxSingle) * CONFIG.oiBarMaxWidth);
-                const putW = Math.max(0, (s.put / maxSingle) * CONFIG.oiBarMaxWidth);
-                html += `<div class="${cls}" title="Call: ${s.call} | Put: ${s.put}"><span class="oi-strike ${isRound ? 'round-number' : ''}">${s.strike}</span><div class="oi-bars-wrapper">${s.call > 0 ? `<div class="oi-bar oi-bar-call" style="width:${callW}px"></div>` : ''}${s.put > 0 ? `<div class="oi-bar oi-bar-put" style="width:${putW}px"></div>` : ''}</div><span class="oi-total ${s.total > p90 ? 'high' : ''}">${s.total}</span></div>`;
+                const isHot = s.total >= 100;
+                let cls = 'oi-row';
+                if (isATM) cls += ' atm';
+                else if (isHot) cls += ' hot';
+                const callW = Math.max(0, (s.call / maxSingle) * maxWidth);
+                const putW = Math.max(0, (s.put / maxSingle) * maxWidth);
+                html += `<div class="${cls}" title="Call: ${s.call} | Put: ${s.put}"><span class="oi-strike ${isHot ? 'hot' : ''}">${s.strike}</span><div class="oi-bars-wrapper">${s.call > 0 ? `<div class="oi-bar oi-bar-call" style="width:${callW}px"></div>` : ''}${s.put > 0 ? `<div class="oi-bar oi-bar-put" style="width:${putW}px"></div>` : ''}</div><span class="oi-total ${isHot ? 'high' : ''}">${s.total}</span></div>`;
             }
             container.innerHTML = html;
         }
 
-        // ========== RENDER LEVELS ==========
-        function renderLevelsPanel(intradayData, oiData) {
-            const container = document.getElementById('levelsContainer');
-            const data = intradayData || oiData;
-            if (!data?.strikes) { container.innerHTML = '<div style="padding:20px;color:var(--text-muted);text-align:center">No data</div>'; return; }
-            const underlying = data.underlying, dte = data.dte || 1, interval = CONFIG.roundNumberInterval;
-            const vsMap = {}; if (intradayData?.strikes) intradayData.strikes.forEach(s => { vsMap[s.strike] = s.volSettle; });
-            const oiMap = {}; if (oiData?.strikes) oiData.strikes.forEach(s => { oiMap[s.strike] = s; });
-            const minS = underlying - CONFIG.visibleStrikeRange, maxS = underlying + CONFIG.visibleStrikeRange;
-            let html = '';
-            for (let strike = Math.ceil(maxS / interval) * interval; strike >= minS; strike -= interval) {
-                let vs = vsMap[strike] || 0;
-                if (vs === 0) { const lo = Math.floor(strike / 5) * 5, hi = lo + 5; const lv = vsMap[lo] || 0, hv = vsMap[hi] || 0; vs = (lv > 0 && hv > 0) ? lv + (hv - lv) * ((strike - lo) / 5) : (lv || hv); }
-                const expMove = underlying * vs * Math.sqrt(dte / 365);
-                const expLevel = underlying - expMove;
-                const oi = oiMap[strike] || { call: 0, put: 0 };
-                const isNear = Math.abs(strike - underlying) <= 50;
-                html += `<div class="level-row ${isNear ? 'near-price' : ''}"><div class="level-strike">${strike}</div>${vs > 0 ? `<div class="level-expected">Exp: ${expLevel.toFixed(1)}</div><div class="level-vs">IV: ${(vs * 100).toFixed(1)}%</div>` : ''}${(oi.call > 0 || oi.put > 0) ? `<div class="level-oi-mini"><span class="level-call-val">C:${oi.call}</span><span class="level-put-val">P:${oi.put}</span></div>` : ''}</div>`;
-            }
-            container.innerHTML = html;
-        }
+        function renderOIPanel(oiData) { renderBarsPanel('oiContainer', oiData, CONFIG.oiBarMaxWidth); }
+        function renderVolPanel(intradayData) { renderBarsPanel('volContainer', intradayData, CONFIG.oiBarMaxWidth); }
 
         // ========== UPDATE UI ==========
         function updateUI(intradayData, oiData) {
@@ -759,14 +668,14 @@
             const btn = document.querySelector('.refresh-btn');
             btn.textContent = '⟳ Loading...'; btn.disabled = true;
             const ok = await fetchData();
-            if (ok) { renderOIPanel(state.oiData); renderLevelsPanel(state.intradayData, state.oiData); updateUI(state.intradayData, state.oiData); }
+            if (ok) { renderOIPanel(state.oiData); renderVolPanel(state.intradayData); updateUI(state.intradayData, state.oiData); }
             btn.textContent = '⟳ Refresh'; btn.disabled = false;
         }
 
         // ========== INIT ==========
         async function init() {
             const ok = await fetchData();
-            if (ok) { renderOIPanel(state.oiData); renderLevelsPanel(state.intradayData, state.oiData); updateUI(state.intradayData, state.oiData); }
+            if (ok) { renderOIPanel(state.oiData); renderVolPanel(state.intradayData); updateUI(state.intradayData, state.oiData); }
             document.getElementById('loading').classList.add('hidden');
             state.refreshTimer = setInterval(refreshData, CONFIG.refreshIntervalMs);
         }
