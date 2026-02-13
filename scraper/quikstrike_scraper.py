@@ -13,6 +13,8 @@ import sys
 import json
 import time
 import re
+import shutil
+import subprocess
 from datetime import datetime
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
@@ -30,6 +32,7 @@ CME_EMAIL = os.environ.get('CME_EMAIL', 'kitsakontrader@gmail.com')
 CME_PASSWORD = os.environ.get('CME_PASSWORD', 'Jayesslee123')
 OUTPUT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data')
 QUIKSTRIKE_URL = 'https://cmegroup-sso.quikstrike.net/User/QuikStrikeView.aspx?pid=40&pf=6'
+DATA_REPO_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'atas-data')
 
 # ============================================================
 
@@ -929,6 +932,9 @@ def main():
                 size = os.path.getsize(fp)
                 print(f'  📄 {f} ({lines} lines, {size:,} bytes)')
 
+        # ─── PUSH DATA TO PUBLIC REPO ───
+        push_data_to_repo()
+
     except Exception as e:
         print(f'\n[ERROR] {e}')
         import traceback
@@ -938,6 +944,49 @@ def main():
     finally:
         driver.quit()
         print('[CLEANUP] Chrome closed.')
+
+
+def push_data_to_repo():
+    """Copy data files to atas-data repo and push to GitHub."""
+    if not os.path.isdir(DATA_REPO_DIR):
+        print(f'[PUSH] ⚠ Data repo not found at {DATA_REPO_DIR} — skipping push')
+        return
+
+    print(f'\n[PUSH] Syncing data to atas-data repo...')
+    data_files = [f for f in os.listdir(OUTPUT_DIR) if f.endswith('.txt') and 'debug' not in f]
+    if not data_files:
+        print('[PUSH] No data files to push')
+        return
+
+    for f in data_files:
+        src = os.path.join(OUTPUT_DIR, f)
+        dst = os.path.join(DATA_REPO_DIR, f)
+        shutil.copy2(src, dst)
+        print(f'[PUSH] Copied: {f}')
+
+    try:
+        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M')
+        subprocess.run(['git', 'add', '-A'], cwd=DATA_REPO_DIR, check=True,
+                       capture_output=True, text=True)
+
+        # Check if there are changes to commit
+        result = subprocess.run(['git', 'diff', '--cached', '--quiet'],
+                                cwd=DATA_REPO_DIR, capture_output=True)
+        if result.returncode == 0:
+            print('[PUSH] No changes to push (data unchanged)')
+            return
+
+        subprocess.run(['git', 'commit', '-m', f'data update {timestamp}'],
+                       cwd=DATA_REPO_DIR, check=True, capture_output=True, text=True)
+        subprocess.run(['git', 'push', 'origin', 'main'],
+                       cwd=DATA_REPO_DIR, check=True, capture_output=True, text=True)
+        print(f'[PUSH] ✅ Pushed {len(data_files)} files to atas-data repo')
+    except subprocess.CalledProcessError as e:
+        print(f'[PUSH] ❌ Git error: {e}')
+        if e.stderr:
+            print(f'[PUSH] {e.stderr.strip()}')
+    except Exception as e:
+        print(f'[PUSH] ❌ Error: {e}')
 
 
 if __name__ == '__main__':
