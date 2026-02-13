@@ -4,9 +4,10 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Gold Vol2Vol — Intraday Expected Range & OI</title>
+    <title>Gold Vol2Vol Dashboard — OI & Intraday Volume</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap"
+        rel="stylesheet">
     <style>
         * {
             margin: 0;
@@ -15,23 +16,27 @@
         }
 
         :root {
-            --bg-primary: #0c0c14;
-            --bg-secondary: #12121c;
-            --bg-panel: #181824;
-            --border: #2a2a3e;
+            --bg-primary: #0a0a12;
+            --bg-secondary: #10101a;
+            --bg-panel: #161622;
+            --bg-card: #1a1a2a;
+            --border: #252540;
+            --border-active: #3a3a60;
             --text-primary: #e8e8f0;
             --text-secondary: #9090a8;
             --text-muted: #606078;
             --gold: #f0b90b;
-            --gold-glow: rgba(240, 185, 11, 0.2);
+            --gold-glow: rgba(240, 185, 11, 0.25);
             --orange: #ff9800;
-            --orange-dim: rgba(255, 152, 0, 0.15);
+            --orange-dim: rgba(255, 152, 0, 0.12);
             --cyan: #00e5ff;
             --pink: #ff4081;
             --green: #00e676;
             --red: #ff1744;
             --call-color: #4fc3f7;
+            --call-bg: rgba(79, 195, 247, 0.08);
             --put-color: #ffb74d;
+            --put-bg: rgba(255, 183, 77, 0.08);
         }
 
         body {
@@ -49,7 +54,7 @@
             display: flex;
             align-items: center;
             justify-content: space-between;
-            padding: 10px 20px;
+            padding: 10px 24px;
             background: var(--bg-secondary);
             border-bottom: 1px solid var(--border);
             flex-shrink: 0;
@@ -64,7 +69,7 @@
 
         .logo {
             font-size: 20px;
-            font-weight: 800;
+            font-weight: 900;
             background: linear-gradient(135deg, var(--gold), #ffd54f);
             -webkit-background-clip: text;
             background-clip: text;
@@ -179,247 +184,349 @@
             color: var(--text-muted);
         }
 
-        /* ===== MAIN 3-COLUMN LAYOUT ===== */
+        /* ===== TABS ===== */
+        .tab-bar {
+            display: flex;
+            gap: 0;
+            background: var(--bg-secondary);
+            border-bottom: 1px solid var(--border);
+            padding: 0 24px;
+            flex-shrink: 0;
+        }
+
+        .tab-btn {
+            padding: 10px 22px;
+            font-size: 12px;
+            font-weight: 700;
+            font-family: 'Inter', sans-serif;
+            color: var(--text-muted);
+            background: none;
+            border: none;
+            border-bottom: 2px solid transparent;
+            cursor: pointer;
+            transition: all 0.2s;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .tab-btn:hover {
+            color: var(--text-secondary);
+            background: rgba(255, 255, 255, 0.02);
+        }
+
+        .tab-btn.active {
+            color: var(--gold);
+            border-bottom-color: var(--gold);
+        }
+
+        .tab-btn .tab-dte {
+            font-size: 10px;
+            font-weight: 500;
+            color: var(--text-muted);
+            margin-left: 6px;
+        }
+
+        .tab-btn.active .tab-dte {
+            color: var(--gold);
+            opacity: 0.7;
+        }
+
+        /* ===== SUMMARY STRIP ===== */
+        .summary-strip {
+            display: flex;
+            gap: 0;
+            background: var(--bg-panel);
+            border-bottom: 1px solid var(--border);
+            flex-shrink: 0;
+            overflow-x: auto;
+        }
+
+        .summary-card {
+            flex: 1;
+            min-width: 140px;
+            padding: 12px 18px;
+            border-right: 1px solid var(--border);
+            display: flex;
+            flex-direction: column;
+            gap: 3px;
+        }
+
+        .summary-card:last-child {
+            border-right: none;
+        }
+
+        .summary-label {
+            font-size: 10px;
+            font-weight: 600;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .summary-value {
+            font-size: 16px;
+            font-weight: 800;
+            font-variant-numeric: tabular-nums;
+        }
+
+        .summary-sub {
+            font-size: 11px;
+            color: var(--text-muted);
+            font-variant-numeric: tabular-nums;
+        }
+
+        .val-gold {
+            color: var(--gold);
+        }
+
+        .val-cyan {
+            color: var(--cyan);
+        }
+
+        .val-pink {
+            color: var(--pink);
+        }
+
+        .val-green {
+            color: var(--green);
+        }
+
+        .val-orange {
+            color: var(--orange);
+        }
+
+        /* ===== MAIN 2-COLUMN ===== */
         .main-container {
             flex: 1;
             display: grid;
-            grid-template-columns: 260px 1fr 210px;
+            grid-template-columns: 1fr 1fr;
             min-height: 0;
             overflow: hidden;
         }
 
-        /* ===== OI PANEL (LEFT) ===== */
-        .oi-panel {
-            background: var(--bg-secondary);
-            border-right: 1px solid var(--border);
+        /* ===== PANEL ===== */
+        .data-panel {
             display: flex;
             flex-direction: column;
             overflow: hidden;
         }
 
-        .oi-panel-header {
-            padding: 10px 12px;
+        .data-panel:first-child {
+            border-right: 1px solid var(--border);
+        }
+
+        .panel-header {
+            padding: 10px 16px;
             border-bottom: 1px solid var(--border);
             display: flex;
             justify-content: space-between;
             align-items: center;
+            background: var(--bg-secondary);
         }
 
-        .oi-panel-title {
-            font-size: 11px;
+        .panel-title {
+            font-size: 12px;
             font-weight: 700;
             color: var(--text-secondary);
             text-transform: uppercase;
             letter-spacing: 1.5px;
         }
 
-        .oi-legend {
+        .panel-legend {
             display: flex;
-            gap: 10px;
+            gap: 12px;
             font-size: 10px;
             font-weight: 600;
         }
 
-        .oi-legend-item {
+        .legend-item {
             display: flex;
             align-items: center;
             gap: 4px;
         }
 
-        .oi-legend-dot {
+        .legend-dot {
             width: 8px;
             height: 8px;
             border-radius: 2px;
         }
 
-        .oi-legend-dot.call {
+        .legend-dot.call {
             background: var(--call-color);
         }
 
-        .oi-legend-dot.put {
+        .legend-dot.put {
             background: var(--put-color);
         }
 
-        .oi-legend-call {
+        .legend-call {
             color: var(--call-color);
         }
 
-        .oi-legend-put {
+        .legend-put {
             color: var(--put-color);
         }
 
-        .oi-container {
+        .data-rows {
             flex: 1;
             overflow-y: auto;
             padding: 2px 0;
         }
 
-        .oi-container::-webkit-scrollbar {
-            width: 3px;
+        .data-rows::-webkit-scrollbar {
+            width: 4px;
         }
 
-        .oi-container::-webkit-scrollbar-track {
+        .data-rows::-webkit-scrollbar-track {
             background: transparent;
         }
 
-        .oi-container::-webkit-scrollbar-thumb {
+        .data-rows::-webkit-scrollbar-thumb {
             background: var(--border);
             border-radius: 2px;
         }
 
-        .oi-row {
+        /* ===== ROW ===== */
+        .row {
             display: flex;
             align-items: center;
-            padding: 1px 10px;
-            height: 24px;
+            padding: 1px 14px;
+            height: 26px;
             font-size: 11px;
             cursor: default;
-            border-left: 2px solid transparent;
+            border-left: 3px solid transparent;
+            transition: background 0.1s;
         }
 
-        .oi-row:hover {
+        .row:hover {
             background: rgba(255, 255, 255, 0.02);
         }
 
-        .oi-row.atm {
+        .row.atm {
             background: rgba(240, 185, 11, 0.08);
             border-left-color: var(--gold);
         }
 
-        .oi-row.hot {
-            background: rgba(255, 152, 0, 0.1);
+        .row.hot {
+            background: var(--orange-dim);
             border-left-color: var(--orange);
         }
 
-        .oi-strike {
-            width: 44px;
+        .row-strike {
+            width: 48px;
             text-align: right;
             color: var(--text-muted);
             font-weight: 500;
-            font-size: 10px;
+            font-size: 11px;
             flex-shrink: 0;
             font-variant-numeric: tabular-nums;
         }
 
-        .oi-strike.hot {
+        .row-strike.hot {
             color: var(--orange);
             font-weight: 800;
-            font-size: 11px;
         }
 
-        .oi-bars-wrapper {
+        .row-strike.atm {
+            color: var(--gold);
+            font-weight: 800;
+        }
+
+        .row-bars {
             flex: 1;
             display: flex;
             align-items: center;
-            margin-left: 8px;
-            height: 16px;
+            margin: 0 10px;
+            height: 18px;
             gap: 1px;
         }
 
-        .oi-bar {
+        .bar {
             height: 100%;
             min-width: 0;
             border-radius: 2px;
         }
 
-        .oi-bar-call {
-            background: linear-gradient(90deg, var(--call-color), rgba(79, 195, 247, 0.5));
+        .bar-call {
+            background: linear-gradient(90deg, var(--call-color), rgba(79, 195, 247, 0.4));
         }
 
-        .oi-bar-put {
-            background: linear-gradient(90deg, var(--put-color), rgba(255, 183, 77, 0.5));
+        .bar-put {
+            background: linear-gradient(90deg, var(--put-color), rgba(255, 183, 77, 0.4));
         }
 
-        .oi-total {
+        .row-call {
             width: 42px;
+            text-align: right;
+            font-size: 10px;
+            color: var(--call-color);
+            flex-shrink: 0;
+            font-variant-numeric: tabular-nums;
+            font-weight: 500;
+            opacity: 0.7;
+        }
+
+        .row-put {
+            width: 42px;
+            text-align: right;
+            font-size: 10px;
+            color: var(--put-color);
+            flex-shrink: 0;
+            font-variant-numeric: tabular-nums;
+            font-weight: 500;
+            opacity: 0.7;
+        }
+
+        .row-total {
+            width: 44px;
             text-align: right;
             font-size: 10px;
             color: var(--text-muted);
             flex-shrink: 0;
-            margin-left: 6px;
+            margin-left: 4px;
             font-variant-numeric: tabular-nums;
             font-weight: 500;
         }
 
-        .oi-total.high {
+        .row-total.high {
             color: var(--text-primary);
             font-weight: 700;
         }
 
-        /* ===== CHART (CENTER) — direct iframe ===== */
-        .chart-area {
-            position: relative;
-            overflow: hidden;
-            min-width: 0;
-            min-height: 0;
-        }
-
-        .chart-area iframe {
-            position: absolute;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            border: none;
-        }
-
-        /* ===== VOLUME PANEL (RIGHT) — same style as OI ===== */
-        .vol-panel {
-            background: var(--bg-secondary);
-            border-left: 1px solid var(--border);
+        /* ===== PLACEHOLDER ===== */
+        .placeholder-msg {
             display: flex;
             flex-direction: column;
-            overflow: hidden;
-        }
-
-        /* ===== INFO PANEL (BOTTOM) ===== */
-        .info-panel {
-            display: flex;
             align-items: center;
-            padding: 8px 20px;
-            background: var(--bg-secondary);
-            border-top: 1px solid var(--border);
-            flex-shrink: 0;
-            gap: 28px;
-            font-size: 12px;
-            flex-wrap: wrap;
-            z-index: 100;
-        }
-
-        .info-item {
-            display: flex;
-            align-items: center;
-            gap: 6px;
-        }
-
-        .info-label {
+            justify-content: center;
+            padding: 60px 30px;
+            text-align: center;
             color: var(--text-muted);
-            font-size: 11px;
+            gap: 10px;
         }
 
-        .info-value {
-            color: var(--text-primary);
+        .placeholder-msg .icon {
+            font-size: 36px;
+            opacity: 0.5;
+        }
+
+        .placeholder-msg .title {
+            font-size: 14px;
             font-weight: 700;
-            font-variant-numeric: tabular-nums;
+            color: var(--text-secondary);
         }
 
-        .info-value.gold {
-            color: var(--gold);
-        }
-
-        .info-value.cyan {
-            color: var(--cyan);
-        }
-
-        .info-value.pink {
-            color: var(--pink);
+        .placeholder-msg .desc {
+            font-size: 12px;
+            max-width: 320px;
+            line-height: 1.6;
         }
 
         /* ===== LOADING ===== */
         .loading-overlay {
             position: fixed;
             inset: 0;
-            background: rgba(12, 12, 20, 0.95);
+            background: rgba(10, 10, 18, 0.95);
             display: flex;
             flex-direction: column;
             align-items: center;
@@ -454,6 +561,35 @@
             font-size: 13px;
             font-weight: 500;
         }
+
+        /* ===== INFO FOOTER ===== */
+        .info-footer {
+            display: flex;
+            align-items: center;
+            padding: 6px 24px;
+            background: var(--bg-secondary);
+            border-top: 1px solid var(--border);
+            flex-shrink: 0;
+            gap: 24px;
+            font-size: 11px;
+            flex-wrap: wrap;
+        }
+
+        .info-item {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+
+        .info-label {
+            color: var(--text-muted);
+        }
+
+        .info-value {
+            color: var(--text-primary);
+            font-weight: 700;
+            font-variant-numeric: tabular-nums;
+        }
     </style>
 </head>
 
@@ -486,84 +622,138 @@
         </div>
     </div>
 
-    <!-- ===== MAIN 3-COLUMN ===== -->
-    <div class="main-container">
+    <!-- Contract Tabs -->
+    <div class="tab-bar">
+        <button class="tab-btn active" data-tab="current" onclick="switchTab('current')">
+            Current <span class="tab-dte" id="tabDteCurrent"></span>
+        </button>
+        <button class="tab-btn" data-tab="friday" onclick="switchTab('friday')">
+            Friday <span class="tab-dte" id="tabDteFriday"></span>
+        </button>
+        <button class="tab-btn" data-tab="monthly" onclick="switchTab('monthly')">
+            Monthly <span class="tab-dte" id="tabDteMonthly"></span>
+        </button>
+    </div>
+
+    <!-- Summary Strip -->
+    <div class="summary-strip" id="summaryStrip">
+        <div class="summary-card">
+            <span class="summary-label">Vol Settle (ATM)</span>
+            <span class="summary-value val-cyan" id="sumVolSettle">—</span>
+        </div>
+        <div class="summary-card">
+            <span class="summary-label">Expected Range</span>
+            <span class="summary-value val-gold" id="sumExpRange">—</span>
+            <span class="summary-sub" id="sumExpRangePrices"></span>
+        </div>
+        <div class="summary-card">
+            <span class="summary-label">Max OI Strike</span>
+            <span class="summary-value val-pink" id="sumMaxOI">—</span>
+            <span class="summary-sub" id="sumMaxOIDetail"></span>
+        </div>
+        <div class="summary-card">
+            <span class="summary-label">Total Call OI</span>
+            <span class="summary-value val-cyan" id="sumTotalCall">—</span>
+        </div>
+        <div class="summary-card">
+            <span class="summary-label">Total Put OI</span>
+            <span class="summary-value val-orange" id="sumTotalPut">—</span>
+        </div>
+        <div class="summary-card">
+            <span class="summary-label">P/C Ratio</span>
+            <span class="summary-value" id="sumPCRatio">—</span>
+        </div>
+    </div>
+
+    <!-- ===== MAIN 2-COL ===== -->
+    <div class="main-container" id="mainContainer">
 
         <!-- LEFT: OI Panel -->
-        <div class="oi-panel">
-            <div class="oi-panel-header">
-                <span class="oi-panel-title">Open Interest</span>
-                <div class="oi-legend">
-                    <div class="oi-legend-item">
-                        <div class="oi-legend-dot call"></div><span class="oi-legend-call">Call</span>
+        <div class="data-panel">
+            <div class="panel-header">
+                <span class="panel-title">Open Interest</span>
+                <div class="panel-legend">
+                    <div class="legend-item">
+                        <div class="legend-dot call"></div><span class="legend-call">Call</span>
                     </div>
-                    <div class="oi-legend-item">
-                        <div class="oi-legend-dot put"></div><span class="oi-legend-put">Put</span>
+                    <div class="legend-item">
+                        <div class="legend-dot put"></div><span class="legend-put">Put</span>
                     </div>
                 </div>
             </div>
-            <div class="oi-container" id="oiContainer">
-                <div style="padding:20px;color:var(--text-muted);text-align:center;font-size:12px">Loading OI...</div>
+            <div class="data-rows" id="oiContainer">
+                <div class="placeholder-msg">
+                    <div class="icon">📊</div>
+                    <div class="desc">Loading OI data...</div>
+                </div>
             </div>
         </div>
 
-        <!-- CENTER: TradingView Chart (direct iframe) -->
-        <div class="chart-area">
-            <iframe
-                src="https://www.tradingview.com/widgetembed/?hideideas=1&overrides=%7B%7D&enabled_features=%5B%5D&disabled_features=%5B%5D&locale=en#%7B%22symbol%22%3A%22BLACKBULL%3AGOLD.F%22%2C%22frameElementId%22%3A%22tvFrame%22%2C%22interval%22%3A%2260%22%2C%22hide_top_toolbar%22%3A%220%22%2C%22hide_legend%22%3A%220%22%2C%22save_image%22%3A%221%22%2C%22studies%22%3A%5B%5D%2C%22theme%22%3A%22dark%22%2C%22style%22%3A%221%22%2C%22timezone%22%3A%22Asia%2FBangkok%22%2C%22studies_overrides%22%3A%7B%7D%7D"
-                allowtransparency="true" allowfullscreen>
-            </iframe>
-        </div>
-
-        <!-- RIGHT: Levels Panel -->
         <!-- RIGHT: Intraday Volume Panel -->
-        <div class="vol-panel">
-            <div class="oi-panel-header">
-                <span class="oi-panel-title">Intraday Volume</span>
-                <div class="oi-legend">
-                    <div class="oi-legend-item">
-                        <div class="oi-legend-dot call"></div><span class="oi-legend-call">Call</span>
+        <div class="data-panel">
+            <div class="panel-header">
+                <span class="panel-title">Intraday Volume</span>
+                <div class="panel-legend">
+                    <div class="legend-item">
+                        <div class="legend-dot call"></div><span class="legend-call">Call</span>
                     </div>
-                    <div class="oi-legend-item">
-                        <div class="oi-legend-dot put"></div><span class="oi-legend-put">Put</span>
+                    <div class="legend-item">
+                        <div class="legend-dot put"></div><span class="legend-put">Put</span>
                     </div>
                 </div>
             </div>
-            <div class="oi-container" id="volContainer">
-                <div style="padding:20px;color:var(--text-muted);text-align:center;font-size:12px">Loading Vol...</div>
+            <div class="data-rows" id="volContainer">
+                <div class="placeholder-msg">
+                    <div class="icon">📊</div>
+                    <div class="desc">Loading Volume data...</div>
+                </div>
             </div>
         </div>
 
     </div>
 
-    <!-- Info Panel -->
-    <div class="info-panel">
-        <div class="info-item"><span class="info-label">Vol Settle (ATM):</span><span class="info-value cyan"
-                id="volSettleATM">—</span></div>
-        <div class="info-item"><span class="info-label">Expected Range:</span><span class="info-value gold"
-                id="expectedRange">—</span></div>
-        <div class="info-item"><span class="info-label">Max OI Strike:</span><span class="info-value pink"
-                id="maxOIStrike">—</span></div>
-        <div class="info-item"><span class="info-label">Total Call OI:</span><span class="info-value"
-                id="totalCallOI">—</span></div>
-        <div class="info-item"><span class="info-label">Total Put OI:</span><span class="info-value"
-                id="totalPutOI">—</span></div>
-        <div class="info-item"><span class="info-label">P/C Ratio:</span><span class="info-value" id="pcRatio">—</span>
+    <!-- Info Footer -->
+    <div class="info-footer">
+        <div class="info-item"><span class="info-label">Source:</span><span class="info-value">pageth/Vol2VolData</span>
         </div>
+        <div class="info-item"><span class="info-label">Contract:</span><span class="info-value"
+                id="footerContract">—</span></div>
+        <div class="info-item"><span class="info-label">Data Type:</span><span class="info-value"
+                id="footerDataType">—</span></div>
     </div>
 
     <script>
         // ========== CONFIG ==========
         const CONFIG = {
-            intradayUrl: 'https://raw.githubusercontent.com/pageth/Vol2VolData/main/IntradayData.txt',
-            oiUrl: 'https://raw.githubusercontent.com/pageth/Vol2VolData/main/OIData.txt',
-            roundNumberInterval: 25,
+            contracts: {
+                current: {
+                    label: 'Current',
+                    intradayUrl: 'https://raw.githubusercontent.com/pageth/Vol2VolData/main/IntradayData.txt',
+                    oiUrl: 'https://raw.githubusercontent.com/pageth/Vol2VolData/main/OIData.txt',
+                },
+                friday: {
+                    label: 'Friday',
+                    intradayUrl: null, // Future: scraper URL
+                    oiUrl: null,
+                },
+                monthly: {
+                    label: 'Monthly',
+                    intradayUrl: null, // Future: scraper URL
+                    oiUrl: null,
+                },
+            },
             refreshIntervalMs: 60000,
             visibleStrikeRange: 300,
-            oiBarMaxWidth: 110,
+            barMaxWidth: 160,
+            oiHotThreshold: 100,
+            volHotThreshold: 80,
         };
 
-        let state = { intradayData: null, oiData: null, refreshTimer: null };
+        let state = {
+            activeTab: 'current',
+            data: { current: {}, friday: {}, monthly: {} },
+            refreshTimer: null,
+        };
 
         // ========== PARSE ==========
         function parseVol2VolData(text) {
@@ -587,56 +777,97 @@
             for (let i = 2; i < lines.length; i++) {
                 const p = lines[i].split(',');
                 if (p.length >= 4) {
-                    strikes.push({ strike: parseFloat(p[0]), call: parseInt(p[1]), put: parseInt(p[2]), volSettle: parseFloat(p[3]), total: parseInt(p[1]) + parseInt(p[2]) });
+                    strikes.push({
+                        strike: parseFloat(p[0]),
+                        call: parseInt(p[1]),
+                        put: parseInt(p[2]),
+                        volSettle: parseFloat(p[3]),
+                        total: parseInt(p[1]) + parseInt(p[2]),
+                    });
                 }
             }
             return { header, dte, underlying, change, dataType, contract, strikes };
         }
 
         // ========== FETCH ==========
-        async function fetchData() {
+        async function fetchTabData(tabKey) {
+            const cfg = CONFIG.contracts[tabKey];
+            if (!cfg.intradayUrl && !cfg.oiUrl) {
+                state.data[tabKey] = { intraday: null, oi: null };
+                return;
+            }
             try {
-                const [intRes, oiRes] = await Promise.all([
-                    fetch(CONFIG.intradayUrl + '?t=' + Date.now()),
-                    fetch(CONFIG.oiUrl + '?t=' + Date.now()),
-                ]);
-                if (!intRes.ok || !oiRes.ok) throw new Error('Fetch failed');
-                state.intradayData = parseVol2VolData(await intRes.text());
-                state.oiData = parseVol2VolData(await oiRes.text());
-                return true;
-            } catch (e) { console.error('Fetch error:', e); return false; }
+                const ts = Date.now();
+                const promises = [];
+                promises.push(cfg.intradayUrl ? fetch(cfg.intradayUrl + '?t=' + ts) : Promise.resolve(null));
+                promises.push(cfg.oiUrl ? fetch(cfg.oiUrl + '?t=' + ts) : Promise.resolve(null));
+                const [intRes, oiRes] = await Promise.all(promises);
+                state.data[tabKey] = {
+                    intraday: intRes?.ok ? parseVol2VolData(await intRes.text()) : null,
+                    oi: oiRes?.ok ? parseVol2VolData(await oiRes.text()) : null,
+                };
+            } catch (e) {
+                console.error(`Fetch error (${tabKey}):`, e);
+            }
         }
 
-        // ========== RENDER BARS (shared for both panels) ==========
-        function renderBarsPanel(containerId, data, maxWidth, hotThreshold) {
+        // ========== RENDER ROWS ==========
+        function renderPanel(containerId, data, hotThreshold) {
             const container = document.getElementById(containerId);
-            if (!data?.strikes) { container.innerHTML = '<div style="padding:20px;color:var(--text-muted);text-align:center;font-size:12px">No data</div>'; return; }
+            if (!data?.strikes) {
+                container.innerHTML = '<div class="placeholder-msg"><div class="icon">📊</div><div class="desc">No data available</div></div>';
+                return;
+            }
             const underlying = data.underlying;
-            const filtered = data.strikes.filter(s => s.strike >= underlying - CONFIG.visibleStrikeRange && s.strike <= underlying + CONFIG.visibleStrikeRange && s.total > 0);
-            if (filtered.length === 0) { container.innerHTML = '<div style="padding:20px;color:var(--text-muted);text-align:center;font-size:12px">No data in range</div>'; return; }
+            const filtered = data.strikes.filter(s =>
+                s.strike >= underlying - CONFIG.visibleStrikeRange &&
+                s.strike <= underlying + CONFIG.visibleStrikeRange &&
+                s.total > 0
+            );
+            if (filtered.length === 0) {
+                container.innerHTML = '<div class="placeholder-msg"><div class="icon">📭</div><div class="desc">No data in visible range</div></div>';
+                return;
+            }
             const maxSingle = Math.max(...filtered.map(s => Math.max(s.call, s.put)), 1);
             filtered.sort((a, b) => b.strike - a.strike);
-            let closestStrike = filtered.reduce((prev, curr) => Math.abs(curr.strike - underlying) < Math.abs(prev.strike - underlying) ? curr : prev, filtered[0]);
+            const closestStrike = filtered.reduce((prev, curr) =>
+                Math.abs(curr.strike - underlying) < Math.abs(prev.strike - underlying) ? curr : prev, filtered[0]);
+
             let html = '';
             for (const s of filtered) {
                 const isATM = s === closestStrike;
-                const isHot = s.total >= hotThreshold;
-                let cls = 'oi-row';
-                if (isATM) cls += ' atm';
-                else if (isHot) cls += ' hot';
-                const callW = Math.max(0, (s.call / maxSingle) * maxWidth);
-                const putW = Math.max(0, (s.put / maxSingle) * maxWidth);
-                html += `<div class="${cls}" title="Call: ${s.call} | Put: ${s.put}"><span class="oi-strike ${isHot ? 'hot' : ''}">${s.strike}</span><div class="oi-bars-wrapper">${s.call > 0 ? `<div class="oi-bar oi-bar-call" style="width:${callW}px"></div>` : ''}${s.put > 0 ? `<div class="oi-bar oi-bar-put" style="width:${putW}px"></div>` : ''}</div><span class="oi-total ${isHot ? 'high' : ''}">${s.total}</span></div>`;
+                const isHot = !isATM && s.total >= hotThreshold;
+                let rowCls = 'row';
+                if (isATM) rowCls += ' atm';
+                else if (isHot) rowCls += ' hot';
+
+                let strikeCls = 'row-strike';
+                if (isATM) strikeCls += ' atm';
+                else if (isHot) strikeCls += ' hot';
+
+                const callW = Math.max(0, (s.call / maxSingle) * CONFIG.barMaxWidth);
+                const putW = Math.max(0, (s.put / maxSingle) * CONFIG.barMaxWidth);
+
+                html += `<div class="${rowCls}" title="Strike: ${s.strike} | Call: ${s.call} | Put: ${s.put}">` +
+                    `<span class="${strikeCls}">${s.strike}</span>` +
+                    `<span class="row-call">${s.call > 0 ? s.call : ''}</span>` +
+                    `<div class="row-bars">` +
+                    `${s.call > 0 ? `<div class="bar bar-call" style="width:${callW}px"></div>` : ''}` +
+                    `${s.put > 0 ? `<div class="bar bar-put" style="width:${putW}px"></div>` : ''}` +
+                    `</div>` +
+                    `<span class="row-put">${s.put > 0 ? s.put : ''}</span>` +
+                    `<span class="row-total ${isHot || (isATM && s.total >= hotThreshold) ? 'high' : ''}">${s.total}</span>` +
+                    `</div>`;
             }
             container.innerHTML = html;
         }
 
-        function renderOIPanel(oiData) { renderBarsPanel('oiContainer', oiData, CONFIG.oiBarMaxWidth, 100); }
-        function renderVolPanel(intradayData) { renderBarsPanel('volContainer', intradayData, CONFIG.oiBarMaxWidth, 80); }
+        // ========== UPDATE SUMMARY ==========
+        function updateSummary(intraday, oi) {
+            const data = oi || intraday;
+            if (!data) return;
 
-        // ========== UPDATE UI ==========
-        function updateUI(intradayData, oiData) {
-            const data = oiData || intradayData; if (!data) return;
+            // Header info
             document.getElementById('contractName').textContent = 'Gold (GC)';
             document.getElementById('contractDetail').textContent = data.contract || '';
             document.getElementById('priceDisplay').textContent = data.underlying.toFixed(1);
@@ -645,37 +876,89 @@
             ce.className = `price-change ${data.change >= 0 ? 'up' : 'down'}`;
             document.getElementById('dteBadge').textContent = `DTE ${data.dte.toFixed(2)}`;
             document.getElementById('lastUpdate').textContent = new Date().toLocaleTimeString('th-TH');
-            if (intradayData?.strikes) {
-                let atm = intradayData.strikes.reduce((p, c) => Math.abs(c.strike - data.underlying) < Math.abs(p.strike - data.underlying) ? c : p);
+            document.getElementById('footerContract').textContent = data.contract || '';
+
+            // Vol Settle & Expected Range
+            if (intraday?.strikes) {
+                const atm = intraday.strikes.reduce((p, c) =>
+                    Math.abs(c.strike - data.underlying) < Math.abs(p.strike - data.underlying) ? c : p);
                 if (atm.volSettle > 0) {
-                    document.getElementById('volSettleATM').textContent = (atm.volSettle * 100).toFixed(2) + '%';
+                    document.getElementById('sumVolSettle').textContent = (atm.volSettle * 100).toFixed(2) + '%';
                     const er = data.underlying * atm.volSettle * Math.sqrt(data.dte / 365);
-                    document.getElementById('expectedRange').textContent = `±${er.toFixed(1)} ($${(data.underlying - er).toFixed(0)} – $${(data.underlying + er).toFixed(0)})`;
+                    document.getElementById('sumExpRange').textContent = `±${er.toFixed(1)}`;
+                    document.getElementById('sumExpRangePrices').textContent =
+                        `$${(data.underlying - er).toFixed(0)} – $${(data.underlying + er).toFixed(0)}`;
                 }
+                document.getElementById('footerDataType').textContent = intraday.dataType || '';
             }
-            if (oiData?.strikes) {
-                const mx = oiData.strikes.reduce((p, c) => c.total > p.total ? c : p);
-                document.getElementById('maxOIStrike').textContent = `${mx.strike} (${mx.total})`;
-                let tc = 0, tp = 0; oiData.strikes.forEach(s => { tc += s.call; tp += s.put; });
-                document.getElementById('totalCallOI').textContent = tc.toLocaleString();
-                document.getElementById('totalPutOI').textContent = tp.toLocaleString();
-                document.getElementById('pcRatio').textContent = tc > 0 ? (tp / tc).toFixed(2) : '—';
+
+            // OI stats
+            if (oi?.strikes) {
+                const mx = oi.strikes.reduce((p, c) => c.total > p.total ? c : p);
+                document.getElementById('sumMaxOI').textContent = mx.strike.toString();
+                document.getElementById('sumMaxOIDetail').textContent = `Total: ${mx.total} (C:${mx.call} P:${mx.put})`;
+                let tc = 0, tp = 0;
+                oi.strikes.forEach(s => { tc += s.call; tp += s.put; });
+                document.getElementById('sumTotalCall').textContent = tc.toLocaleString();
+                document.getElementById('sumTotalPut').textContent = tp.toLocaleString();
+                document.getElementById('sumPCRatio').textContent = tc > 0 ? (tp / tc).toFixed(2) : '—';
             }
+        }
+
+        // ========== TAB SWITCH ==========
+        function switchTab(tabKey) {
+            state.activeTab = tabKey;
+            document.querySelectorAll('.tab-btn').forEach(b => {
+                b.classList.toggle('active', b.dataset.tab === tabKey);
+            });
+            renderActiveTab();
+        }
+
+        function renderActiveTab() {
+            const tabData = state.data[state.activeTab];
+            if (!tabData || (!tabData.intraday && !tabData.oi)) {
+                // Show placeholder
+                const oiC = document.getElementById('oiContainer');
+                const volC = document.getElementById('volContainer');
+                oiC.innerHTML = `<div class="placeholder-msg"><div class="icon">🔒</div><div class="title">No Data Yet</div><div class="desc">This contract requires a QuikStrike scraper. Set up the Python scraper to fetch ${CONFIG.contracts[state.activeTab].label} contract data.</div></div>`;
+                volC.innerHTML = `<div class="placeholder-msg"><div class="icon">🔒</div><div class="title">No Data Yet</div><div class="desc">Configure the scraper to populate ${CONFIG.contracts[state.activeTab].label} contract Intraday Volume.</div></div>`;
+
+                // Clear summary
+                ['sumVolSettle', 'sumExpRange', 'sumMaxOI', 'sumTotalCall', 'sumTotalPut', 'sumPCRatio'].forEach(id => {
+                    document.getElementById(id).textContent = '—';
+                });
+                document.getElementById('sumExpRangePrices').textContent = '';
+                document.getElementById('sumMaxOIDetail').textContent = '';
+                return;
+            }
+            renderPanel('oiContainer', tabData.oi, CONFIG.oiHotThreshold);
+            renderPanel('volContainer', tabData.intraday, CONFIG.volHotThreshold);
+            updateSummary(tabData.intraday, tabData.oi);
         }
 
         // ========== REFRESH ==========
         async function refreshData() {
             const btn = document.querySelector('.refresh-btn');
-            btn.textContent = '⟳ Loading...'; btn.disabled = true;
-            const ok = await fetchData();
-            if (ok) { renderOIPanel(state.oiData); renderVolPanel(state.intradayData); updateUI(state.intradayData, state.oiData); }
-            btn.textContent = '⟳ Refresh'; btn.disabled = false;
+            btn.textContent = '⟳ Loading...';
+            btn.disabled = true;
+            await fetchTabData(state.activeTab);
+            renderActiveTab();
+            btn.textContent = '⟳ Refresh';
+            btn.disabled = false;
         }
 
         // ========== INIT ==========
         async function init() {
-            const ok = await fetchData();
-            if (ok) { renderOIPanel(state.oiData); renderVolPanel(state.intradayData); updateUI(state.intradayData, state.oiData); }
+            // Fetch current tab data
+            await fetchTabData('current');
+
+            // Update tab DTE
+            const curData = state.data.current?.oi || state.data.current?.intraday;
+            if (curData) {
+                document.getElementById('tabDteCurrent').textContent = `(${curData.dte.toFixed(1)}d)`;
+            }
+
+            renderActiveTab();
             document.getElementById('loading').classList.add('hidden');
             state.refreshTimer = setInterval(refreshData, CONFIG.refreshIntervalMs);
         }
