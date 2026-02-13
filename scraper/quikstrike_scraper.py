@@ -1,10 +1,10 @@
 # QuikStrike Vol2Vol Scraper
 # Scrapes Gold options data from CME QuikStrike for 3 contract types:
 # 1. Current (nearest expiry)
-# 2. Friday (weekly Friday expiry)  
+# 2. Friday (weekly Friday expiry)
 # 3. Monthly (front month)
 #
-# Requirements: pip install selenium webdriver-manager gitpython
+# Requirements: pip install selenium webdriver-manager
 
 import os
 import sys
@@ -22,538 +22,547 @@ from selenium.common.exceptions import TimeoutException, NoSuchElementException
 from webdriver_manager.chrome import ChromeDriverManager
 
 # ============================================================
-# CONFIGURATION — Edit these values
+# CONFIGURATION — Edit these values or set env vars
 # ============================================================
 CME_EMAIL = os.environ.get('CME_EMAIL', '')
 CME_PASSWORD = os.environ.get('CME_PASSWORD', '')
 
-# Output directory for data files (relative to script)
+# Output directory for data files
 OUTPUT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data')
 
-# QuikStrike URLs
-QUIKSTRIKE_VOL2VOL_URL = 'https://cmegroup-sso.quikstrike.net/User/QuikStrikeView.aspx?pid=40&pf=6'
-CME_LOGIN_URL = 'https://www.cmegroup.com/market-data/tools/quikstrike-options-overview.html'
-
-# Contract types to scrape
-# The scraper will auto-detect available contracts from the dropdown
-CONTRACT_TYPES = ['current', 'friday', 'monthly']
+# ─── URLs ───
+# The CME wrapper page embeds QuikStrike in an iframe.
+# Going to the direct QuikStrike URL redirects to SSO login first.
+CME_WRAPPER_URL = 'https://www.cmegroup.com/tools-information/quikstrike/vol2vol-expected-range.html'
+QUIKSTRIKE_DIRECT_URL = 'https://cmegroup-sso.quikstrike.net/User/QuikStrikeView.aspx?pid=40&pf=6'
 
 # ============================================================
 # HELPERS
 # ============================================================
 
 def create_driver():
-    """Create a headless Chrome WebDriver."""
+    """Create a Chrome WebDriver (visible for login)."""
     options = Options()
-    # options.add_argument('--headless=new')  # Uncomment for headless mode after testing
+    # Do NOT use headless — CME SSO login needs visible Chrome
     options.add_argument('--no-sandbox')
     options.add_argument('--disable-dev-shm-usage')
     options.add_argument('--disable-gpu')
     options.add_argument('--window-size=1920,1080')
     options.add_argument('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36')
-    
+
     service = Service(ChromeDriverManager().install())
     driver = webdriver.Chrome(service=service, options=options)
-    driver.implicitly_wait(10)
+    driver.implicitly_wait(5)
     return driver
 
 
-def login_cme(driver):
+def login_cme(driver, max_wait=120):
     """
     Login to CME Group SSO.
-    After login, the session cookies will allow access to QuikStrike.
+    1. Navigate to QuikStrike direct URL → it redirects to login.cmegroup.com
+    2. Fill email + password
+    3. Submit → wait for redirect back to QuikStrike
     """
-    print('[LOGIN] Navigating to CME login...')
-    driver.get(CME_LOGIN_URL)
+    print('[LOGIN] Navigating to QuikStrike (will redirect to SSO)...')
+    driver.get(QUIKSTRIKE_DIRECT_URL)
     time.sleep(3)
-    
-    # Check if already logged in
-    if 'quikstrike' in driver.current_url.lower():
+
+    current = driver.current_url
+    print(f'[LOGIN] Current URL: {current}')
+
+    # ─── Already on QuikStrike? ───
+    if 'quikstrike.net' in current and 'login' not in current.lower():
         print('[LOGIN] Already logged in!')
         return True
-    
-    try:
-        # Look for the login button/link that redirects to CME SSO
-        # The exact flow may vary — try multiple approaches
-        
-        # Approach 1: Direct QuikStrike URL (may redirect to SSO)
-        driver.get(QUIKSTRIKE_VOL2VOL_URL)
-        time.sleep(3)
-        
-        # If redirected to login page
-        if 'login' in driver.current_url.lower() or 'sso' in driver.current_url.lower() or 'auth' in driver.current_url.lower():
-            print('[LOGIN] SSO login page detected, entering credentials...')
-            
-            # Wait for email field
-            email_field = WebDriverWait(driver, 15).until(
-                EC.presence_of_element_located((By.CSS_SELECTOR, 'input[type="email"], input[name="email"], input[id*="email"], input[id*="user"], input[name*="user"]'))
+
+    # ─── On SSO login page ───
+    if 'login.cmegroup.com' in current or 'sso' in current:
+        print('[LOGIN] SSO login page detected.')
+
+        if not CME_EMAIL or not CME_PASSWORD:
+            print('[LOGIN] No credentials provided. Waiting for manual login...')
+            print(f'[LOGIN] Please log in manually within {max_wait} seconds.')
+            return _wait_for_quikstrike(driver, max_wait)
+
+        try:
+            # Wait for the email field
+            user_field = WebDriverWait(driver, 15).until(
+                EC.presence_of_element_located((By.ID, 'user'))
             )
-            email_field.clear()
-            email_field.send_keys(CME_EMAIL)
-            
-            # Find and fill password
-            password_field = driver.find_element(By.CSS_SELECTOR, 'input[type="password"]')
-            password_field.clear()
-            password_field.send_keys(CME_PASSWORD)
-            
-            # Click login button
-            login_btn = driver.find_element(By.CSS_SELECTOR, 'button[type="submit"], input[type="submit"]')
+            user_field.clear()
+            user_field.send_keys(CME_EMAIL)
+            print('[LOGIN] Entered email.')
+
+            # Password field
+            pwd_field = driver.find_element(By.ID, 'pwd')
+            pwd_field.clear()
+            pwd_field.send_keys(CME_PASSWORD)
+            print('[LOGIN] Entered password.')
+
+            # Click "LOG IN" button
+            login_btn = driver.find_element(By.ID, 'loginBtn')
             login_btn.click()
-            
-            # Wait for redirect to QuikStrike
-            time.sleep(8)
-            print(f'[LOGIN] Current URL after login: {driver.current_url}')
-        
-        # Verify we're on QuikStrike
-        if 'quikstrike' in driver.current_url.lower():
-            print('[LOGIN] Successfully logged into QuikStrike!')
+            print('[LOGIN] Clicked LOG IN. Waiting for redirect...')
+
+            # Wait for redirect to QuikStrike (may take a while for MFA/CAPTCHA)
+            return _wait_for_quikstrike(driver, max_wait)
+
+        except Exception as e:
+            print(f'[LOGIN] Auto-login error: {e}')
+            print(f'[LOGIN] Falling back to manual login. You have {max_wait}s...')
+            return _wait_for_quikstrike(driver, max_wait)
+
+    # Unknown page — try manual login
+    print(f'[LOGIN] Unknown page: {current}')
+    print(f'[LOGIN] Please manually navigate and log in. Waiting {max_wait}s...')
+    return _wait_for_quikstrike(driver, max_wait)
+
+
+def _wait_for_quikstrike(driver, timeout_sec):
+    """Poll until the browser is on a QuikStrike page (not login)."""
+    start = time.time()
+    check_interval = 3
+    while time.time() - start < timeout_sec:
+        url = driver.current_url
+        if 'quikstrike.net' in url and 'login' not in url.lower():
+            print(f'[LOGIN] ✅ Successfully reached QuikStrike! URL: {url}')
             return True
-        else:
-            print(f'[LOGIN] May not be logged in. Current URL: {driver.current_url}')
-            print('[LOGIN] Please check if manual login is required...')
-            
-            # Give user time to manually login if needed
-            print('[LOGIN] Waiting 30 seconds for manual login if needed...')
-            time.sleep(30)
-            
-            if 'quikstrike' in driver.current_url.lower():
-                print('[LOGIN] Manual login successful!')
-                return True
-            return False
-            
-    except Exception as e:
-        print(f'[LOGIN] Error during login: {e}')
-        return False
+        time.sleep(check_interval)
+    print('[LOGIN] ❌ Timed out waiting for QuikStrike.')
+    return False
 
 
-def get_contract_list(driver):
+def ensure_on_vol2vol(driver):
+    """Make sure we're on the Vol2Vol page (pid=40, pf=6)."""
+    current = driver.current_url
+    if 'pid=40' in current and 'pf=6' in current:
+        return True
+    print('[NAV] Navigating to Vol2Vol page...')
+    driver.get(QUIKSTRIKE_DIRECT_URL)
+    time.sleep(5)
+    return 'quikstrike' in driver.current_url.lower()
+
+
+# ============================================================
+# CONTRACT DISCOVERY
+# ============================================================
+
+def get_contracts_from_dropdown(driver):
     """
-    Get list of available contracts from the expiration dropdown.
-    Returns: list of dicts with {symbol, text, dte, option_element}
+    Find the expiration dropdown and extract available contracts.
+    Returns list of dicts: {value, text}
     """
     contracts = []
-    try:
-        # Look for the expiration dropdown
-        # From the screenshot: it's a SELECT element or a custom dropdown
-        dropdown = WebDriverWait(driver, 10).until(
-            EC.presence_of_element_located((By.CSS_SELECTOR, 
-                'select[id*="Expiration"], select[id*="expiration"], select[id*="ddlExpiry"], select[id*="Contract"]'))
-        )
-        
-        select = Select(dropdown)
-        for option in select.options:
-            text = option.text.strip()
-            value = option.get_attribute('value')
-            if text and value:
-                # Parse DTE from text if available
-                dte_match = re.search(r'([\d.]+)\s*DTE', text, re.IGNORECASE)
-                dte = float(dte_match.group(1)) if dte_match else None
-                contracts.append({
-                    'symbol': value,
-                    'text': text,
-                    'dte': dte,
-                })
-        
-        print(f'[CONTRACTS] Found {len(contracts)} contracts:')
-        for c in contracts[:10]:
-            print(f'  - {c["text"]} (value={c["symbol"]})')
-            
-    except Exception as e:
-        print(f'[CONTRACTS] Error finding dropdown: {e}')
-        # Try alternative: find links/buttons in the contract table
+
+    # Try multiple possible selectors for the dropdown
+    selectors = [
+        'select[id*="ddlExpiry"]',
+        'select[id*="ddlContract"]',
+        'select[id*="Expiration"]',
+        'select[id*="expiration"]',
+        'select[id*="Contract"]',
+    ]
+
+    dropdown = None
+    for sel in selectors:
         try:
-            rows = driver.find_elements(By.CSS_SELECTOR, 'table tr[onclick], table tr a')
-            print(f'[CONTRACTS] Found {len(rows)} clickable contract rows')
-        except:
-            pass
-    
+            dropdown = driver.find_element(By.CSS_SELECTOR, sel)
+            print(f'[DROPDOWN] Found via: {sel}')
+            break
+        except NoSuchElementException:
+            continue
+
+    if not dropdown:
+        # Try to find ALL select elements and check their options
+        print('[DROPDOWN] Trying to find any select element...')
+        all_selects = driver.find_elements(By.TAG_NAME, 'select')
+        print(f'[DROPDOWN] Found {len(all_selects)} select elements:')
+        for i, sel_elem in enumerate(all_selects):
+            sel_id = sel_elem.get_attribute('id') or '(no id)'
+            sel_name = sel_elem.get_attribute('name') or '(no name)'
+            try:
+                opts = Select(sel_elem).options
+                opt_texts = [o.text.strip()[:40] for o in opts[:3]]
+                print(f'  [{i}] id={sel_id} name={sel_name} options={opt_texts}...')
+                # Check if this looks like a contract dropdown
+                for o in opts:
+                    txt = o.text.strip()
+                    if 'OG' in txt or 'GC' in txt or 'DTE' in txt:
+                        dropdown = sel_elem
+                        print(f'  → This looks like the contract dropdown!')
+                        break
+            except:
+                print(f'  [{i}] id={sel_id} name={sel_name} (could not read options)')
+            if dropdown:
+                break
+
+    if not dropdown:
+        print('[DROPDOWN] ❌ Could not find contract dropdown.')
+        # Save page source for debugging
+        debug_path = os.path.join(OUTPUT_DIR, 'debug_page.html')
+        with open(debug_path, 'w', encoding='utf-8') as f:
+            f.write(driver.page_source)
+        print(f'[DROPDOWN] Saved page source to: {debug_path}')
+
+        # Also save a screenshot
+        screenshot_path = os.path.join(OUTPUT_DIR, 'debug_screenshot.png')
+        driver.save_screenshot(screenshot_path)
+        print(f'[DROPDOWN] Saved screenshot to: {screenshot_path}')
+        return []
+
+    # Read all options
+    select = Select(dropdown)
+    for option in select.options:
+        text = option.text.strip()
+        value = option.get_attribute('value') or ''
+        if text and value:
+            contracts.append({'value': value, 'text': text})
+
+    print(f'[DROPDOWN] Found {len(contracts)} contracts:')
+    for c in contracts:
+        print(f'  - {c["text"]} (value={c["value"]})')
+
     return contracts
 
 
 def classify_contracts(contracts):
     """
-    Classify contracts into current, friday, and monthly.
-    Returns: dict with keys 'current', 'friday', 'monthly'
+    Classify contracts into current (nearest), friday (weekly), monthly.
     """
     result = {'current': None, 'friday': None, 'monthly': None}
-    
+
     if not contracts:
         return result
-    
-    # Sort by DTE
+
+    # Parse DTE from text if possible
+    for c in contracts:
+        dte_match = re.search(r'([\d.]+)\s*(?:DTE|dte)', c['text'])
+        c['dte'] = float(dte_match.group(1)) if dte_match else None
+
+    # Sort by DTE (unknown DTE at end)
     sorted_c = sorted(contracts, key=lambda c: c['dte'] if c['dte'] is not None else 9999)
-    
-    # Current = lowest DTE
-    if sorted_c:
+
+    # Current = smallest DTE
+    if sorted_c and sorted_c[0]['dte'] is not None:
         result['current'] = sorted_c[0]
-    
-    # Friday = find nearest Friday expiry (weekly)
-    # Usually weekly options have symbols like OG*G6 for Gold weekly
+
+    # Find Friday weekly (DTE between 1-7, different from current)
     for c in sorted_c:
-        sym = c['symbol'].upper()
-        text = c['text'].upper()
-        # Look for weekly Friday contracts
-        if c['dte'] and c['dte'] > 0:
-            # Check if it's a different contract than current and within ~7 days
-            if result['current'] and c['symbol'] != result['current']['symbol'] and c['dte'] <= 7:
+        if c['dte'] is not None and 1 < c['dte'] <= 7:
+            if result['current'] and c['value'] != result['current']['value']:
                 result['friday'] = c
                 break
-    
-    # Monthly = find the main monthly contract (usually starts with GC or OG with longer DTE)
+
+    # Monthly = first with DTE > 14
     for c in sorted_c:
-        sym = c['symbol'].upper()
-        text = c['text'].upper()
-        if c['dte'] and c['dte'] > 7:
-            # Monthly contracts typically have larger DTE
-            if 'monthly' in text.lower() or c['dte'] > 14:
-                result['monthly'] = c
-                break
-    
-    # Fallback: if no monthly found, pick the one with DTE > 14
-    if not result['monthly']:
-        for c in sorted_c:
-            if c['dte'] and c['dte'] > 14:
-                result['monthly'] = c
-                break
-    
+        if c['dte'] is not None and c['dte'] > 14:
+            result['monthly'] = c
+            break
+
     return result
 
 
-def extract_highcharts_data(driver):
+# ============================================================
+# DATA EXTRACTION
+# ============================================================
+
+def select_contract(driver, contract_value):
+    """Select a contract from the dropdown."""
+    selectors = [
+        'select[id*="ddlExpiry"]',
+        'select[id*="ddlContract"]',
+        'select[id*="Expiration"]',
+        'select[id*="expiration"]',
+        'select[id*="Contract"]',
+    ]
+    for sel in selectors:
+        try:
+            dropdown = driver.find_element(By.CSS_SELECTOR, sel)
+            select = Select(dropdown)
+            select.select_by_value(contract_value)
+            print(f'[SELECT] Selected contract: {contract_value}')
+            time.sleep(4)  # Wait for postback
+            return True
+        except:
+            continue
+
+    # Fallback: find any select that has this value
+    all_selects = driver.find_elements(By.TAG_NAME, 'select')
+    for sel_elem in all_selects:
+        try:
+            select = Select(sel_elem)
+            select.select_by_value(contract_value)
+            time.sleep(4)
+            print(f'[SELECT] Selected contract via fallback: {contract_value}')
+            return True
+        except:
+            continue
+
+    print(f'[SELECT] ❌ Failed to select contract: {contract_value}')
+    return False
+
+
+def switch_view(driver, view_type):
     """
-    Extract data from the Highcharts chart rendered on the page.
-    Returns the series data as a list of dicts.
+    Switch between 'intraday' and 'oi' views.
+    Clicks the appropriate link/button on the page.
     """
-    try:
-        # Wait for Highcharts to render
-        time.sleep(2)
-        
-        # Extract data via JavaScript
-        data = driver.execute_script("""
-            if (typeof Highcharts === 'undefined' || !Highcharts.charts) return null;
-            
-            // Find the active chart
-            var chart = null;
-            for (var i = 0; i < Highcharts.charts.length; i++) {
-                if (Highcharts.charts[i]) {
-                    chart = Highcharts.charts[i];
-                    break;
-                }
-            }
-            if (!chart) return null;
-            
-            var result = {
+    if view_type == 'intraday':
+        search_texts = ['Intraday', 'Volume']
+        css_selectors = [
+            '[id*="lbIntraday"]',
+            '[id*="IntradayVolume"]',
+            'a[id*="lbIntraday"]',
+        ]
+    else:
+        search_texts = ['Open Interest', 'OI']
+        css_selectors = [
+            '[id*="lbOpen"]',
+            '[id*="OpenInterest"]',
+            'a[id*="lbOpen"]',
+        ]
+
+    # Try CSS selectors first
+    for sel in css_selectors:
+        try:
+            el = driver.find_element(By.CSS_SELECTOR, sel)
+            el.click()
+            time.sleep(3)
+            print(f'[VIEW] Switched to {view_type} via {sel}')
+            return True
+        except:
+            continue
+
+    # Try by link text
+    for text in search_texts:
+        try:
+            el = driver.find_element(By.PARTIAL_LINK_TEXT, text)
+            el.click()
+            time.sleep(3)
+            print(f'[VIEW] Switched to {view_type} via link text "{text}"')
+            return True
+        except:
+            continue
+
+    # Fallback: find all <a> tags and look for matching text
+    links = driver.find_elements(By.TAG_NAME, 'a')
+    for link in links:
+        txt = link.text.lower()
+        for search in search_texts:
+            if search.lower() in txt:
+                try:
+                    link.click()
+                    time.sleep(3)
+                    print(f'[VIEW] Switched to {view_type} via <a> text match')
+                    return True
+                except:
+                    continue
+
+    print(f'[VIEW] ❌ Could not switch to {view_type}')
+    return False
+
+
+def extract_chart_data(driver):
+    """
+    Extract data from Highcharts chart(s) on the page.
+    Returns: {title, series: [{name, type, data: [{x, y}]}]}
+    """
+    time.sleep(2)  # Ensure chart is fully rendered
+
+    data = driver.execute_script("""
+        if (typeof Highcharts === 'undefined') return {error: 'Highcharts not defined'};
+        if (!Highcharts.charts) return {error: 'No Highcharts.charts'};
+
+        var charts = Highcharts.charts.filter(c => c != null);
+        if (charts.length === 0) return {error: 'No active charts'};
+
+        var results = [];
+        for (var ci = 0; ci < charts.length; ci++) {
+            var chart = charts[ci];
+            var chartResult = {
+                index: ci,
                 title: chart.title ? chart.title.textStr : '',
+                subtitle: chart.subtitle ? chart.subtitle.textStr : '',
+                seriesCount: chart.series.length,
                 series: []
             };
-            
+
             for (var s = 0; s < chart.series.length; s++) {
                 var series = chart.series[s];
+                if (!series.visible) continue;
                 var points = [];
                 for (var p = 0; p < series.data.length; p++) {
                     var point = series.data[p];
                     points.push({
-                        x: point.x !== undefined ? point.x : point.category,
-                        y: point.y,
+                        x: point.x !== undefined ? point.x : (point.category || 0),
+                        y: point.y !== undefined ? point.y : 0,
                         name: point.name || ''
                     });
                 }
-                result.series.push({
-                    name: series.name,
-                    type: series.type,
-                    color: series.color,
+                chartResult.series.push({
+                    name: series.name || '',
+                    type: series.type || '',
+                    color: series.color || '',
                     data: points
                 });
             }
-            
-            return result;
-        """)
-        
-        if data:
-            print(f'[CHART] Extracted chart: "{data["title"]}" with {len(data["series"])} series')
-            for s in data['series']:
-                print(f'  - Series "{s["name"]}": {len(s["data"])} points (type: {s["type"]})')
-        else:
-            print('[CHART] No Highcharts data found')
-        
+            results.push(chartResult);
+        }
+        return {charts: results};
+    """)
+
+    if isinstance(data, dict) and 'error' in data:
+        print(f'[CHART] Error: {data["error"]}')
+        return None
+
+    if data and 'charts' in data:
+        for chart in data['charts']:
+            print(f'[CHART] Chart #{chart["index"]}: "{chart["title"]}" subtitle="{chart.get("subtitle","")}"')
+            for s in chart['series']:
+                print(f'  Series "{s["name"]}" ({s["type"]}): {len(s["data"])} points')
         return data
-    except Exception as e:
-        print(f'[CHART] Error extracting Highcharts data: {e}')
-        return None
+
+    return None
 
 
-def extract_header_info(driver):
-    """
-    Extract header info (contract name, DTE, underlying, etc.) from the page.
-    """
-    try:
-        info = driver.execute_script("""
-            var result = {};
-            
-            // Try to find the header text
-            var headerEl = document.querySelector('[id*="lblHeader"], [id*="title"], .chart-title, h2, h3');
-            if (headerEl) result.header = headerEl.textContent.trim();
-            
-            // Find price info
-            var priceEls = document.querySelectorAll('[id*="Price"], [id*="price"], [id*="Underlying"], [id*="underlying"]');
-            priceEls.forEach(function(el) {
-                result.priceText = (result.priceText || '') + ' ' + el.textContent.trim();
-            });
-            
-            // Find the subtitle/info line
-            var subtitles = document.querySelectorAll('.chart-subtitle, [id*="SubTitle"], [id*="subtitle"]');
-            subtitles.forEach(function(el) {
-                result.subtitle = (result.subtitle || '') + ' ' + el.textContent.trim();
-            });
-            
-            return result;
-        """)
-        return info
-    except:
-        return {}
-
-
-def extract_vol_settle_curve(driver):
-    """
-    Extract the Vol Settle values from the chart or page.
-    Returns a dict of strike -> volSettle
-    """
-    try:
-        data = driver.execute_script("""
-            if (typeof Highcharts === 'undefined' || !Highcharts.charts) return null;
-            
-            var chart = null;
-            for (var i = 0; i < Highcharts.charts.length; i++) {
-                if (Highcharts.charts[i]) {
-                    chart = Highcharts.charts[i];
-                    break;
-                }
+def extract_header_text(driver):
+    """Extract the main header/info text from the page."""
+    text = driver.execute_script("""
+        // Try multiple approaches to find the header
+        var selectors = [
+            'span[id*="lblHeader"]',
+            'span[id*="header"]',
+            '[id*="lblTitle"]',
+            '.chart-header',
+            'div[id*="chartHeader"]'
+        ];
+        for (var i = 0; i < selectors.length; i++) {
+            var el = document.querySelector(selectors[i]);
+            if (el && el.textContent.trim().length > 5) {
+                return el.textContent.trim();
             }
-            if (!chart) return null;
-            
-            // Look for a series named 'Vol Settle' or similar
-            for (var s = 0; s < chart.series.length; s++) {
-                var series = chart.series[s];
-                var name = (series.name || '').toLowerCase();
-                if (name.indexOf('vol') >= 0 && name.indexOf('settle') >= 0) {
-                    var result = {};
-                    for (var p = 0; p < series.data.length; p++) {
-                        var point = series.data[p];
-                        var strike = point.x !== undefined ? point.x : point.category;
-                        result[strike] = point.y;
-                    }
-                    return result;
-                }
-            }
-            return null;
-        """)
-        return data
-    except:
+        }
+        // Try the subtitle element from Highcharts
+        var subtitle = document.querySelector('.highcharts-subtitle');
+        if (subtitle) return subtitle.textContent.trim();
+        var title = document.querySelector('.highcharts-title');
+        if (title) return title.textContent.trim();
+        return '';
+    """)
+    return text or ''
+
+
+def chart_to_pageth_format(chart_data, header_line):
+    """
+    Convert Highcharts data into pageth-compatible text format.
+    """
+    if not chart_data or 'charts' not in chart_data:
         return None
 
+    # Use the first chart (or the one with bar/column series)
+    target_chart = None
+    for chart in chart_data['charts']:
+        for s in chart['series']:
+            if s['type'] in ('column', 'bar'):
+                target_chart = chart
+                break
+        if target_chart:
+            break
 
-def switch_to_view(driver, view_type):
-    """
-    Switch between 'Intraday Volume' and 'Open Interest' views.
-    view_type: 'intraday' or 'oi'
-    """
-    try:
-        if view_type == 'intraday':
-            # Click Intraday Volume button/link
-            btn = driver.find_element(By.CSS_SELECTOR, 
-                '[id*="lbIntradayVolume"], [id*="IntradayVolume"], a[href*="IntradayVolume"]')
-        else:
-            # Click Open Interest button/link
-            btn = driver.find_element(By.CSS_SELECTOR,
-                '[id*="lbOpenInterest"], [id*="OpenInterest"], a[href*="OpenInterest"]')
-        
-        btn.click()
-        time.sleep(3)  # Wait for postback and chart reload
-        print(f'[VIEW] Switched to {view_type} view')
-        return True
-    except Exception as e:
-        print(f'[VIEW] Error switching to {view_type}: {e}')
-        
-        # Alternative: Try by link text
-        try:
-            if view_type == 'intraday':
-                links = driver.find_elements(By.PARTIAL_LINK_TEXT, 'Intraday')
-            else:
-                links = driver.find_elements(By.PARTIAL_LINK_TEXT, 'Open Interest')
-            
-            if links:
-                links[0].click()
-                time.sleep(3)
-                print(f'[VIEW] Switched to {view_type} via link text')
-                return True
-        except:
-            pass
-    
-    return False
+    if not target_chart:
+        target_chart = chart_data['charts'][0] if chart_data['charts'] else None
 
-
-def select_contract(driver, contract_value):
-    """Select a specific contract from the dropdown."""
-    try:
-        dropdown = driver.find_element(By.CSS_SELECTOR,
-            'select[id*="Expiration"], select[id*="expiration"], select[id*="ddlExpiry"], select[id*="Contract"]')
-        select = Select(dropdown)
-        select.select_by_value(contract_value)
-        time.sleep(4)  # Wait for postback
-        print(f'[CONTRACT] Selected: {contract_value}')
-        return True
-    except Exception as e:
-        print(f'[CONTRACT] Error selecting {contract_value}: {e}')
-        return False
-
-
-def chart_data_to_pageth_format(header_line, chart_data, vol_settle_data=None):
-    """
-    Convert extracted Highcharts data to pageth's txt format.
-    Format:
-      Header line
-      Strike,Call,Put,Vol Settle
-      4670,0,33,0.85...
-    """
-    if not chart_data or not chart_data.get('series'):
+    if not target_chart:
         return None
-    
-    # Identify call and put series
-    call_series = None
-    put_series = None
-    vol_series = None
-    
-    for s in chart_data['series']:
-        name = (s.get('name') or '').lower()
-        if 'call' in name:
-            call_series = s
-        elif 'put' in name:
-            put_series = s
-        elif 'vol' in name and 'settle' in name:
-            vol_series = s
-    
-    if not call_series and not put_series:
-        # Try by color
-        for s in chart_data['series']:
-            color = (s.get('color') or '').lower()
-            stype = (s.get('type') or '').lower()
-            if stype in ('column', 'bar'):
-                if not call_series:
-                    call_series = s
-                elif not put_series:
-                    put_series = s
-    
-    # Build strike map
-    strikes = {}
-    
-    if call_series:
-        for point in call_series['data']:
-            strike = point['x']
-            if strike not in strikes:
-                strikes[strike] = {'call': 0, 'put': 0, 'vs': 0}
-            strikes[strike]['call'] = abs(int(point['y'] or 0))
-    
-    if put_series:
-        for point in put_series['data']:
-            strike = point['x']
-            if strike not in strikes:
-                strikes[strike] = {'call': 0, 'put': 0, 'vs': 0}
-            strikes[strike]['put'] = abs(int(point['y'] or 0))
-    
-    # Add vol settle data
-    if vol_settle_data:
-        for strike_str, vs_val in vol_settle_data.items():
-            strike = float(strike_str)
-            if strike in strikes:
-                strikes[strike]['vs'] = vs_val or 0
-    elif vol_series:
-        for point in vol_series['data']:
-            strike = point['x']
-            if strike in strikes:
-                strikes[strike]['vs'] = point['y'] or 0
-    
-    # Format output
+
+    # Identify call/put/vol series
+    call_data = {}
+    put_data = {}
+    vol_data = {}
+
+    for s in target_chart['series']:
+        name_lower = s['name'].lower()
+        if 'call' in name_lower:
+            for p in s['data']:
+                call_data[p['x']] = abs(p['y']) if p['y'] else 0
+        elif 'put' in name_lower:
+            for p in s['data']:
+                put_data[p['x']] = abs(p['y']) if p['y'] else 0
+        elif 'vol' in name_lower and 'settle' in name_lower:
+            for p in s['data']:
+                vol_data[p['x']] = p['y'] if p['y'] else 0
+
+    # Combine strikes
+    all_strikes = sorted(set(list(call_data.keys()) + list(put_data.keys())))
+    if not all_strikes:
+        return None
+
     lines = [header_line, 'Strike,Call,Put,Vol Settle']
-    for strike in sorted(strikes.keys()):
-        d = strikes[strike]
-        lines.append(f'{int(strike)},{d["call"]},{d["put"]},{d["vs"]}')
-    
+    for strike in all_strikes:
+        c = int(call_data.get(strike, 0))
+        p = int(put_data.get(strike, 0))
+        v = vol_data.get(strike, 0)
+        lines.append(f'{int(strike)},{c},{p},{v}')
+
     return '\n'.join(lines)
 
 
-def build_header_line(contract_symbol, dte, underlying, change, data_type):
-    """Build the header line in pageth format."""
-    return f'Gold (OG|GC) {contract_symbol} ({dte:.2f} DTE) vs {underlying} ({change:+.1f}) - {data_type}'
+def scrape_one_view(driver, view_type, contract_info, output_prefix):
+    """
+    Scrape one view (intraday or oi) for a contract.
+    Returns the saved filepath, or None.
+    """
+    label = 'Intraday Volume' if view_type == 'intraday' else 'Open Interest'
+    suffix = 'IntradayData' if view_type == 'intraday' else 'OIData'
+
+    if not switch_view(driver, view_type):
+        return None
+
+    chart_data = extract_chart_data(driver)
+    header_text = extract_header_text(driver)
+
+    if not chart_data:
+        print(f'[SCRAPE] No chart data for {view_type}')
+        return None
+
+    # Build header line (try to use page header, fallback to constructed)
+    if header_text:
+        header_line = header_text
+    else:
+        dte = contract_info.get('dte', 0) or 0
+        value = contract_info.get('value', 'Unknown')
+        header_line = f'Gold (OG|GC) {value} ({dte:.2f} DTE) - {label}'
+
+    formatted = chart_to_pageth_format(chart_data, header_line)
+    if not formatted:
+        print(f'[SCRAPE] Could not format {view_type} data')
+        return None
+
+    filepath = os.path.join(OUTPUT_DIR, f'{output_prefix}_{suffix}.txt')
+    with open(filepath, 'w', encoding='utf-8') as f:
+        f.write(formatted)
+    
+    line_count = len(formatted.strip().split('\n'))
+    print(f'[SAVE] ✅ {filepath} ({line_count} lines)')
+    return filepath
 
 
 def scrape_contract(driver, contract_info, output_prefix):
-    """
-    Scrape both Intraday Volume and OI for a single contract.
-    Saves to {output_prefix}_IntradayData.txt and {output_prefix}_OIData.txt
-    """
+    """Scrape both Intraday + OI for one contract."""
     print(f'\n{"="*60}')
-    print(f'[SCRAPE] Processing: {contract_info["text"]}')
+    print(f'[SCRAPE] Contract: {contract_info["text"]} → prefix: {output_prefix}')
     print(f'{"="*60}')
-    
-    # Select contract
-    if not select_contract(driver, contract_info['symbol']):
-        print(f'[SCRAPE] Failed to select contract {contract_info["symbol"]}')
+
+    # Select the contract from dropdown
+    if not select_contract(driver, contract_info['value']):
         return False
-    
+
     results = {}
-    
-    for view_type, file_suffix in [('intraday', 'IntradayData'), ('oi', 'OIData')]:
-        data_type_label = 'Intraday Volume' if view_type == 'intraday' else 'Open Interest'
-        
-        # Switch view
-        if not switch_to_view(driver, view_type):
-            print(f'[SCRAPE] Failed to switch to {view_type}')
-            continue
-        
-        # Extract chart data
-        chart_data = extract_highcharts_data(driver)
-        vol_settle = extract_vol_settle_curve(driver)
-        header_info = extract_header_info(driver)
-        
-        if chart_data:
-            # Try to parse header info from page
-            header_text = header_info.get('header', '') or header_info.get('subtitle', '')
-            
-            # Build header line
-            dte = contract_info['dte'] or 0
-            # Try to get underlying price from chart title or header
-            underlying_match = re.search(r'vs\s*([\d.]+)', header_text or '')
-            underlying = float(underlying_match.group(1)) if underlying_match else 0
-            
-            change_match = re.search(r'\(([+-]?\d+\.?\d*)\)', header_text or '')
-            change = float(change_match.group(1)) if change_match else 0
-            
-            if underlying == 0:
-                # Try from chart title
-                title = chart_data.get('title', '')
-                price_match = re.search(r'vs\s*([\d.]+)', title)
-                if price_match:
-                    underlying = float(price_match.group(1))
-            
-            header_line = build_header_line(
-                contract_info['symbol'], dte, underlying, change, data_type_label
-            )
-            
-            # Convert to pageth format
-            formatted = chart_data_to_pageth_format(header_line, chart_data, vol_settle)
-            
-            if formatted:
-                # Save to file
-                filepath = os.path.join(OUTPUT_DIR, f'{output_prefix}_{file_suffix}.txt')
-                with open(filepath, 'w') as f:
-                    f.write(formatted)
-                print(f'[SAVE] Saved: {filepath}')
-                results[view_type] = filepath
-            else:
-                print(f'[SCRAPE] Could not format {view_type} data')
-        else:
-            print(f'[SCRAPE] No chart data for {view_type}')
-    
+    for view in ['intraday', 'oi']:
+        path = scrape_one_view(driver, view, contract_info, output_prefix)
+        if path:
+            results[view] = path
+
     return bool(results)
 
 
@@ -562,91 +571,101 @@ def scrape_contract(driver, contract_info, output_prefix):
 # ============================================================
 
 def main():
-    # Validate credentials
-    if not CME_EMAIL or not CME_PASSWORD:
-        print('=' * 60)
-        print('CME credentials required!')
-        print('Set environment variables:')
-        print('  set CME_EMAIL=your_email@example.com')
-        print('  set CME_PASSWORD=your_password')
-        print('Or edit the CME_EMAIL and CME_PASSWORD variables in this script.')
-        print('=' * 60)
-        sys.exit(1)
-    
-    # Create output directory
     os.makedirs(OUTPUT_DIR, exist_ok=True)
-    
-    # Create WebDriver
-    print('[INIT] Starting Chrome browser...')
+
+    print('='*60)
+    print('  QuikStrike Vol2Vol Scraper')
+    print('='*60)
+
+    if CME_EMAIL:
+        print(f'  Email: {CME_EMAIL}')
+    else:
+        print('  ⚠ No CME_EMAIL set — you will need to login manually')
+    print()
+
+    # Start Chrome
+    print('[INIT] Starting Chrome...')
     driver = create_driver()
-    
+
     try:
-        # Login
-        if not login_cme(driver):
-            print('[ERROR] Failed to login to CME. Exiting.')
-            return
-        
-        # Navigate to Vol2Vol
-        print('[NAV] Navigating to Vol2Vol...')
-        driver.get(QUIKSTRIKE_VOL2VOL_URL)
-        time.sleep(5)
-        
-        # Get contract list
-        contracts = get_contract_list(driver)
-        
-        if not contracts:
-            print('[ERROR] No contracts found. The page may not have loaded correctly.')
-            print(f'[DEBUG] Current URL: {driver.current_url}')
-            print(f'[DEBUG] Page title: {driver.title}')
-            
-            # Save page source for debugging
+        # ─── LOGIN ───
+        if not login_cme(driver, max_wait=120):
+            print('[ERROR] Could not reach QuikStrike. Aborting.')
+
+            # Save debug info
             debug_path = os.path.join(OUTPUT_DIR, 'debug_page.html')
             with open(debug_path, 'w', encoding='utf-8') as f:
                 f.write(driver.page_source)
-            print(f'[DEBUG] Saved page source to {debug_path}')
+
+            screenshot_path = os.path.join(OUTPUT_DIR, 'debug_screenshot.png')
+            driver.save_screenshot(screenshot_path)
+            print(f'[DEBUG] Saved page & screenshot to {OUTPUT_DIR}')
             return
+
+        # ─── NAVIGATE TO VOL2VOL ───
+        ensure_on_vol2vol(driver)
+        time.sleep(3)
+
+        # ─── DISCOVER CONTRACTS ───
+        contracts = get_contracts_from_dropdown(driver)
         
-        # Classify contracts
+        if not contracts:
+            print('[WARN] No contracts from dropdown. Will try scraping current view as-is...')
+            # Even without dropdown, try scraping whatever is currently shown
+            scrape_one_view(driver, 'intraday', {'text': 'current', 'value': 'unknown'}, 'current')
+            scrape_one_view(driver, 'oi', {'text': 'current', 'value': 'unknown'}, 'current')
+            return
+
+        # ─── CLASSIFY ───
         classified = classify_contracts(contracts)
-        print(f'\n[CLASSIFIED] Contract assignments:')
-        for key, c in classified.items():
+        print(f'\n[PLAN] Contract assignments:')
+        for key in ['current', 'friday', 'monthly']:
+            c = classified.get(key)
             if c:
-                print(f'  {key}: {c["text"]} (DTE={c["dte"]})')
+                print(f'  ✅ {key}: {c["text"]}')
             else:
-                print(f'  {key}: NOT FOUND')
-        
-        # Scrape each available contract
-        for contract_type in CONTRACT_TYPES:
+                print(f'  ❌ {key}: NOT FOUND')
+
+        # ─── SCRAPE EACH ───
+        for contract_type in ['current', 'friday', 'monthly']:
             contract = classified.get(contract_type)
             if contract:
                 scrape_contract(driver, contract, contract_type)
             else:
-                print(f'\n[SKIP] No contract found for: {contract_type}')
-        
+                print(f'\n[SKIP] No contract for: {contract_type}')
+
+        # ─── DONE ───
         print(f'\n{"="*60}')
-        print('[DONE] Scraping complete!')
-        print(f'[DONE] Data saved to: {OUTPUT_DIR}')
+        print('[DONE] ✅ Scraping complete!')
         print(f'{"="*60}')
-        
+
         # List output files
-        if os.path.exists(OUTPUT_DIR):
-            files = os.listdir(OUTPUT_DIR)
-            txt_files = [f for f in files if f.endswith('.txt') and f != 'debug_page.html']
-            if txt_files:
-                print('\nOutput files:')
-                for f in sorted(txt_files):
-                    filepath = os.path.join(OUTPUT_DIR, f)
-                    size = os.path.getsize(filepath)
-                    print(f'  {f} ({size} bytes)')
-    
+        txt_files = [f for f in os.listdir(OUTPUT_DIR) if f.endswith('.txt') and 'debug' not in f]
+        if txt_files:
+            print('\nGenerated files:')
+            for f in sorted(txt_files):
+                fp = os.path.join(OUTPUT_DIR, f)
+                lines = len(open(fp, encoding='utf-8').readlines())
+                print(f'  📄 {f} ({lines} lines)')
+
     except Exception as e:
-        print(f'[ERROR] {e}')
+        print(f'\n[ERROR] {e}')
         import traceback
         traceback.print_exc()
-    
+
+        # Save debug info
+        try:
+            debug_path = os.path.join(OUTPUT_DIR, 'debug_page.html')
+            with open(debug_path, 'w', encoding='utf-8') as f:
+                f.write(driver.page_source)
+            driver.save_screenshot(os.path.join(OUTPUT_DIR, 'debug_screenshot.png'))
+            print(f'[DEBUG] Saved debug info to {OUTPUT_DIR}')
+        except:
+            pass
+
     finally:
         driver.quit()
-        print('[CLEANUP] Browser closed.')
+        print('[CLEANUP] Chrome closed.')
 
 
 if __name__ == '__main__':
