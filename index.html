@@ -608,7 +608,7 @@
         }
 
         // ========== RENDER BARS (shared for both panels) ==========
-        function renderBarsPanel(containerId, data, maxWidth) {
+        function renderBarsPanel(containerId, data, maxWidth, hotThreshold) {
             const container = document.getElementById(containerId);
             if (!data?.strikes) { container.innerHTML = '<div style="padding:20px;color:var(--text-muted);text-align:center;font-size:12px">No data</div>'; return; }
             const underlying = data.underlying;
@@ -620,7 +620,7 @@
             let html = '';
             for (const s of filtered) {
                 const isATM = s === closestStrike;
-                const isHot = s.total >= 100;
+                const isHot = s.total >= hotThreshold;
                 let cls = 'oi-row';
                 if (isATM) cls += ' atm';
                 else if (isHot) cls += ' hot';
@@ -631,8 +631,8 @@
             container.innerHTML = html;
         }
 
-        function renderOIPanel(oiData) { renderBarsPanel('oiContainer', oiData, CONFIG.oiBarMaxWidth); }
-        function renderVolPanel(intradayData) { renderBarsPanel('volContainer', intradayData, CONFIG.oiBarMaxWidth); }
+        function renderOIPanel(oiData) { renderBarsPanel('oiContainer', oiData, CONFIG.oiBarMaxWidth, 100); }
+        function renderVolPanel(intradayData) { renderBarsPanel('volContainer', intradayData, CONFIG.oiBarMaxWidth, 80); }
 
         // ========== UPDATE UI ==========
         function updateUI(intradayData, oiData) {
