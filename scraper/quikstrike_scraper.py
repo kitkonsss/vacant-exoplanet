@@ -28,7 +28,7 @@ from webdriver_manager.chrome import ChromeDriverManager
 # ============================================================
 CME_EMAIL = os.environ.get('CME_EMAIL', 'kitsakontrader@gmail.com')
 CME_PASSWORD = os.environ.get('CME_PASSWORD', 'Jayesslee123')
-OUTPUT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data')
+OUTPUT_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'data')
 QUIKSTRIKE_URL = 'https://cmegroup-sso.quikstrike.net/User/QuikStrikeView.aspx?pid=40&pf=6'
 
 # ============================================================
@@ -79,7 +79,7 @@ def login_cme(driver, max_wait=120):
         url = driver.current_url
 
         # ✅ On QuikStrike Vol2Vol page
-        if 'quikstrike.net' in url and 'QuikStrikeView' in url:
+        if 'quikstrike.net' in url and 'QuikStrikeView' in url and 'Disclaimer' not in url:
             print(f'[LOGIN] ✅ On Vol2Vol page!')
             return True
 
@@ -129,7 +129,8 @@ def _handle_disclaimer(driver):
     # Look for any submit/accept/agree buttons or checkboxes
     try:
         # First check for checkbox (some disclaimers require checking a box first)
-        checkboxes = driver.find_elements(By.CSS_SELECTOR, 'input[type="checkbox"]')
+        # Added #chkAccept for specific targeting
+        checkboxes = driver.find_elements(By.CSS_SELECTOR, 'input[type="checkbox"], #chkAccept')
         for cb in checkboxes:
             if not cb.is_selected():
                 cb.click()
@@ -140,6 +141,7 @@ def _handle_disclaimer(driver):
 
     # Now click the accept/submit button
     for sel in [
+        '#btnContinue', '[id*="btnContinue"]', # Added explicit continue button
         'input[type="submit"]', 'button[type="submit"]',
         'input[value*="ccept"]', 'input[value*="gree"]',
         '[id*="ccept"]', '[id*="gree"]', '[id*="btnOK"]',
@@ -852,6 +854,14 @@ def main():
             
             if key == 'friday' and classified.get('friday_is_current'):
                 print(f'\n[SKIP] friday: same as current contract ({c.get("text")})')
+                # Copy current files to friday files so dashboard has data
+                import shutil
+                try:
+                    shutil.copy(os.path.join(OUTPUT_DIR, 'current_IntradayData.txt'), os.path.join(OUTPUT_DIR, 'friday_IntradayData.txt'))
+                    shutil.copy(os.path.join(OUTPUT_DIR, 'current_OIData.txt'), os.path.join(OUTPUT_DIR, 'friday_OIData.txt'))
+                    print('[COPY] Stuck current data to friday files')
+                except Exception as e:
+                    print(f'[WARN] Could not copy current to friday: {e}')
                 continue
 
             if c:
