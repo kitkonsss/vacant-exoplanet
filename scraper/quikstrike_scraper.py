@@ -13,6 +13,8 @@ import sys
 import json
 import time
 import re
+import shutil
+import subprocess
 from datetime import datetime
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
@@ -30,6 +32,7 @@ CME_EMAIL = os.environ.get('CME_EMAIL', 'kitsakontrader@gmail.com')
 CME_PASSWORD = os.environ.get('CME_PASSWORD', 'Jayesslee123')
 OUTPUT_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'data')
 QUIKSTRIKE_URL = 'https://cmegroup-sso.quikstrike.net/User/QuikStrikeView.aspx?pid=40&pf=6'
+DATA_REPO_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'atas-data')
 
 # ============================================================
 
@@ -78,17 +81,27 @@ def login_cme(driver, max_wait=120):
     while time.time() - start < max_wait:
         url = driver.current_url
 
-        # ✅ On QuikStrike Vol2Vol page
-        if 'quikstrike.net' in url and 'QuikStrikeView' in url and 'Disclaimer' not in url:
-            print(f'[LOGIN] ✅ On Vol2Vol page!')
-            return True
-
-        # 📋 Disclaimer page — try to accept
-        if 'disclaimer' in url.lower() or 'Disclaimer' in url:
-            print('[LOGIN] Disclaimer page — trying to accept...')
+        # 📋 Disclaimer page — MUST check BEFORE QuikStrikeView!
+        # Because Disclaimer URL contains 'QuikStrikeView' in the ret= query param:
+        #   .../Disclaimer.aspx?ret=%2fUser%2fQuikStrikeView.aspx%3fpid%3d40%26pf%3d6
+        is_disclaimer = 'disclaimer' in url.lower()
+        if not is_disclaimer:
+            try:
+                title = driver.title or ''
+                if 'disclaimer' in title.lower():
+                    is_disclaimer = True
+            except:
+                pass
+        if is_disclaimer:
+            print('[LOGIN] Disclaimer page detected — auto-accepting...')
             _handle_disclaimer(driver)
             time.sleep(3)
             continue
+
+        # ✅ On QuikStrike Vol2Vol page (not disclaimer)
+        if 'quikstrike.net' in url and 'QuikStrikeView' in url:
+            print(f'[LOGIN] ✅ On Vol2Vol page!')
+            return True
 
         # 🔐 SSO Login page
         if 'login.cmegroup.com' in url:
@@ -125,44 +138,89 @@ def _try_auto_login(driver):
 
 
 def _handle_disclaimer(driver):
-    """Accept the QuikStrike disclaimer page."""
-    # Look for any submit/accept/agree buttons or checkboxes
-    try:
-        # First check for checkbox (some disclaimers require checking a box first)
-        # Added #chkAccept for specific targeting
-        checkboxes = driver.find_elements(By.CSS_SELECTOR, 'input[type="checkbox"], #chkAccept')
-        for cb in checkboxes:
-            if not cb.is_selected():
-                cb.click()
-                print('[DISCLAIMER] Checked checkbox')
-                time.sleep(1)
-    except:
-        pass
+    """Accept the QuikStrike disclaimer page.
+    
+    The disclaimer page has:
+      - A checkbox: "I have read and agree with the above disclaimer"
+      - A "Continue" button (input[type="submit"] value="Continue")
+    The checkbox MUST be checked before the Continue button works.
+    """
 
-    # Now click the accept/submit button
-    for sel in [
-        '#btnContinue', '[id*="btnContinue"]', # Added explicit continue button
-        'input[type="submit"]', 'button[type="submit"]',
-        'input[value*="ccept"]', 'input[value*="gree"]',
-        '[id*="ccept"]', '[id*="gree"]', '[id*="btnOK"]',
-        '#btnAccept', '#btnAgree', '#submit',
-    ]:
+    # ── Step 1: Check the agreement checkbox ──
+    checkbox_checked = False
+    try:
+        # Wait for checkbox to be present
+        cb = WebDriverWait(driver, 10).until(
+            EC.presence_of_element_located((By.CSS_SELECTOR, 'input[type="checkbox"]'))
+        )
+        if not cb.is_selected():
+            # Use JavaScript click — more reliable on ASP.NET pages
+            driver.execute_script('arguments[0].click();', cb)
+            time.sleep(0.5)
+            # Verify it's actually checked now
+            if cb.is_selected():
+                print('[DISCLAIMER] ✅ Checked agreement checkbox')
+                checkbox_checked = True
+            else:
+                # Fallback: set checked attribute directly
+                driver.execute_script('arguments[0].checked = true;', cb)
+                print('[DISCLAIMER] ✅ Checked checkbox (via attribute)')
+                checkbox_checked = True
+        else:
+            print('[DISCLAIMER] Checkbox already checked')
+            checkbox_checked = True
+    except Exception as e:
+        print(f'[DISCLAIMER] ⚠ Checkbox error: {e}')
+
+    if not checkbox_checked:
+        # Try broader search for any unchecked checkbox
+        try:
+            for cb in driver.find_elements(By.CSS_SELECTOR, 'input[type="checkbox"]'):
+                if not cb.is_selected():
+                    driver.execute_script('arguments[0].click();', cb)
+                    print('[DISCLAIMER] ✅ Checked checkbox (fallback)')
+                    checkbox_checked = True
+                    time.sleep(0.5)
+                    break
+        except Exception as e:
+            print(f'[DISCLAIMER] ⚠ Checkbox fallback error: {e}')
+
+    time.sleep(1)
+
+    # ── Step 2: Click the Continue/Accept/Submit button ──
+    # Try specific selectors in priority order (Continue first, since that's
+    # what the QuikStrike disclaimer page uses)
+    button_selectors = [
+        'input[value="Continue"]',
+        'input[value="continue"]',
+        'input[value*="ontinue"]',
+        'input[value*="ccept"]',
+        'input[value*="gree"]',
+        'button[type="submit"]',
+        'input[type="submit"]',
+        '[id*="btnContinue"]',
+        '[id*="btnAccept"]',
+        '[id*="btnAgree"]',
+        '[id*="btnOK"]',
+        '#submit',
+    ]
+    for sel in button_selectors:
         try:
             btn = driver.find_element(By.CSS_SELECTOR, sel)
-            btn.click()
-            print(f'[DISCLAIMER] Clicked: {sel}')
+            driver.execute_script('arguments[0].click();', btn)
+            print(f'[DISCLAIMER] ✅ Clicked button: {sel} (value="{btn.get_attribute("value") or btn.text}")')
             time.sleep(3)
             return
         except:
             continue
 
-    # Fallback: click any visible button
+    # Fallback: click any submit/button element
     for el in driver.find_elements(By.CSS_SELECTOR, 'input[type="submit"], input[type="button"], button'):
         val = el.get_attribute('value') or el.text or ''
         if val:
-            print(f'[DISCLAIMER] Found button: "{val}"')
+            print(f'[DISCLAIMER] Found button: "{val}" — clicking...')
             try:
-                el.click()
+                driver.execute_script('arguments[0].click();', el)
                 time.sleep(3)
                 return
             except:
@@ -883,6 +941,9 @@ def main():
                 size = os.path.getsize(fp)
                 print(f'  📄 {f} ({lines} lines, {size:,} bytes)')
 
+        # ─── PUSH DATA TO PUBLIC REPO ───
+        push_data_to_repo()
+
     except Exception as e:
         print(f'\n[ERROR] {e}')
         import traceback
@@ -892,6 +953,49 @@ def main():
     finally:
         driver.quit()
         print('[CLEANUP] Chrome closed.')
+
+
+def push_data_to_repo():
+    """Copy data files to atas-data repo and push to GitHub."""
+    if not os.path.isdir(DATA_REPO_DIR):
+        print(f'[PUSH] ⚠ Data repo not found at {DATA_REPO_DIR} — skipping push')
+        return
+
+    print(f'\n[PUSH] Syncing data to atas-data repo...')
+    data_files = [f for f in os.listdir(OUTPUT_DIR) if f.endswith('.txt') and 'debug' not in f]
+    if not data_files:
+        print('[PUSH] No data files to push')
+        return
+
+    for f in data_files:
+        src = os.path.join(OUTPUT_DIR, f)
+        dst = os.path.join(DATA_REPO_DIR, f)
+        shutil.copy2(src, dst)
+        print(f'[PUSH] Copied: {f}')
+
+    try:
+        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M')
+        subprocess.run(['git', 'add', '-A'], cwd=DATA_REPO_DIR, check=True,
+                       capture_output=True, text=True)
+
+        # Check if there are changes to commit
+        result = subprocess.run(['git', 'diff', '--cached', '--quiet'],
+                                cwd=DATA_REPO_DIR, capture_output=True)
+        if result.returncode == 0:
+            print('[PUSH] No changes to push (data unchanged)')
+            return
+
+        subprocess.run(['git', 'commit', '-m', f'data update {timestamp}'],
+                       cwd=DATA_REPO_DIR, check=True, capture_output=True, text=True)
+        subprocess.run(['git', 'push', 'origin', 'main'],
+                       cwd=DATA_REPO_DIR, check=True, capture_output=True, text=True)
+        print(f'[PUSH] ✅ Pushed {len(data_files)} files to atas-data repo')
+    except subprocess.CalledProcessError as e:
+        print(f'[PUSH] ❌ Git error: {e}')
+        if e.stderr:
+            print(f'[PUSH] {e.stderr.strip()}')
+    except Exception as e:
+        print(f'[PUSH] ❌ Error: {e}')
 
 
 if __name__ == '__main__':

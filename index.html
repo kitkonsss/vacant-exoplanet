@@ -725,7 +725,7 @@
     <script>
         // ========== CONFIG ==========
         const PAGETH_BASE = 'https://raw.githubusercontent.com/pageth/Vol2VolData/main';
-        const MY_BASE = 'https://raw.githubusercontent.com/kitkonsss/atas/main/data';
+        const MY_BASE = 'https://raw.githubusercontent.com/kitkonsss/atas-data/main';
 
         const CONFIG = {
             contracts: {
@@ -909,11 +909,16 @@
         }
 
         // ========== TAB SWITCH ==========
-        function switchTab(tabKey) {
+        async function switchTab(tabKey) {
             state.activeTab = tabKey;
             document.querySelectorAll('.tab-btn').forEach(b => {
                 b.classList.toggle('active', b.dataset.tab === tabKey);
             });
+            // Fetch data if not loaded yet
+            const tabData = state.data[tabKey];
+            if (!tabData || (!tabData.intraday && !tabData.oi)) {
+                await fetchTabData(tabKey);
+            }
             renderActiveTab();
         }
 
@@ -952,13 +957,20 @@
 
         // ========== INIT ==========
         async function init() {
-            // Fetch current tab data
-            await fetchTabData('current');
+            // Fetch ALL tabs in parallel
+            await Promise.all([
+                fetchTabData('current'),
+                fetchTabData('friday'),
+                fetchTabData('monthly'),
+            ]);
 
-            // Update tab DTE
-            const curData = state.data.current?.oi || state.data.current?.intraday;
-            if (curData) {
-                document.getElementById('tabDteCurrent').textContent = `(${curData.dte.toFixed(1)}d)`;
+            // Update tab DTE labels
+            for (const key of ['current', 'friday', 'monthly']) {
+                const d = state.data[key]?.oi || state.data[key]?.intraday;
+                if (d) {
+                    const el = document.getElementById('tabDte' + key.charAt(0).toUpperCase() + key.slice(1));
+                    if (el) el.textContent = `(${d.dte.toFixed(1)}d)`;
+                }
             }
 
             renderActiveTab();
