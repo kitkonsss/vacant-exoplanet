@@ -725,7 +725,7 @@
     <script>
         // ========== CONFIG ==========
         const PAGETH_BASE = 'https://raw.githubusercontent.com/pageth/Vol2VolData/main';
-        const MY_BASE = 'https://raw.githubusercontent.com/kitkonsss/atas-data/main';
+        const MY_BASE = 'https://raw.githubusercontent.com/kitkonsss/vacant-exoplanet/main';
 
         const CONFIG = {
             contracts: {
@@ -736,13 +736,13 @@
                 },
                 friday: {
                     label: 'Friday',
-                    intradayUrl: './data/friday_IntradayData.txt',
-                    oiUrl: './data/friday_OIData.txt',
+                    intradayUrl: MY_BASE + '/data/friday_IntradayData.txt',
+                    oiUrl: MY_BASE + '/data/friday_OIData.txt',
                 },
                 monthly: {
                     label: 'Monthly',
-                    intradayUrl: './data/monthly_IntradayData.txt',
-                    oiUrl: './data/monthly_OIData.txt',
+                    intradayUrl: MY_BASE + '/data/monthly_IntradayData.txt',
+                    oiUrl: MY_BASE + '/data/monthly_OIData.txt',
                 },
             },
             refreshIntervalMs: 60000,
@@ -776,20 +776,38 @@
             }
             const dataType = typeMatch ? typeMatch[1].trim() : '';
             const contract = contractMatch ? contractMatch[1] : '';
+
+            // Extract Header Totals (Fix for missing tail data)
+            // Header: ... Put: 4,827 Call: 4,131 ...
+            const putTotalMatch = header.match(/Put:\s+([\d,]+)/);
+            const callTotalMatch = header.match(/Call:\s+([\d,]+)/);
+            const totalPut = putTotalMatch ? parseInt(putTotalMatch[1].replace(/,/g, '')) : undefined;
+            const totalCall = callTotalMatch ? parseInt(callTotalMatch[1].replace(/,/g, '')) : undefined;
+
             const strikes = [];
             for (let i = 2; i < lines.length; i++) {
                 const p = lines[i].split(',');
                 if (p.length >= 4) {
                     strikes.push({
                         strike: parseFloat(p[0]),
-                        call: parseInt(p[1]),
-                        put: parseInt(p[2]),
+                        call: parseInt(p[1].replace(/,/g, '')),
+                        put: parseInt(p[2].replace(/,/g, '')),
                         volSettle: parseFloat(p[3]),
-                        total: parseInt(p[1]) + parseInt(p[2]),
+                        total: parseInt(p[1].replace(/,/g, '')) + parseInt(p[2].replace(/,/g, '')),
                     });
                 }
             }
-            return { header, dte, underlying, change, dataType, contract, strikes };
+
+            // Check if underlying is valid (sometimes it's 0 if header regex failed)
+            let finalUnderlying = underlying;
+            if (finalUnderlying === 0 && strikes.length > 0) {
+                // Fallback: use median strike
+                const sorted = [...strikes].sort((a, b) => a.strike - b.strike);
+                const mid = Math.floor(sorted.length / 2);
+                finalUnderlying = sorted[mid].strike;
+            }
+
+            return { header, dte, underlying: finalUnderlying, change, dataType, contract, strikes, totalPut, totalCall };
         }
 
         // ========== FETCH ==========
@@ -900,8 +918,16 @@
                 const mx = oi.strikes.reduce((p, c) => c.total > p.total ? c : p);
                 document.getElementById('sumMaxOI').textContent = mx.strike.toString();
                 document.getElementById('sumMaxOIDetail').textContent = `Total: ${mx.total} (C:${mx.call} P:${mx.put})`;
+
+                // Use Header Totals if available (more accurate), else sum rows
                 let tc = 0, tp = 0;
-                oi.strikes.forEach(s => { tc += s.call; tp += s.put; });
+                if (oi.totalCall !== undefined && oi.totalPut !== undefined) {
+                    tc = oi.totalCall;
+                    tp = oi.totalPut;
+                } else {
+                    oi.strikes.forEach(s => { tc += s.call; tp += s.put; });
+                }
+
                 document.getElementById('sumTotalCall').textContent = tc.toLocaleString();
                 document.getElementById('sumTotalPut').textContent = tp.toLocaleString();
                 document.getElementById('sumPCRatio').textContent = tc > 0 ? (tp / tc).toFixed(2) : '—';
@@ -948,8 +974,7 @@
         async function refreshData() {
             const btn = document.querySelector('.refresh-btn');
             btn.textContent = '⟳ Loading...';
-            btn.disabled = true;
-            await fetchTabData(state.activeTab);
+            btn.disa = await fetchTabData(state.activeTab);
             renderActiveTab();
             btn.textContent = '⟳ Refresh';
             btn.disabled = false;

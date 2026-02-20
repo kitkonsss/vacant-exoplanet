@@ -28,8 +28,8 @@ from webdriver_manager.chrome import ChromeDriverManager
 # ============================================================
 # CONFIG
 # ============================================================
-CME_EMAIL = os.environ.get('CME_EMAIL', 'kitsakontrader@gmail.com')
-CME_PASSWORD = os.environ.get('CME_PASSWORD', 'Jayesslee123')
+CME_EMAIL = os.environ.get('CME_EMAIL', '')
+CME_PASSWORD = os.environ.get('CME_PASSWORD', '')
 OUTPUT_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'data')
 QUIKSTRIKE_URL = 'https://cmegroup-sso.quikstrike.net/User/QuikStrikeView.aspx?pid=40&pf=6'
 DATA_REPO_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'atas-data')
@@ -81,10 +81,15 @@ def login_cme(driver, max_wait=120):
     while time.time() - start < max_wait:
         url = driver.current_url
 
+        # ✅ On QuikStrike Vol2Vol page
+        if 'quikstrike.net' in url and 'QuikStrikeView' in url and 'Disclaimer' not in url:
+            print(f'[LOGIN] ✅ On Vol2Vol page!')
+            return True
+
         # 📋 Disclaimer page — MUST check BEFORE QuikStrikeView!
         # Because Disclaimer URL contains 'QuikStrikeView' in the ret= query param:
         #   .../Disclaimer.aspx?ret=%2fUser%2fQuikStrikeView.aspx%3fpid%3d40%26pf%3d6
-        is_disclaimer = 'disclaimer' in url.lower()
+        is_disclaimer = 'disclaimer' in url.lower() or 'Disclaimer' in url
         if not is_disclaimer:
             try:
                 title = driver.title or ''
@@ -92,6 +97,7 @@ def login_cme(driver, max_wait=120):
                     is_disclaimer = True
             except:
                 pass
+        
         if is_disclaimer:
             print('[LOGIN] Disclaimer page detected — auto-accepting...')
             _handle_disclaimer(driver)
@@ -145,64 +151,38 @@ def _handle_disclaimer(driver):
       - A "Continue" button (input[type="submit"] value="Continue")
     The checkbox MUST be checked before the Continue button works.
     """
-
     # ── Step 1: Check the agreement checkbox ──
     checkbox_checked = False
     try:
-        # Wait for checkbox to be present
-        cb = WebDriverWait(driver, 10).until(
-            EC.presence_of_element_located((By.CSS_SELECTOR, 'input[type="checkbox"]'))
-        )
-        if not cb.is_selected():
-            # Use JavaScript click — more reliable on ASP.NET pages
-            driver.execute_script('arguments[0].click();', cb)
-            time.sleep(0.5)
-            # Verify it's actually checked now
-            if cb.is_selected():
-                print('[DISCLAIMER] ✅ Checked agreement checkbox')
-                checkbox_checked = True
-            else:
-                # Fallback: set checked attribute directly
-                driver.execute_script('arguments[0].checked = true;', cb)
-                print('[DISCLAIMER] ✅ Checked checkbox (via attribute)')
-                checkbox_checked = True
-        else:
-            print('[DISCLAIMER] Checkbox already checked')
-            checkbox_checked = True
-    except Exception as e:
-        print(f'[DISCLAIMER] ⚠ Checkbox error: {e}')
-
-    if not checkbox_checked:
-        # Try broader search for any unchecked checkbox
-        try:
-            for cb in driver.find_elements(By.CSS_SELECTOR, 'input[type="checkbox"]'):
+        # First check for checkbox (some disclaimers require checking a box first)
+        # Added #chkAccept for specific targeting
+        checkboxes = driver.find_elements(By.CSS_SELECTOR, 'input[type="checkbox"], #chkAccept')
+        for cb in checkboxes:
+            if not cb.is_selected():
+                # Use JavaScript click — more reliable on ASP.NET pages
+                driver.execute_script('arguments[0].click();', cb)
+                print('[DISCLAIMER] Checked checkbox')
+                time.sleep(1)
+                
+                # Verify and fallback if needed
                 if not cb.is_selected():
-                    driver.execute_script('arguments[0].click();', cb)
-                    print('[DISCLAIMER] ✅ Checked checkbox (fallback)')
-                    checkbox_checked = True
-                    time.sleep(0.5)
-                    break
-        except Exception as e:
-            print(f'[DISCLAIMER] ⚠ Checkbox fallback error: {e}')
-
-    time.sleep(1)
+                    try:
+                        driver.execute_script('arguments[0].checked = true;', cb)
+                        print('[DISCLAIMER] Forced check via attribute')
+                    except:
+                        pass
+    except:
+        pass
 
     # ── Step 2: Click the Continue/Accept/Submit button ──
-    # Try specific selectors in priority order (Continue first, since that's
-    # what the QuikStrike disclaimer page uses)
+    # Try specific selectors in priority order
     button_selectors = [
-        'input[value="Continue"]',
-        'input[value="continue"]',
-        'input[value*="ontinue"]',
-        'input[value*="ccept"]',
-        'input[value*="gree"]',
-        'button[type="submit"]',
-        'input[type="submit"]',
-        '[id*="btnContinue"]',
-        '[id*="btnAccept"]',
-        '[id*="btnAgree"]',
-        '[id*="btnOK"]',
-        '#submit',
+        '#btnContinue', '[id*="btnContinue"]',
+        'input[value="Continue"]', 'input[value="continue"]',
+        'input[type="submit"]', 'button[type="submit"]',
+        'input[value*="ccept"]', 'input[value*="gree"]',
+        '[id*="ccept"]', '[id*="gree"]', '[id*="btnOK"]',
+        '#btnAccept', '#btnAgree', '#submit',
     ]
     for sel in button_selectors:
         try:
@@ -543,6 +523,11 @@ def classify_contracts(contracts):
     if monthlies:
         result['monthly'] = monthlies[0]
 
+    # LOGGING
+    print(f'[CLASSIFY] Current candidate: {result["current"].get("text", "?") if result["current"] else "None"} (DTE={result["current"].get("dte") if result["current"] else "?"})')
+    print(f'[CLASSIFY] Friday candidate:  {result["friday"].get("text", "?") if result["friday"] else "None"} (DTE={result["friday"].get("dte") if result["friday"] else "?"})')
+    print(f'[CLASSIFY] Monthly candidate: {result["monthly"].get("text", "?") if result["monthly"] else "None"} (DTE={result["monthly"].get("dte") if result["monthly"] else "?"})')
+
     # Check for overlap: if current and friday are the same contract
     if result['current'] and result['friday']:
         if result['current']['text'] == result['friday']['text']:
@@ -573,105 +558,98 @@ def switch_to_view(driver, view_type):
     except:
         pass
 
-    if view_type == 'intraday':
-        # For Intraday: this is the DEFAULT view.
-        # If we're already on it (page just loaded), return True.
-        # Otherwise try to find and click the sidebar link.
-        target_texts = ['Intraday']
-        id_patterns = ['lbIntraday', 'lbVolume', 'Intraday']
-    else:  # 'oi'
-        target_texts = ['OI']  # Exact match to avoid 'OI Change'
-        id_patterns = ['lbOIChart', 'lbOI', 'lbOpenInterest']
-
-    # Strategy 1: Find sidebar link by exact text match across ALL <a> tags
-    # (sidebar links may have no ID!)
-    links = driver.find_elements(By.TAG_NAME, 'a')
-    for link in links:
-        txt = link.text.strip()
-        link_id = link.get_attribute('id') or ''
+    # Strategy 0: Dropdown Selection (ddlV2V) - Primary Method
+    try:
+        # Find the View/Vol2Vol dropdown
+        select_el = driver.find_element(By.XPATH, "//select[contains(@id, 'ddlV2V')]")
+        sel = Select(select_el)
         
-        for target in target_texts:
-            if txt == target:  # Exact match
-                try:
-                    driver.execute_script('arguments[0].click();', link)
-                    print(f'[VIEW] ✅ Clicked sidebar "{txt}" (id={link_id or "none"})')
-                    wait_ready(driver)
-                    return True
-                except Exception as e:
-                    print(f'[VIEW] Click failed for "{txt}": {e}')
-                    continue
+        target_value = 'OI' if view_type == 'oi' else 'IntradayVolume'
+        target_label = 'Open Interest' if view_type == 'oi' else 'Intraday Volume'
 
-    # Strategy 2: Find by partial ID match
-    for pattern in id_patterns:
-        found = driver.execute_script(f"""
-            var links = document.querySelectorAll('a');
-            for (var link of links) {{
-                if (link.id && link.id.indexOf('{pattern}') >= 0) {{
-                    return link.id;
-                }}
-            }}
-            return null;
-        """)
-        if found:
-            try:
-                el = driver.find_element(By.ID, found)
-                driver.execute_script('arguments[0].click();', el)
-                print(f'[VIEW] ✅ Clicked by ID: {found}')
-                wait_ready(driver)
-                return True
-            except Exception as e:
-                print(f'[VIEW] Click failed for {found}: {e}')
-                continue
+        # Check if already selected
+        if sel.first_selected_option.get_attribute('value') == target_value:
+             print(f'[VIEW] Already on {target_label}')
+             return True
 
-    # Strategy 3: Search non-<a> elements (span, div, td) for clickable text
-    for tag in ['span', 'div', 'td', 'li']:
-        elements = driver.find_elements(By.TAG_NAME, tag)
-        for el in elements:
-            txt = el.text.strip()
-            for target in target_texts:
-                if txt == target:
-                    try:
-                        driver.execute_script('arguments[0].click();', el)
-                        print(f'[VIEW] ✅ Clicked <{tag}> "{txt}"')
-                        wait_ready(driver)
-                        return True
-                    except:
-                        continue
-
-    # Strategy 4: Use JavaScript to find by __doPostBack pattern
-    found_postback = driver.execute_script("""
-        var target = arguments[0];
-        var links = document.querySelectorAll('a');
-        for (var link of links) {
-            var href = link.href || '';
-            var txt = link.textContent.trim();
-            if (txt === target || (href.indexOf('doPostBack') >= 0 && txt.indexOf(target) === 0)) {
-                link.click();
-                return 'clicked: ' + txt + ' | id=' + (link.id || 'none') + ' | href=' + href.substring(0, 80);
-            }
-        }
-        return null;
-    """, target_texts[0])
-    if found_postback:
-        print(f'[VIEW] ✅ JS postback click: {found_postback}')
+        # Select by value
+        sel.select_by_value(target_value)
+        print(f'[VIEW] ✅ Selected dropdown option: {target_label} (value={target_value})')
+        
+        # Wait for ASP.NET Postback
+        time.sleep(1)
         wait_ready(driver)
-        return True
+        
+        # Verify header update
+        expected = 'Open Interest' if view_type == 'oi' else 'Volume'
+        for _ in range(20):
+            time.sleep(0.5)
+            hdr = extract_header(driver)
+            if expected in hdr:
+                print(f'[VIEW] Verified header updated to: {hdr}')
+                return True
+        
+        print(f'[VIEW] ⚠ Header did not update after dropdown select (Got: {hdr})')
+        save_debug(driver, f'header_fail_dropdown_{view_type}')
+        # Fallthrough to other strategies if verification failed (though unlikely if dropdown worked)
 
-    # Debug: dump ALL links and their text to find the right one
-    print(f'[VIEW] ❌ Could not switch to: {view_type}')
-    print(f'[VIEW] DEBUG — All <a> links on page:')
-    all_links = driver.execute_script("""
-        var result = [];
-        document.querySelectorAll('a').forEach(function(a) {
-            var txt = a.textContent.trim();
-            if (txt.length > 0 && txt.length < 30) {
-                result.push({id: a.id || '(none)', text: txt, href: (a.href || '').substring(0, 60)});
-            }
-        });
-        return result;
-    """)
-    for linfo in all_links:
-        print(f'    <a id="{linfo["id"]}">{linfo["text"]}</a>  href={linfo["href"]}')
+    except Exception as e:
+        print(f'[VIEW] Dropdown strategy failed: {e}')
+
+    # Strategy 1: XPath text match (Fallback)
+    target_texts = []
+    if view_type == 'intraday':
+        target_texts = ['Intraday Volume', 'Intraday']
+    else:  # 'oi'
+        target_texts = ['Open Interest', 'OI']
+
+    xpaths = []
+    if view_type == 'oi':
+        xpaths = [
+            "//a[normalize-space(text())='OI']",
+            "//a[normalize-space(text())='Open Interest']",
+            "//a[contains(text(), 'Open Interest')]",
+            "//*[normalize-space(text())='OI']",
+            "//*[normalize-space(text())='Open Interest']",
+            "//*[contains(text(), 'Open Interest')]"
+        ]
+    else: # intraday
+        xpaths = [
+            "//a[normalize-space(text())='Intraday']",
+            "//a[contains(text(), 'Intraday')]",
+            "//*[normalize-space(text())='Intraday']"
+        ]
+
+    for xpath in xpaths:
+        try:
+            els = driver.find_elements(By.XPATH, xpath)
+            for el in els:
+                if el.is_displayed() and len(el.text.strip()) < 30:
+                    # Try native click first
+                    try:
+                        el.click()
+                        print(f'[VIEW] ✅ Native Click via XPath: "{el.text}" ({xpath})')
+                    except:
+                        driver.execute_script('arguments[0].click();', el)
+                        print(f'[VIEW] ✅ JS Click via XPath: "{el.text}" ({xpath})')
+                    
+                    # WAIT FOR HEADER TO UPDATE
+                    expected = 'Open Interest' if view_type == 'oi' else 'Volume'
+                    for _ in range(20):  # Wait up to 10 seconds
+                        time.sleep(0.5)
+                        hdr = extract_header(driver)
+                        if expected in hdr:
+                            print(f'[VIEW] Verified header updated to: {hdr}')
+                            return True
+                    
+                    print(f'[VIEW] ⚠ Header did not update to "{expected}" (Got: {hdr})')
+                    save_debug(driver, f'header_fail_{view_type}')
+        except Exception as e:
+            print(f'[VIEW] XPath click failed for {xpath}: {e}')
+            continue
+    
+    # Save debug info if we failed
+    save_debug(driver, f'view_switch_fail_{view_type}')
     return False
 
 
@@ -711,20 +689,24 @@ def extract_chart(driver):
 def extract_header(driver):
     """Get the header/subtitle text, with HTML tags stripped."""
     raw = driver.execute_script("""
-        // Try Highcharts subtitle (contains Put/Call/Vol info)
+        // Get both Title (contract info) and Subtitle (stats)
+        var text = '';
         if (typeof Highcharts !== 'undefined' && Highcharts.charts) {
             var charts = Highcharts.charts.filter(c => c != null);
             for (var c of charts) {
-                // Get plain text from subtitle (strip HTML)
-                if (c.subtitle && c.subtitle.textStr) {
-                    var tmp = document.createElement('div');
-                    tmp.innerHTML = c.subtitle.textStr;
-                    return tmp.textContent || tmp.innerText || '';
-                }
+                var parts = [];
                 if (c.title && c.title.textStr) {
-                    var tmp2 = document.createElement('div');
-                    tmp2.innerHTML = c.title.textStr;
-                    return tmp2.textContent || tmp2.innerText || '';
+                    var t = document.createElement('div');
+                    t.innerHTML = c.title.textStr;
+                    parts.push(t.textContent || t.innerText || '');
+                }
+                if (c.subtitle && c.subtitle.textStr) {
+                    var s = document.createElement('div');
+                    s.innerHTML = c.subtitle.textStr;
+                    parts.push(s.textContent || s.innerText || '');
+                }
+                if (parts.length > 0) {
+                    return parts.join(' - ');
                 }
             }
         }
@@ -786,22 +768,29 @@ def chart_to_text(chart_data, header_line):
 # SCRAPING
 # ============================================================
 
-def scrape_view(driver, view_type, prefix, skip_switch=False):
+def scrape_view(driver, view_type, prefix, header_prefix='', skip_switch=False):
     """Scrape one view and save to file."""
     suffix = 'IntradayData' if view_type == 'intraday' else 'OIData'
     label = 'Intraday Volume' if view_type == 'intraday' else 'Open Interest'
 
-    if not skip_switch:
-        if not switch_to_view(driver, view_type):
-            return None
+    if not skip_switch and not switch_to_view(driver, view_type):
+        print(f'[SCRAPE] ❌ Failed to switch to {view_type}')
+        # Continue anyway, might be on correct page
 
-    chart = extract_chart(driver)
-    if isinstance(chart, dict) and 'error' in chart:
-        print(f'[SCRAPE] Chart error ({view_type}): {chart["error"]}')
+    # Extract
+    chart_data = extract_chart(driver)
+    header_line = extract_header(driver)
+
+    if header_prefix:
+        header_line = f"{header_prefix} - {header_line}"
+
+    if isinstance(chart_data, dict) and 'error' in chart_data:
+        print(f'[SCRAPE] Chart error ({view_type}): {chart_data["error"]}')
         return None
 
-    header = extract_header(driver) or f'Gold (OG|GC) - {label}'
-    text = chart_to_text(chart, header)
+    # header = extract_header(driver) or f'Gold (OG|GC) - {label}' # Original line
+    # text = chart_to_text(chart, header) # Original line
+    text = chart_to_text(chart_data, header_line) # Modified line
     if not text:
         print(f'[SCRAPE] No data for {view_type}')
         return None
@@ -833,14 +822,25 @@ def scrape_contract(driver, contract, prefix):
 
     results = {}
 
-    # 1. Scrape INTRADAY first — it's the default view, no click needed!
-    print('[SCRAPE] Default view = Intraday Volume — scraping immediately...')
-    path = scrape_view(driver, 'intraday', prefix, skip_switch=True)
+    # Pass contract text (DTE info) to header
+    # Prefer the full title attribute which has "Contract: ... (DTE) ..."
+    contract_text = contract.get('title', '')
+    if not contract_text or 'DTE' not in contract_text:
+        contract_text = contract.get('text', '') or contract.get('value', 'Unknown')
+        if contract.get('dte'):
+             contract_text += f" ({contract.get('dte'):.2f} DTE)"
+    
+    contract_text = contract_text.replace('\n', ' ').strip()
+
+    # 1. Intraday Volume (Default view usually)
+    print(f'[SCRAPE] Default view = Intraday Volume — scraping immediately...')
+    path = scrape_view(driver, 'intraday', prefix, header_prefix=contract_text, skip_switch=True)
     if path:
         results['intraday'] = path
 
-    # 2. Switch to OI and scrape
-    path = scrape_view(driver, 'oi', prefix)
+    # 2. Open Interest
+    print(f'[SCRAPE] Switching to Open Interest...')
+    path = scrape_view(driver, 'oi', prefix, header_prefix=contract_text)
     if path:
         results['oi'] = path
 

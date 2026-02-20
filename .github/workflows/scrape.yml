@@ -1,0 +1,55 @@
+name: Scrape QuikStrike Data
+
+on:
+  schedule:
+    # Runs at minute 0 of every hour
+    - cron: '0 * * * *'
+  # Allow manual trigger
+  workflow_dispatch:
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
+
+    steps:
+    - name: Checkout repository
+      uses: actions/actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.10'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r scraper/requirements.txt
+        # Install Chrome for Selenium
+        sudo apt-get update
+        sudo apt-get install -y google-chrome-stable
+
+    - name: Run Scraper
+      env:
+        CME_EMAIL: ${{ secrets.CME_EMAIL }}
+        CME_PASSWORD: ${{ secrets.CME_PASSWORD }}
+      run: |
+        # Run from the scraper directory so relative paths work
+        cd scraper
+        python quikstrike_scraper.py
+
+    - name: Commit and push changes
+      run: |
+        git config --global user.name "github-actions[bot]"
+        git config --global user.email "github-actions[bot]@users.noreply.github.com"
+        
+        # Check if there are any changes in the data directory
+        if git diff --quiet data/; then
+          echo "No changes to commit in data/"
+        else
+          git add data/
+          git commit -m "Auto-update QuikStrike data [skip ci]"
+          git push
+        fi
