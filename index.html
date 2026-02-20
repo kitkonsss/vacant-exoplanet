@@ -16,16 +16,17 @@
         }
 
         :root {
-            --bg-primary: #04050a;
-            --bg-secondary: #0c0e15;
-            --bg-panel: #13151f;
-            --bg-card: #181a25;
-            --border: #202436;
-            --border-active: #3e445b;
-            --text-primary: #f0f0f5;
-            --text-secondary: #a3a6b8;
-            --text-muted: #6b6f82;
-            --gold: #fcc21b;
+            --bg-primary: #1e1e24;
+            /* Lighter dark */
+            --bg-secondary: #25262c;
+            --bg-panel: #2a2b32;
+            --bg-card: #2f3037;
+            --border: #3d3e46;
+            --border-active: #565863;
+            --text-primary: #f5f5f7;
+            --text-secondary: #b4b6c3;
+            --text-muted: #828493;
+            --gold: #ffc107;
             --gold-glow: rgba(252, 194, 27, 0.35);
             --orange: #ffab40;
             --orange-dim: rgba(255, 171, 64, 0.15);
@@ -900,13 +901,25 @@
             const filtered = data.strikes.filter(s =>
                 s.strike >= underlying - CONFIG.visibleStrikeRange &&
                 s.strike <= underlying + CONFIG.visibleStrikeRange &&
-                s.total > 0
+                s.total >= hotThreshold
             );
             if (filtered.length === 0) {
-                container.innerHTML = '<div class="placeholder-msg"><div class="icon">📭</div><div class="desc">No data in visible range</div></div>';
+                container.innerHTML = '<div class="placeholder-msg"><div class="icon">📭</div><div class="desc">No data in visible range matching filters</div></div>';
                 return;
             }
-            const maxSingle = Math.max(...filtered.map(s => Math.max(s.call, s.put)), 1);
+
+            let maxCallStrike = null;
+            let maxPutStrike = null;
+            let maxCallVal = 0;
+            let maxPutVal = 0;
+            let maxSingle = 1;
+
+            for (const s of filtered) {
+                if (s.call > maxCallVal) { maxCallVal = s.call; maxCallStrike = s; }
+                if (s.put > maxPutVal) { maxPutVal = s.put; maxPutStrike = s; }
+                maxSingle = Math.max(maxSingle, s.call, s.put);
+            }
+
             filtered.sort((a, b) => b.strike - a.strike);
             const closestStrike = filtered.reduce((prev, curr) =>
                 Math.abs(curr.strike - underlying) < Math.abs(prev.strike - underlying) ? curr : prev, filtered[0]);
@@ -915,6 +928,10 @@
             for (const s of filtered) {
                 const isATM = s === closestStrike;
                 const isHot = !isATM && s.total >= hotThreshold;
+
+                const isMaxCall = s === maxCallStrike && s.call > 0;
+                const isMaxPut = s === maxPutStrike && s.put > 0;
+
                 let rowCls = 'row';
                 if (isATM) rowCls += ' atm';
                 else if (isHot) rowCls += ' hot';
@@ -923,17 +940,23 @@
                 if (isATM) strikeCls += ' atm';
                 else if (isHot) strikeCls += ' hot';
 
+                let callCls = 'row-call';
+                if (isMaxCall) callCls += ' max-call';
+
+                let putCls = 'row-put';
+                if (isMaxPut) putCls += ' max-put';
+
                 const callW = Math.max(0, (s.call / maxSingle) * CONFIG.barMaxWidth);
                 const putW = Math.max(0, (s.put / maxSingle) * CONFIG.barMaxWidth);
 
                 html += `<div class="${rowCls}" title="Strike: ${s.strike} | Call: ${s.call} | Put: ${s.put}">` +
                     `<span class="${strikeCls}">${s.strike}</span>` +
-                    `<span class="row-call">${s.call > 0 ? s.call : ''}</span>` +
+                    `<span class="${callCls}">${s.call > 0 ? s.call : ''}</span>` +
                     `<div class="row-bars">` +
                     `${s.call > 0 ? `<div class="bar bar-call" style="width:${callW}px"></div>` : ''}` +
                     `${s.put > 0 ? `<div class="bar bar-put" style="width:${putW}px"></div>` : ''}` +
                     `</div>` +
-                    `<span class="row-put">${s.put > 0 ? s.put : ''}</span>` +
+                    `<span class="${putCls}">${s.put > 0 ? s.put : ''}</span>` +
                     `<span class="row-total ${isHot || (isATM && s.total >= hotThreshold) ? 'high' : ''}">${s.total}</span>` +
                     `</div>`;
             }
