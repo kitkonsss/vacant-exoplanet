@@ -16,27 +16,27 @@
         }
 
         :root {
-            --bg-primary: #0a0a12;
-            --bg-secondary: #10101a;
-            --bg-panel: #161622;
-            --bg-card: #1a1a2a;
-            --border: #252540;
-            --border-active: #3a3a60;
-            --text-primary: #e8e8f0;
-            --text-secondary: #9090a8;
-            --text-muted: #606078;
-            --gold: #f0b90b;
-            --gold-glow: rgba(240, 185, 11, 0.25);
-            --orange: #ff9800;
-            --orange-dim: rgba(255, 152, 0, 0.12);
-            --cyan: #00e5ff;
+            --bg-primary: #04050a;
+            --bg-secondary: #0c0e15;
+            --bg-panel: #13151f;
+            --bg-card: #181a25;
+            --border: #202436;
+            --border-active: #3e445b;
+            --text-primary: #f0f0f5;
+            --text-secondary: #a3a6b8;
+            --text-muted: #6b6f82;
+            --gold: #fcc21b;
+            --gold-glow: rgba(252, 194, 27, 0.35);
+            --orange: #ffab40;
+            --orange-dim: rgba(255, 171, 64, 0.15);
+            --cyan: #40c4ff;
             --pink: #ff4081;
             --green: #00e676;
-            --red: #ff1744;
-            --call-color: #4fc3f7;
-            --call-bg: rgba(79, 195, 247, 0.08);
+            --red: #ff3d00;
+            --call-color: #4dd0e1;
+            --call-bg: rgba(77, 208, 225, 0.1);
             --put-color: #ffb74d;
-            --put-bg: rgba(255, 183, 77, 0.08);
+            --put-bg: rgba(255, 183, 77, 0.1);
         }
 
         body {
@@ -267,11 +267,12 @@
         }
 
         .summary-label {
-            font-size: 10px;
-            font-weight: 600;
+            font-size: 11px;
+            font-weight: 700;
             color: var(--text-muted);
             text-transform: uppercase;
-            letter-spacing: 1px;
+            letter-spacing: 0.5px;
+            margin-bottom: 2px;
         }
 
         .summary-value {
@@ -313,6 +314,25 @@
             grid-template-columns: 1fr 1fr;
             min-height: 0;
             overflow: hidden;
+            background: var(--bg-primary);
+        }
+
+        /* ===== CHART CONTAINER ===== */
+        .chart-container {
+            flex: 1;
+            display: none;
+            /* hidden by default */
+            min-height: 0;
+            background: var(--bg-primary);
+        }
+
+        .chart-container.active {
+            display: block;
+        }
+
+        /* Utility class to hide main container when chart is active */
+        .hide-main {
+            display: none !important;
         }
 
         /* ===== PANEL ===== */
@@ -397,24 +417,24 @@
             border-radius: 2px;
         }
 
-        /* ===== ROW ===== */
         .row {
             display: flex;
             align-items: center;
-            padding: 1px 14px;
-            height: 26px;
-            font-size: 11px;
+            padding: 2px 14px;
+            height: 28px;
+            font-size: 12px;
             cursor: default;
             border-left: 3px solid transparent;
-            transition: background 0.1s;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.015);
+            transition: background 0.15s ease;
         }
 
         .row:hover {
-            background: rgba(255, 255, 255, 0.02);
+            background: rgba(255, 255, 255, 0.05);
         }
 
         .row.atm {
-            background: rgba(240, 185, 11, 0.08);
+            background: rgba(252, 194, 27, 0.06);
             border-left-color: var(--gold);
         }
 
@@ -441,6 +461,7 @@
         .row-strike.atm {
             color: var(--gold);
             font-weight: 800;
+            font-size: 12px;
         }
 
         .row-bars {
@@ -647,6 +668,10 @@
             Monthly <span class="tab-contract" id="tabContractMonthly"></span> <span class="tab-dte"
                 id="tabDteMonthly"></span>
         </button>
+        <button class="tab-btn" data-tab="chart" onclick="switchTab('chart')"
+            style="margin-left:auto; color: var(--gold);">
+            📈 Live Chart
+        </button>
     </div>
 
     <!-- Summary Strip -->
@@ -726,6 +751,17 @@
 
     </div>
 
+    <!-- ===== CHART CONTAINER ===== -->
+    <div class="chart-container" id="chartContainer">
+        <!-- TradingView Widget BEGIN -->
+        <div class="tradingview-widget-container" style="height:100%;width:100%">
+            <div id="tradingview_gold" style="height:calc(100% - 32px);width:100%"></div>
+            <div class="tradingview-widget-copyright"><a href="https://www.tradingview.com/" rel="noopener nofollow"
+                    target="_blank"><span class="blue-text">Track all markets on TradingView</span></a></div>
+        </div>
+        <!-- TradingView Widget END -->
+    </div>
+
     <!-- Info Footer -->
     <div class="info-footer">
         <div class="info-item"><span class="info-label">Source:</span><span class="info-value">pageth/Vol2VolData</span>
@@ -758,18 +794,20 @@
                     intradayUrl: MY_BASE + '/data/monthly_IntradayData.txt',
                     oiUrl: MY_BASE + '/data/monthly_OIData.txt',
                 },
+                chart: { label: 'Live Chart' } // Dummy for the chart tab
             },
             refreshIntervalMs: 60000,
-            visibleStrikeRange: 300,
-            barMaxWidth: 160,
+            visibleStrikeRange: 350,
+            barMaxWidth: 180,
             oiHotThreshold: 100,
             volHotThreshold: 80,
         };
 
         let state = {
             activeTab: 'current',
-            data: { current: {}, friday: {}, monthly: {} },
+            data: { current: {}, friday: {}, monthly: {}, chart: {} },
             refreshTimer: null,
+            chartInitialized: false
         };
 
         // ========== PARSE ==========
@@ -959,6 +997,26 @@
             document.querySelectorAll('.tab-btn').forEach(b => {
                 b.classList.toggle('active', b.dataset.tab === tabKey);
             });
+
+            const mainContainer = document.getElementById('mainContainer');
+            const chartContainer = document.getElementById('chartContainer');
+            const summaryStrip = document.getElementById('summaryStrip');
+
+            if (tabKey === 'chart') {
+                mainContainer.classList.add('hide-main');
+                summaryStrip.style.display = 'none';
+                chartContainer.classList.add('active');
+                if (!state.chartInitialized) {
+                    initTradingView();
+                    state.chartInitialized = true;
+                }
+                return;
+            } else {
+                mainContainer.classList.remove('hide-main');
+                summaryStrip.style.display = 'flex';
+                chartContainer.classList.remove('active');
+            }
+
             // Fetch data if not loaded yet
             const tabData = state.data[tabKey];
             if (!tabData || (!tabData.intraday && !tabData.oi)) {
@@ -967,7 +1025,37 @@
             renderActiveTab();
         }
 
+        function initTradingView() {
+            const script = document.createElement('script');
+            script.src = 'https://s3.tradingview.com/tv.js';
+            script.async = true;
+            script.onload = () => {
+                new TradingView.widget({
+                    "autosize": true,
+                    "symbol": "BLACKBULL:GOLD.F", // Blackbull Markets GOLD.F as requested
+                    "interval": "15",
+                    "timezone": "Asia/Bangkok",
+                    "theme": "dark",
+                    "style": "1",
+                    "locale": "en",
+                    "enable_publishing": false,
+                    "backgroundColor": "#0a0a12", // matching our theme
+                    "gridColor": "rgba(42, 46, 57, 0.2)",
+                    "hide_top_toolbar": false,
+                    "hide_legend": false,
+                    "save_image": false,
+                    "container_id": "tradingview_gold",
+                    "studies": [
+                        "Volume@tv-basicstudies",
+                        "VWAP@tv-basicstudies"
+                    ]
+                });
+            };
+            document.head.appendChild(script);
+        }
+
         function renderActiveTab() {
+            if (state.activeTab === 'chart') return;
             const tabData = state.data[state.activeTab];
             if (!tabData || (!tabData.intraday && !tabData.oi)) {
                 // Show placeholder
