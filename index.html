@@ -1419,6 +1419,9 @@
             const container = document.getElementById('lwc_chart');
             if (!container) return;
 
+            // Show loading status
+            container.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--text-secondary);font-size:14px;">⏳ Loading Gold chart data...</div>';
+
             chartInstance = LightweightCharts.createChart(container, {
                 layout: {
                     background: { type: 'solid', color: '#131722' },
@@ -1442,28 +1445,48 @@
                 wickDownColor: '#ef5350'
             });
 
-            // Fetch GC=F Data from a free Yahoo Finance API proxy
-            try {
-                // Using a proxy or direct fetch if CORS allows. 
-                // Since this is client-side, we'll use a public CORS proxy for demo purposes to hit Yahoo Finance
-                const res = await fetch('https://query1.finance.yahoo.com/v8/finance/chart/GC=F?interval=15m&range=5d');
-                const data = await res.json();
-                const result = data.chart.result[0];
-                const chartData = [];
-                for (let i = 0; i < result.timestamp.length; i++) {
-                    chartData.push({
-                        time: result.timestamp[i],
-                        open: result.indicators.quote[0].open[i],
-                        high: result.indicators.quote[0].high[i],
-                        low: result.indicators.quote[0].low[i],
-                        close: result.indicators.quote[0].close[i]
-                    });
+            // Fetch GC=F Data via CORS proxies (Yahoo Finance blocks direct browser calls)
+            const yahooUrl = 'https://query1.finance.yahoo.com/v8/finance/chart/GC=F?interval=15m&range=5d';
+            const proxies = [
+                `https://corsproxy.io/?${encodeURIComponent(yahooUrl)}`,
+                `https://api.allorigins.win/raw?url=${encodeURIComponent(yahooUrl)}`,
+                yahooUrl
+            ];
+
+            let loaded = false;
+            for (const url of proxies) {
+                try {
+                    const res = await fetch(url);
+                    if (!res.ok) continue;
+                    const data = await res.json();
+                    const result = data.chart.result[0];
+                    const chartData = [];
+                    for (let i = 0; i < result.timestamp.length; i++) {
+                        const q = result.indicators.quote[0];
+                        if (q.open[i] != null && q.high[i] != null && q.low[i] != null && q.close[i] != null) {
+                            chartData.push({
+                                time: result.timestamp[i],
+                                open: q.open[i],
+                                high: q.high[i],
+                                low: q.low[i],
+                                close: q.close[i]
+                            });
+                        }
+                    }
+                    candleSeries.setData(chartData);
+                    loaded = true;
+                    break;
+                } catch (err) {
+                    console.warn("Chart proxy failed:", url, err);
                 }
-                // Filter out nulls
-                const validData = chartData.filter(d => d.open !== null && d.time !== null);
-                candleSeries.setData(validData);
-            } catch (err) {
-                console.error("Failed to load chart data", err);
+            }
+
+            if (!loaded) {
+                const errorDiv = document.createElement('div');
+                errorDiv.style.cssText = 'position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);color:var(--red);font-size:14px;text-align:center;z-index:10;background:rgba(0,0,0,0.7);padding:20px;border-radius:8px;';
+                errorDiv.innerHTML = '⚠️ ไม่สามารถโหลดข้อมูลกราฟได้<br><span style="font-size:12px;color:var(--text-secondary);">Yahoo Finance API ถูกบล็อค (CORS) — ลอง Refresh อีกครั้ง</span>';
+                container.style.position = 'relative';
+                container.appendChild(errorDiv);
             }
 
             // Sync with current tab data to plot walls
