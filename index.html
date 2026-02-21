@@ -827,22 +827,24 @@
         }
 
         .setup-box {
-            margin-top: 10px;
-            padding: 14px;
+            margin-top: 8px;
+            padding: 12px 14px;
             border-radius: 8px;
             background: rgba(0, 0, 0, 0.2);
             border: 1px solid rgba(255, 255, 255, 0.05);
             display: flex;
             flex-direction: column;
-            gap: 8px;
+            gap: 0;
         }
 
         .setup-title {
-            font-size: 12px;
+            font-size: 11px;
             font-weight: 800;
             text-transform: uppercase;
             letter-spacing: 1px;
-            margin-bottom: 4px;
+            margin-bottom: 8px;
+            padding-bottom: 6px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.06);
         }
 
         .setup-row {
@@ -850,16 +852,37 @@
             justify-content: space-between;
             align-items: center;
             font-size: 12px;
+            padding: 5px 0;
+        }
+
+        .setup-row+.setup-row {
+            border-top: 1px dashed rgba(255, 255, 255, 0.04);
         }
 
         .setup-label {
             color: var(--text-secondary);
             font-weight: 600;
+            font-size: 11px;
         }
 
         .setup-val {
             font-weight: 800;
             color: var(--text-primary);
+        }
+
+        .setup-val.val-entry {
+            color: #fff;
+            font-size: 14px;
+        }
+
+        .setup-val.val-sl {
+            color: var(--red);
+            font-size: 13px;
+        }
+
+        .setup-val.val-tp {
+            color: var(--green);
+            font-size: 13px;
         }
 
         .prob-badge {
@@ -1611,9 +1634,9 @@
                             return `
                             <div class="setup-box">
                                 <div class="setup-title" style="color:${tier.color};">${tier.icon} ${dirLabel} แผน ${tier.n}: ${labelTh}</div>
-                                <div class="setup-row"><span class="setup-label">Entry Zone</span><span class="setup-val">$${entry.toFixed(1)} <span class="prob-badge">${getProb(entry)}% Hit</span></span></div>
-                                <div class="setup-row"><span class="setup-label">🎯 TP</span><span class="setup-val">$${tp.toFixed(1)} <span class="prob-badge">${getProb(tp)}% Hit</span></span></div>
-                                <div class="setup-row"><span class="setup-label">🚫 SL</span><span class="setup-val" style="color:var(--red);">$${sl.toFixed(1)} <span style="font-size:10px; font-weight:normal; color:var(--text-muted);">(-$10)</span></span></div>
+                                <div class="setup-row"><span class="setup-label">📍 Entry</span><span class="setup-val val-entry">$${entry.toFixed(1)} <span class="prob-badge">${getProb(entry)}%</span></span></div>
+                                <div class="setup-row"><span class="setup-label">🚫 SL</span><span class="setup-val val-sl">$${sl.toFixed(1)} <span style="font-size:10px; font-weight:normal; opacity:0.6;">(-$10)</span></span></div>
+                                <div class="setup-row"><span class="setup-label">🎯 TP</span><span class="setup-val val-tp">$${tp.toFixed(1)} <span class="prob-badge">${getProb(tp)}%</span></span></div>
                             </div>`;
                         };
 
