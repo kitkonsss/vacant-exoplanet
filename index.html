@@ -699,6 +699,155 @@
             font-weight: 700;
             font-variant-numeric: tabular-nums;
         }
+
+        /* ===== ANALYSIS TAB ===== */
+        .analysis-container {
+            flex: 1;
+            display: none;
+            flex-direction: column;
+            background: var(--bg-primary);
+            overflow-y: auto;
+            padding: 24px;
+            gap: 20px;
+        }
+
+        .analysis-container.active {
+            display: flex;
+        }
+
+        .analysis-header {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 20px 24px;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+
+        .ah-top {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .ah-price {
+            font-size: 16px;
+            color: var(--text-muted);
+        }
+
+        .ah-price span {
+            font-size: 24px;
+            font-weight: 800;
+            color: var(--text-primary);
+            margin-left: 8px;
+        }
+
+        .ah-bias {
+            font-size: 20px;
+            font-weight: 900;
+            padding: 6px 16px;
+            border-radius: 8px;
+            letter-spacing: 1px;
+        }
+
+        .ah-action {
+            font-size: 14px;
+            color: var(--text-secondary);
+            background: rgba(255, 255, 255, 0.03);
+            padding: 12px 16px;
+            border-radius: 8px;
+            border-left: 4px solid var(--accent);
+        }
+
+        .analysis-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 20px;
+        }
+
+        .analysis-card {
+            background: var(--bg-panel);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+
+        .analysis-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
+            border-color: var(--border-active);
+        }
+
+        .ac-title {
+            font-size: 14px;
+            font-weight: 800;
+            color: var(--text-primary);
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-bottom: 8px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .ac-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 13px;
+        }
+
+        .ac-label {
+            color: var(--text-muted);
+        }
+
+        .ac-val {
+            font-weight: 700;
+            color: var(--text-primary);
+        }
+
+        .ac-divider {
+            height: 1px;
+            background: var(--border);
+            margin: 4px 0;
+        }
+
+        .ac-alert {
+            margin-top: 8px;
+            padding: 10px;
+            border-radius: 6px;
+            font-size: 12px;
+            font-weight: 700;
+            text-align: center;
+        }
+
+        .bias-bull {
+            color: var(--green) !important;
+            background: rgba(38, 166, 154, 0.1);
+        }
+
+        .bias-bear {
+            color: var(--red) !important;
+            background: rgba(239, 83, 80, 0.1);
+        }
+
+        .bias-neu {
+            color: var(--text-secondary) !important;
+            background: rgba(255, 255, 255, 0.05);
+        }
+
+        .bull {
+            color: var(--green);
+        }
+
+        .bear {
+            color: var(--red);
+        }
     </style>
 </head>
 
@@ -745,8 +894,11 @@
             Monthly <span class="tab-contract" id="tabContractMonthly"></span> <span class="tab-dte"
                 id="tabDteMonthly"></span>
         </button>
-        <button class="tab-btn" data-tab="chart" onclick="switchTab('chart')"
-            style="margin-left:auto; color: var(--accent);">
+        <button class="tab-btn" data-tab="analysis" onclick="switchTab('analysis')"
+            style="margin-left:auto; color: #ff9800;">
+            🧠 Trade Setup
+        </button>
+        <button class="tab-btn" data-tab="chart" onclick="switchTab('chart')" style="color: var(--accent);">
             📈 Live Chart
         </button>
     </div>
@@ -828,6 +980,16 @@
 
     </div>
 
+    <!-- ===== ANALYSIS CONTAINER ===== -->
+    <div class="analysis-container" id="analysisContainer">
+        <div class="analysis-header" id="analysisHeader">
+            <!-- Overall Bias Header -->
+        </div>
+        <div class="analysis-grid" id="analysisGrid">
+            <!-- 3 columns: Daily, Weekly, Monthly -->
+        </div>
+    </div>
+
     <!-- ===== CHART CONTAINER ===== -->
     <div class="chart-container" id="chartContainer">
         <!-- Lightweight Charts Container -->
@@ -866,6 +1028,7 @@
                     intradayUrl: MY_BASE + '/data/monthly_IntradayData.txt',
                     oiUrl: MY_BASE + '/data/monthly_OIData.txt',
                 },
+                analysis: { label: 'Trade Setup' },
                 chart: { label: 'Live Chart' } // Dummy for the chart tab
             },
             refreshIntervalMs: 1800000, // 30 minutes
@@ -877,7 +1040,7 @@
 
         let state = {
             activeTab: 'current',
-            data: { current: {}, friday: {}, monthly: {}, chart: {} },
+            data: { current: {}, friday: {}, monthly: {}, analysis: {}, chart: {} },
             refreshTimer: null,
             chartInitialized: false
         };
@@ -1147,6 +1310,7 @@
             if (tabKey === 'chart') {
                 mainContainer.classList.add('hide-main');
                 summaryStrip.style.display = 'none';
+                document.getElementById('analysisContainer').classList.remove('active');
                 chartContainer.classList.add('active');
                 if (!state.chartInitialized) {
                     initLightweightChart();
@@ -1155,10 +1319,18 @@
                     plotWallsOnChart(); // Re-plot lines in case data updated
                 }
                 return;
+            } else if (tabKey === 'analysis') {
+                mainContainer.classList.add('hide-main');
+                summaryStrip.style.display = 'none';
+                chartContainer.classList.remove('active');
+                document.getElementById('analysisContainer').classList.add('active');
+                renderAnalysisTab();
+                return;
             } else {
                 mainContainer.classList.remove('hide-main');
                 summaryStrip.style.display = 'flex';
                 chartContainer.classList.remove('active');
+                document.getElementById('analysisContainer').classList.remove('active');
             }
 
             // Fetch data if not loaded yet
@@ -1279,8 +1451,125 @@
             }
         }
 
+        function renderAnalysisTab() {
+            const container = document.getElementById('analysisGrid');
+            const header = document.getElementById('analysisHeader');
+
+            const timeframes = [
+                { key: 'current', label: 'Daily (Current)' },
+                { key: 'friday', label: 'Weekly (Friday)' },
+                { key: 'monthly', label: 'Monthly' }
+            ];
+
+            let html = '';
+            let biases = [];
+            let underlyingPrice = 0;
+
+            for (const tf of timeframes) {
+                const data = state.data[tf.key]?.oi;
+                const intraday = state.data[tf.key]?.intraday;
+                if (!data || !data.strikes || data.strikes.length === 0) {
+                    html += `<div class="analysis-card"><div class="ac-title">${tf.label}</div><div class="placeholder-msg" style="padding:20px 0;"><div class="desc">Loading or No Data</div></div></div>`;
+                    continue;
+                }
+
+                underlyingPrice = data.underlying;
+                let tc = data.totalCall !== undefined ? data.totalCall : data.strikes.reduce((sum, s) => sum + s.call, 0);
+                let tp = data.totalPut !== undefined ? data.totalPut : data.strikes.reduce((sum, s) => sum + s.put, 0);
+                const pcr = tc > 0 ? (tp / tc) : 1;
+
+                // Find Support (Max Put) and Resistance (Max Call)
+                let maxCall = data.strikes.reduce((p, c) => c.call > p.call ? c : p);
+                let maxPut = data.strikes.reduce((p, c) => c.put > p.put ? c : p);
+
+                // Determine bias
+                let biasStr = 'Neutral';
+                let biasCls = 'neu';
+                let biasScore = 0;
+
+                if (pcr > 1.2) { biasStr = 'Bearish (Puts > Calls)'; biasCls = 'bear'; biasScore = -1; }
+                else if (pcr < 0.8) { biasStr = 'Bullish (Calls > Puts)'; biasCls = 'bull'; biasScore = 1; }
+
+                // Check Squeeze
+                let squeezeTxt = '';
+                if (Math.abs(underlyingPrice - maxCall.strike) < 30 && tc > tp) {
+                    squeezeTxt = `<div class="ac-alert bias-bull">🔥 Near Call Wall (Gamma Squeeze Up Risk)</div>`;
+                    biasScore += 1;
+                } else if (Math.abs(underlyingPrice - maxPut.strike) < 30 && tp > tc) {
+                    squeezeTxt = `<div class="ac-alert bias-bear">🩸 Near Put Wall (Liquidity Drop Risk)</div>`;
+                    biasScore -= 1;
+                }
+
+                biases.push({ score: biasScore, label: tf.label });
+
+                // Expected Range
+                let rangeTxt = '—';
+                if (intraday?.strikes) {
+                    const atm = intraday.strikes.reduce((p, c) => Math.abs(c.strike - data.underlying) < Math.abs(p.strike - data.underlying) ? c : p);
+                    if (atm.volSettle > 0) {
+                        const er = data.underlying * atm.volSettle * Math.sqrt(data.dte / 365);
+                        rangeTxt = `$${(data.underlying - er).toFixed(0)} – $${(data.underlying + er).toFixed(0)} <span style="font-size:11px; color:var(--text-muted)">(±${er.toFixed(1)})</span>`;
+                    }
+                }
+
+                html += `
+                <div class="analysis-card">
+                    <div class="ac-title">${tf.label} <span style="font-size:10px; color:var(--accent); font-weight:800;">[${data.dte.toFixed(1)} DTE]</span></div>
+                    
+                    <div class="ac-row"><span class="ac-label">Trend Bias</span><span class="ac-val bias-${biasCls}">${biasStr}</span></div>
+                    <div class="ac-row"><span class="ac-label">P/C Ratio</span><span class="ac-val">${pcr.toFixed(2)}</span></div>
+                    <div class="ac-divider"></div>
+                    
+                    <div class="ac-row"><span class="ac-label">Resistance (Max Call)</span><span class="ac-val" style="color:var(--call-color); font-weight:800;">$${maxCall.strike}</span></div>
+                    <div class="ac-row"><span class="ac-label">Support (Max Put)</span><span class="ac-val" style="color:var(--put-color); font-weight:800;">$${maxPut.strike}</span></div>
+                    <div class="ac-divider"></div>
+                    
+                    <div class="ac-row"><span class="ac-label">Expected Range</span><span class="ac-val" style="color:var(--text-primary);">${rangeTxt}</span></div>
+                    ${squeezeTxt}
+                </div>`;
+            }
+            container.innerHTML = html;
+
+            // Overall Bias
+            let totalScore = biases.reduce((s, b) => s + b.score, 0);
+            let overallStr = 'RANGING / NEUTRAL';
+            let overallCls = 'neu';
+            let overallAction = 'Trade within the Expected Range. Sell Premium or play mean reversion.';
+
+            if (totalScore >= 3) {
+                overallStr = 'STRONG BULLISH 🚀'; overallCls = 'bull';
+                overallAction = 'Momentum is up across timeframes. Buy Dips near Put Wall Support. Look for breakouts above Call Walls.';
+            } else if (totalScore > 0) {
+                overallStr = 'SLIGHTLY BULLISH 📈'; overallCls = 'bull';
+                overallAction = 'Favor long setups but respect Resistance levels. Watch for weakness at Call Walls.';
+            } else if (totalScore <= -3) {
+                overallStr = 'STRONG BEARISH 🩸'; overallCls = 'bear';
+                overallAction = 'Momentum is down. Sell Rallies near Call Wall Resistance. Watch for breakdowns through Support.';
+            } else if (totalScore < 0) {
+                overallStr = 'SLIGHTLY BEARISH 📉'; overallCls = 'bear';
+                overallAction = 'Favor short setups but respect Support levels. Watch for bounces off Put Walls.';
+            }
+
+            if (underlyingPrice > 0) {
+                header.innerHTML = `
+                    <div class="ah-top">
+                        <div class="ah-price">Current Price: <span>$${underlyingPrice.toFixed(1)}</span></div>
+                        <div class="ah-bias bias-${overallCls}">${overallStr}</div>
+                    </div>
+                    <div class="ah-action"><strong>Setup Strategy:</strong> ${overallAction}</div>
+                `;
+            } else {
+                header.innerHTML = `<div class="placeholder-msg">Loading data...</div>`;
+            }
+        }
+
         function renderActiveTab() {
             if (state.activeTab === 'chart') return;
+            if (state.activeTab === 'analysis') {
+                renderAnalysisTab();
+                return;
+            }
+
             const tabData = state.data[state.activeTab];
             if (!tabData || (!tabData.intraday && !tabData.oi)) {
                 // Show placeholder
