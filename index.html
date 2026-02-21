@@ -1011,13 +1011,13 @@
 
             // Grid header
             let html = '<div class="grid-header">' +
-                '<span class="h-call">Δ</span>' +
+                '<span class="h-call">OTM Δ</span>' +
                 '<span class="h-call h-right">Call</span>' +
                 '<span></span>' +
                 '<span>Strike</span>' +
                 '<span></span>' +
                 '<span class="h-put h-left">Put</span>' +
-                '<span class="h-put">Δ</span>' +
+                '<span class="h-put">OTM Δ</span>' +
                 '<span class="h-right">Total</span>' +
                 '</div>';
 
@@ -1058,10 +1058,15 @@
 
                 // Delta
                 const t = data.dte / 365;
-                const callDelta = calcDelta(underlying, s.strike, s.volSettle, t, true);
-                const putDelta = calcDelta(underlying, s.strike, s.volSettle, t, false);
-                const callDeltaStr = Math.round(callDelta * 100);
-                const putDeltaStr = Math.abs(Math.round(putDelta * 100));
+                const callDeltaRaw = calcDelta(underlying, s.strike, s.volSettle, t, true);
+                const putDeltaRaw = calcDelta(underlying, s.strike, s.volSettle, t, false);
+
+                // Show as OTM Delta (probability)
+                const callDeltaOTM = s.strike > underlying ? callDeltaRaw : (1 - callDeltaRaw);
+                const putDeltaOTM = s.strike < underlying ? Math.abs(putDeltaRaw) : (1 - Math.abs(putDeltaRaw));
+
+                const callDeltaStr = Math.round(callDeltaOTM * 100);
+                const putDeltaStr = Math.round(putDeltaOTM * 100);
 
                 html += `<div class="${rowCls}">` +
                     `<span class="row-delta-call">${callDeltaStr}</span>` +
