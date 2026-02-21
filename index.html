@@ -1509,7 +1509,12 @@
 
             let html = '';
             let biases = [];
-            let underlyingPrice = 0;
+
+            // Sync underlying price across all timeframes since they map to the same Future
+            let globalUnderlying = 0;
+            if (state.data.current?.oi?.underlying) globalUnderlying = state.data.current.oi.underlying;
+            else if (state.data.monthly?.oi?.underlying) globalUnderlying = state.data.monthly.oi.underlying;
+            else if (state.data.friday?.oi?.underlying) globalUnderlying = state.data.friday.oi.underlying;
 
             for (const tf of timeframes) {
                 const data = state.data[tf.key]?.oi;
@@ -1519,7 +1524,9 @@
                     continue;
                 }
 
-                underlyingPrice = data.underlying;
+                // Force global underlying if available to prevent median-strike miscalculations on missing headers
+                const uPrice = globalUnderlying > 0 ? globalUnderlying : data.underlying;
+
                 let tc = data.totalCall !== undefined ? data.totalCall : data.strikes.reduce((sum, s) => sum + s.call, 0);
                 let tp = data.totalPut !== undefined ? data.totalPut : data.strikes.reduce((sum, s) => sum + s.put, 0);
                 const pcr = tc > 0 ? (tp / tc) : 1;
@@ -1538,10 +1545,10 @@
 
                 // Check Squeeze
                 let squeezeTxt = '';
-                if (Math.abs(underlyingPrice - maxCall.strike) < 30 && tc > tp) {
+                if (Math.abs(uPrice - maxCall.strike) < 30 && tc > tp) {
                     squeezeTxt = `<div class="ac-alert bias-bull">🔥 Near Call Wall (Gamma Squeeze Up Risk)</div>`;
                     biasScore += 1;
-                } else if (Math.abs(underlyingPrice - maxPut.strike) < 30 && tp > tc) {
+                } else if (Math.abs(uPrice - maxPut.strike) < 30 && tp > tc) {
                     squeezeTxt = `<div class="ac-alert bias-bear">🩸 Near Put Wall (Liquidity Drop Risk)</div>`;
                     biasScore -= 1;
                 }
@@ -1553,14 +1560,14 @@
                 let setupHtml = '';
 
                 if (intraday?.strikes) {
-                    const atm = intraday.strikes.reduce((p, c) => Math.abs(c.strike - data.underlying) < Math.abs(p.strike - data.underlying) ? c : p);
+                    const atm = intraday.strikes.reduce((p, c) => Math.abs(c.strike - uPrice) < Math.abs(p.strike - uPrice) ? c : p);
                     if (atm.volSettle > 0) {
                         // Expiry Total Expected Range
-                        const erTotal = data.underlying * atm.volSettle * Math.sqrt(data.dte / 365);
-                        rangeTxt = `$${(data.underlying - erTotal).toFixed(0)} – $${(data.underlying + erTotal).toFixed(0)} <span style="font-size:11px; color:var(--text-muted)">(±${erTotal.toFixed(1)})</span>`;
+                        const erTotal = uPrice * atm.volSettle * Math.sqrt(data.dte / 365);
+                        rangeTxt = `$${(uPrice - erTotal).toFixed(0)} – $${(uPrice + erTotal).toFixed(0)} <span style="font-size:11px; color:var(--text-muted)">(±${erTotal.toFixed(1)})</span>`;
 
                         // 1-Day Expected Move
-                        const er1Day = data.underlying * atm.volSettle * Math.sqrt(1 / 365);
+                        const er1Day = uPrice * atm.volSettle * Math.sqrt(1 / 365);
 
                         // Setup Generation Logic
                         let setup1Html = '';
@@ -1570,22 +1577,22 @@
 
                         // Calculate Probabilities (OTM Delta representation)
                         const getProb = (strike) => {
-                            const callD = calcDelta(data.underlying, strike, atm.volSettle, t1Day, true);
-                            const putD = calcDelta(data.underlying, strike, atm.volSettle, t1Day, false);
-                            const otmD = strike > data.underlying ? callD : (1 - Math.abs(putD));
+                            const callD = calcDelta(uPrice, strike, atm.volSettle, t1Day, true);
+                            const putD = calcDelta(uPrice, strike, atm.volSettle, t1Day, false);
+                            const otmD = strike > uPrice ? callD : (1 - Math.abs(putD));
                             return Math.round(otmD * 100);
                         };
 
                         if (biasScore >= 0) { // Bullish or Neutral Edge Case
                             // Entry 1 (Aggressive Dip)
-                            const e1 = data.underlying - (er1Day * 0.4);
+                            const e1 = uPrice - (er1Day * 0.4);
                             const sl1 = e1 - 10;
-                            const tp1 = data.underlying + (er1Day * 0.5);
+                            const tp1 = uPrice + (er1Day * 0.5);
 
                             // Entry 2 (Conservative Dip)
-                            const e2 = data.underlying - (er1Day * 0.8);
+                            const e2 = uPrice - (er1Day * 0.8);
                             const sl2 = e2 - 10;
-                            const tp2 = data.underlying + (er1Day * 0.2);
+                            const tp2 = uPrice + (er1Day * 0.2);
 
                             setup1Html = `
                             <div class="setup-box">
@@ -1604,14 +1611,14 @@
                             </div>`;
                         } else { // Bearish
                             // Entry 1 (Aggressive Rally)
-                            const e1 = data.underlying + (er1Day * 0.4);
+                            const e1 = uPrice + (er1Day * 0.4);
                             const sl1 = e1 + 10;
-                            const tp1 = data.underlying - (er1Day * 0.5);
+                            const tp1 = uPrice - (er1Day * 0.5);
 
                             // Entry 2 (Conservative Rally)
-                            const e2 = data.underlying + (er1Day * 0.8);
+                            const e2 = uPrice + (er1Day * 0.8);
                             const sl2 = e2 + 10;
-                            const tp2 = data.underlying - (er1Day * 0.2);
+                            const tp2 = uPrice - (er1Day * 0.2);
 
                             setup1Html = `
                             <div class="setup-box">
@@ -1673,10 +1680,10 @@
                 overallAction = 'Favor short setups but respect Support levels. Watch for bounces off Put Walls.';
             }
 
-            if (underlyingPrice > 0) {
+            if (globalUnderlying > 0) {
                 header.innerHTML = `
                     <div class="ah-top">
-                        <div class="ah-price">Current Price: <span>$${underlyingPrice.toFixed(1)}</span></div>
+                        <div class="ah-price">Current Price: <span>$${globalUnderlying.toFixed(1)}</span></div>
                         <div class="ah-bias bias-${overallCls}">${overallStr}</div>
                     </div>
                     <div class="ah-action"><strong>Setup Strategy:</strong> ${overallAction}</div>
