@@ -419,15 +419,52 @@
             border-radius: 2px;
         }
 
-        .row {
-            display: flex;
+        /* ===== GRID HEADER ===== */
+        .grid-header {
+            display: grid;
+            grid-template-columns: 32px 50px 1fr 52px 1fr 50px 32px 44px;
             align-items: center;
-            padding: 2px 14px;
-            height: 28px;
-            font-size: 12px;
+            padding: 4px 10px;
+            font-size: 9px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            color: var(--text-muted);
+            border-bottom: 1px solid var(--border);
+            background: rgba(255, 255, 255, 0.02);
+        }
+
+        .grid-header span {
+            text-align: center;
+        }
+
+        .grid-header .h-call {
+            color: var(--call-color);
+        }
+
+        .grid-header .h-put {
+            color: var(--put-color);
+        }
+
+        .grid-header .h-right {
+            text-align: right;
+        }
+
+        .grid-header .h-left {
+            text-align: left;
+        }
+
+        /* ===== ROW GRID ===== */
+        .row {
+            display: grid;
+            grid-template-columns: 32px 50px 1fr 52px 1fr 50px 32px 44px;
+            align-items: center;
+            padding: 0 10px;
+            height: 26px;
+            font-size: 11px;
             cursor: default;
             border-left: 3px solid transparent;
-            border-bottom: 1px solid rgba(255, 255, 255, 0.015);
+            border-bottom: 1px solid rgba(255, 255, 255, 0.02);
             transition: background 0.15s ease;
         }
 
@@ -436,7 +473,7 @@
         }
 
         .row.atm {
-            background: rgba(252, 194, 27, 0.06);
+            background: rgba(252, 194, 27, 0.08);
             border-left-color: var(--gold);
         }
 
@@ -445,13 +482,45 @@
             border-left-color: var(--orange);
         }
 
-        .row-strike {
-            width: 48px;
-            text-align: right;
+        /* Call Delta (col 1) */
+        .row-delta-call {
+            text-align: center;
+            font-size: 9px;
             color: var(--text-muted);
-            font-weight: 500;
-            font-size: 11px;
-            flex-shrink: 0;
+            opacity: 0.65;
+            font-variant-numeric: tabular-nums;
+        }
+
+        /* Call OI (col 2) */
+        .row-call {
+            text-align: right;
+            color: var(--call-color);
+            font-variant-numeric: tabular-nums;
+            font-weight: 600;
+            padding-right: 6px;
+            border-radius: 3px;
+        }
+
+        .row-call.max-call {
+            background: rgba(77, 208, 225, 0.25);
+            color: #ffffff;
+            font-weight: 800;
+            box-shadow: 0 0 8px rgba(77, 208, 225, 0.5);
+        }
+
+        /* Call Bar (col 3) — bar grows from right to left */
+        .row-bar-call {
+            display: flex;
+            align-items: center;
+            justify-content: flex-end;
+            height: 16px;
+        }
+
+        /* Strike (col 4) */
+        .row-strike {
+            text-align: center;
+            color: var(--text-muted);
+            font-weight: 600;
             font-variant-numeric: tabular-nums;
         }
 
@@ -466,82 +535,21 @@
             font-size: 12px;
         }
 
-        .row-bars {
-            flex: 1;
+        /* Put Bar (col 5) — bar grows from left to right */
+        .row-bar-put {
             display: flex;
             align-items: center;
-            margin: 0 10px;
-            height: 18px;
-            gap: 1px;
+            justify-content: flex-start;
+            height: 16px;
         }
 
-        .bar {
-            height: 100%;
-            min-width: 0;
-            border-radius: 2px;
-        }
-
-        .bar-call {
-            background: linear-gradient(90deg, var(--call-color), rgba(79, 195, 247, 0.4));
-        }
-
-        .bar-put {
-            background: linear-gradient(90deg, var(--put-color), rgba(255, 183, 77, 0.4));
-        }
-
-        .row-delta-call {
-            width: 25px;
-            text-align: right;
-            font-size: 9px;
-            color: var(--text-muted);
-            flex-shrink: 0;
-            margin-right: 4px;
-            opacity: 0.6;
-            font-variant-numeric: tabular-nums;
-        }
-
-        .row-delta-put {
-            width: 25px;
-            text-align: left;
-            font-size: 9px;
-            color: var(--text-muted);
-            flex-shrink: 0;
-            margin-left: 4px;
-            opacity: 0.6;
-            font-variant-numeric: tabular-nums;
-        }
-
-        .row-call {
-            width: 45px;
-            text-align: right;
-            font-size: 11px;
-            color: var(--call-color);
-            flex-shrink: 0;
-            font-variant-numeric: tabular-nums;
-            font-weight: 600;
-            padding-right: 4px;
-            margin-right: 4px;
-            border-radius: 3px;
-        }
-
-        .row-call.max-call {
-            background: rgba(77, 208, 225, 0.25);
-            color: #ffffff;
-            font-weight: 800;
-            box-shadow: 0 0 8px rgba(77, 208, 225, 0.5);
-            opacity: 1;
-        }
-
+        /* Put OI (col 6) */
         .row-put {
-            width: 45px;
             text-align: left;
-            font-size: 11px;
             color: var(--put-color);
-            flex-shrink: 0;
             font-variant-numeric: tabular-nums;
             font-weight: 600;
-            padding-left: 4px;
-            margin-left: 4px;
+            padding-left: 6px;
             border-radius: 3px;
         }
 
@@ -550,16 +558,22 @@
             color: #ffffff;
             font-weight: 800;
             box-shadow: 0 0 8px rgba(255, 183, 77, 0.5);
-            opacity: 1;
         }
 
+        /* Put Delta (col 7) */
+        .row-delta-put {
+            text-align: center;
+            font-size: 9px;
+            color: var(--text-muted);
+            opacity: 0.65;
+            font-variant-numeric: tabular-nums;
+        }
+
+        /* Total (col 8) */
         .row-total {
-            width: 44px;
             text-align: right;
             font-size: 10px;
             color: var(--text-muted);
-            flex-shrink: 0;
-            margin-left: 4px;
             font-variant-numeric: tabular-nums;
             font-weight: 500;
         }
@@ -567,6 +581,21 @@
         .row-total.high {
             color: var(--text-primary);
             font-weight: 700;
+        }
+
+        /* Bars */
+        .bar {
+            height: 100%;
+            min-width: 0;
+            border-radius: 2px;
+        }
+
+        .bar-call {
+            background: linear-gradient(270deg, var(--call-color), rgba(79, 195, 247, 0.3));
+        }
+
+        .bar-put {
+            background: linear-gradient(90deg, var(--put-color), rgba(255, 183, 77, 0.3));
         }
 
         /* ===== PLACEHOLDER ===== */
@@ -976,7 +1005,18 @@
             const closestStrike = filtered.reduce((prev, curr) =>
                 Math.abs(curr.strike - underlying) < Math.abs(prev.strike - underlying) ? curr : prev, filtered[0]);
 
-            let html = '';
+            // Grid header
+            let html = '<div class="grid-header">' +
+                '<span class="h-call">Δ</span>' +
+                '<span class="h-call h-right">Call</span>' +
+                '<span></span>' +
+                '<span>Strike</span>' +
+                '<span></span>' +
+                '<span class="h-put h-left">Put</span>' +
+                '<span class="h-put">Δ</span>' +
+                '<span class="h-right">Total</span>' +
+                '</div>';
+
             for (const s of filtered) {
                 const isATM = s === closestStrike;
                 const isHot = !isATM && s.total >= hotThreshold;
@@ -988,7 +1028,7 @@
                 if (isATM) rowCls += ' atm';
                 else if (isHot) rowCls += ' hot';
 
-                // Strike color: ATM=white, above underlying=green, below=red
+                // Strike color
                 let strikeStyle = '';
                 if (isATM) {
                     strikeStyle = 'color:#ffffff;font-weight:800;font-size:12px;';
@@ -1008,27 +1048,26 @@
                 let putCls = 'row-put';
                 if (isMaxPut) putCls += ' max-put';
 
-                const callW = Math.max(0, (s.call / maxSingle) * CONFIG.barMaxWidth);
-                const putW = Math.max(0, (s.put / maxSingle) * CONFIG.barMaxWidth);
+                // Bar width as percentage of container (use 100% max)
+                const callPct = Math.max(0, (s.call / maxSingle) * 100);
+                const putPct = Math.max(0, (s.put / maxSingle) * 100);
 
-                // Calculate Delta
+                // Delta
                 const t = data.dte / 365;
                 const callDelta = calcDelta(underlying, s.strike, s.volSettle, t, true);
                 const putDelta = calcDelta(underlying, s.strike, s.volSettle, t, false);
-                const callDeltaStr = Math.round(callDelta * 100) + 'Δ';
-                const putDeltaStr = Math.abs(Math.round(putDelta * 100)) + 'Δ';
+                const callDeltaStr = Math.round(callDelta * 100);
+                const putDeltaStr = Math.abs(Math.round(putDelta * 100));
 
-                html += `<div class="${rowCls}" title="Strike: ${s.strike} | Call: ${s.call} | Put: ${s.put}">` +
-                    `<span class="${strikeCls}" style="${strikeStyle}">${s.strike}</span>` +
+                html += `<div class="${rowCls}">` +
                     `<span class="row-delta-call">${callDeltaStr}</span>` +
-                    `<span class="${callCls}">${s.call > 0 ? s.call : ''}</span>` +
-                    `<div class="row-bars">` +
-                    `${s.call > 0 ? `<div class="bar bar-call" style="width:${callW}px"></div>` : ''}` +
-                    `${s.put > 0 ? `<div class="bar bar-put" style="width:${putW}px"></div>` : ''}` +
-                    `</div>` +
-                    `<span class="${putCls}">${s.put > 0 ? s.put : ''}</span>` +
+                    `<span class="${callCls}">${s.call > 0 ? s.call.toLocaleString() : ''}</span>` +
+                    `<div class="row-bar-call">${s.call > 0 ? `<div class="bar bar-call" style="width:${callPct}%"></div>` : ''}</div>` +
+                    `<span class="${strikeCls}" style="${strikeStyle}">${s.strike}</span>` +
+                    `<div class="row-bar-put">${s.put > 0 ? `<div class="bar bar-put" style="width:${putPct}%"></div>` : ''}</div>` +
+                    `<span class="${putCls}">${s.put > 0 ? s.put.toLocaleString() : ''}</span>` +
                     `<span class="row-delta-put">${putDeltaStr}</span>` +
-                    `<span class="row-total ${isHot || (isATM && s.total >= hotThreshold) ? 'high' : ''}">${s.total}</span>` +
+                    `<span class="row-total ${isHot || (isATM && s.total >= hotThreshold) ? 'high' : ''}">${s.total.toLocaleString()}</span>` +
                     `</div>`;
             }
             container.innerHTML = html;
