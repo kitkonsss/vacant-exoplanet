@@ -1575,9 +1575,7 @@
                         // 1-Day Expected Move
                         const er1Day = uPrice * atm.volSettle * Math.sqrt(1 / 365);
 
-                        // Setup Generation Logic
-                        let setup1Html = '';
-                        let setup2Html = '';
+
 
                         const t1Day = 1 / 365;
 
@@ -1591,105 +1589,60 @@
                             return Math.round(prob * 100);
                         };
 
-                        if (biasScore > 0) { // Bullish
-                            // Entry 1 (Aggressive Dip)
-                            const e1 = uPrice - (er1Day * 0.4);
-                            const sl1 = e1 - 10;
-                            const tp1 = uPrice + (er1Day * 0.5);
+                        // ── Multi-Tier Setup Generator ──
+                        // 4 tiers from shallow (high prob ~80%) to deep (low prob ~40%)
+                        const tiers = [
+                            { n: 1, label: 'ย่อน้อย', emEntry: 0.10, emTP: 0.15, color: 'var(--green)', icon: '🟢' },
+                            { n: 2, label: 'ย่อตื้น', emEntry: 0.25, emTP: 0.30, color: 'var(--cyan)', icon: '🔵' },
+                            { n: 3, label: 'ย่อกลาง', emEntry: 0.45, emTP: 0.50, color: 'var(--accent)', icon: '🟡' },
+                            { n: 4, label: 'ย่อลึก', emEntry: 0.70, emTP: 0.80, color: 'var(--orange)', icon: '🟠' },
+                        ];
 
-                            // Entry 2 (Conservative Dip)
-                            const e2 = uPrice - (er1Day * 0.8);
-                            const sl2 = e2 - 10;
-                            const tp2 = uPrice + (er1Day * 0.2);
-
-                            setup1Html = `
+                        const buildSetup = (dir, tier) => {
+                            // dir: 'buy' or 'sell'
+                            const isBuy = dir === 'buy';
+                            const entry = isBuy ? uPrice - (er1Day * tier.emEntry) : uPrice + (er1Day * tier.emEntry);
+                            const sl = isBuy ? entry - 10 : entry + 10;
+                            const tp = isBuy ? uPrice + (er1Day * tier.emTP) : uPrice - (er1Day * tier.emTP);
+                            const dirLabel = isBuy ? 'BUY' : 'SELL';
+                            const labelTh = isBuy
+                                ? tier.label
+                                : tier.label.replace('ย่อ', 'เด้ง');
+                            return `
                             <div class="setup-box">
-                                <div class="setup-title bull">🟢 BUY แผน 1: ย่อตื้น (Aggressive)</div>
-                                <div class="setup-row"><span class="setup-label">Entry Zone</span><span class="setup-val">$${e1.toFixed(1)} <span class="prob-badge" title="โอกาสลงมาเกี่ยว">${getProb(e1)}% Hit</span></span></div>
-                                <div class="setup-row"><span class="setup-label">🎯 TP</span><span class="setup-val">$${tp1.toFixed(1)} <span class="prob-badge">${getProb(tp1)}% Hit</span></span></div>
-                                <div class="setup-row"><span class="setup-label">🚫 SL (Strict)</span><span class="setup-val" style="color:var(--red);">$${sl1.toFixed(1)} <span style="font-size:10px; font-weight:normal; color:var(--text-muted);">(-$10)</span></span></div>
+                                <div class="setup-title" style="color:${tier.color};">${tier.icon} ${dirLabel} แผน ${tier.n}: ${labelTh}</div>
+                                <div class="setup-row"><span class="setup-label">Entry Zone</span><span class="setup-val">$${entry.toFixed(1)} <span class="prob-badge">${getProb(entry)}% Hit</span></span></div>
+                                <div class="setup-row"><span class="setup-label">🎯 TP</span><span class="setup-val">$${tp.toFixed(1)} <span class="prob-badge">${getProb(tp)}% Hit</span></span></div>
+                                <div class="setup-row"><span class="setup-label">🚫 SL</span><span class="setup-val" style="color:var(--red);">$${sl.toFixed(1)} <span style="font-size:10px; font-weight:normal; color:var(--text-muted);">(-$10)</span></span></div>
+                            </div>`;
+                        };
+
+                        const disabledBox = (side, reason) => `
+                            <div class="setup-box" style="border-left: 3px solid var(--red); background: rgba(239, 83, 80, 0.05);">
+                                <div class="setup-title" style="color: var(--red);">🚨 ${side} DISABLED</div>
+                                <div style="font-size: 13px; color: var(--text-secondary); margin-top: 8px;">${reason}</div>
                             </div>`;
 
-                            setup2Html = `
-                            <div class="setup-box">
-                                <div class="setup-title" style="color: var(--cyan);">🔵 BUY แผน 2: ย่อลึก (Conservative)</div>
-                                <div class="setup-row"><span class="setup-label">Entry Zone</span><span class="setup-val">$${e2.toFixed(1)} <span class="prob-badge" title="โอกาสลงมาเกี่ยว">${getProb(e2)}% Hit</span></span></div>
-                                <div class="setup-row"><span class="setup-label">🎯 TP</span><span class="setup-val">$${tp2.toFixed(1)} <span class="prob-badge">${getProb(tp2)}% Hit</span></span></div>
-                                <div class="setup-row"><span class="setup-label">🚫 SL (Strict)</span><span class="setup-val" style="color:var(--red);">$${sl2.toFixed(1)} <span style="font-size:10px; font-weight:normal; color:var(--text-muted);">(-$10)</span></span></div>
-                            </div>`;
-                        } else if (biasScore < 0) { // Bearish
-                            // Entry 1 (Aggressive Rally)
-                            const e1 = uPrice + (er1Day * 0.4);
-                            const sl1 = e1 + 10;
-                            const tp1 = uPrice - (er1Day * 0.5);
-
-                            // Entry 2 (Conservative Rally)
-                            const e2 = uPrice + (er1Day * 0.8);
-                            const sl2 = e2 + 10;
-                            const tp2 = uPrice - (er1Day * 0.2);
-
-                            setup1Html = `
-                            <div class="setup-box">
-                                <div class="setup-title bear">🔴 SELL แผน 1: เด้งสั้น (Aggressive)</div>
-                                <div class="setup-row"><span class="setup-label">Entry Zone</span><span class="setup-val">$${e1.toFixed(1)} <span class="prob-badge" title="โอกาสขึ้นมาเกี่ยว">${getProb(e1)}% Hit</span></span></div>
-                                <div class="setup-row"><span class="setup-label">🎯 TP</span><span class="setup-val">$${tp1.toFixed(1)} <span class="prob-badge">${getProb(tp1)}% Hit</span></span></div>
-                                <div class="setup-row"><span class="setup-label">🚫 SL (Strict)</span><span class="setup-val" style="color:var(--red);">$${sl1.toFixed(1)} <span style="font-size:10px; font-weight:normal; color:var(--text-muted);">(-$10)</span></span></div>
-                            </div>`;
-
-                            setup2Html = `
-                            <div class="setup-box">
-                                <div class="setup-title" style="color: var(--orange);">🟠 SELL แผน 2: เด้งสูง (Conservative)</div>
-                                <div class="setup-row"><span class="setup-label">Entry Zone</span><span class="setup-val">$${e2.toFixed(1)} <span class="prob-badge" title="โอกาสขึ้นมาเกี่ยว">${getProb(e2)}% Hit</span></span></div>
-                                <div class="setup-row"><span class="setup-label">🎯 TP</span><span class="setup-val">$${tp2.toFixed(1)} <span class="prob-badge">${getProb(tp2)}% Hit</span></span></div>
-                                <div class="setup-row"><span class="setup-label">🚫 SL (Strict)</span><span class="setup-val" style="color:var(--red);">$${sl2.toFixed(1)} <span style="font-size:10px; font-weight:normal; color:var(--text-muted);">(-$10)</span></span></div>
-                            </div>`;
-                        } else { // Neutral (Sideways / Ranging)
-                            // Ping Pong Setup: Buy Low, Sell High
-
-                            // Entry 1 (Buy Low / Dips)
-                            const eBuy = uPrice - (er1Day * 0.6);
-                            const slBuy = eBuy - 10;
-                            const tpBuy = uPrice + (er1Day * 0.3); // Aim for mean reversion to midpoint
-
-                            // Entry 2 (Sell High / Rallies)
-                            const eSell = uPrice + (er1Day * 0.6);
-                            const slSell = eSell + 10;
-                            const tpSell = uPrice - (er1Day * 0.3);
-
-                            setup1Html = `
-                            <div class="setup-box" style="border-left: 3px solid var(--put-color);">
-                                <div class="setup-title" style="color: var(--put-color);">🟡 PING PONG (รับล่าง: BUY)</div>
-                                <div class="setup-row"><span class="setup-label">Entry Zone</span><span class="setup-val">$${eBuy.toFixed(1)} <span class="prob-badge" title="โอกาสย่อมาชน">${getProb(eBuy)}% Hit</span></span></div>
-                                <div class="setup-row"><span class="setup-label">🎯 TP (Reversion)</span><span class="setup-val">$${tpBuy.toFixed(1)} <span class="prob-badge">${getProb(tpBuy)}% Hit</span></span></div>
-                                <div class="setup-row"><span class="setup-label">🚫 SL (Strict)</span><span class="setup-val" style="color:var(--red);">$${slBuy.toFixed(1)} <span style="font-size:10px; font-weight:normal; color:var(--text-muted);">(-$10)</span></span></div>
-                            </div>`;
+                        if (biasScore > 0) { // Bullish → 4 BUY tiers
+                            setupHtml = tiers.map(t => buildSetup('buy', t)).join('');
+                        } else if (biasScore < 0) { // Bearish → 4 SELL tiers
+                            setupHtml = tiers.map(t => buildSetup('sell', t)).join('');
+                        } else { // Neutral → Ping Pong (4 BUY + 4 SELL)
+                            let buyHtml = tiers.map(t => buildSetup('buy', t)).join('');
+                            let sellHtml = tiers.map(t => buildSetup('sell', t)).join('');
 
                             if (squeezeRisk === 'bear') {
-                                setup1Html = `
-                                <div class="setup-box" style="border-left: 3px solid var(--red); background: rgba(239, 83, 80, 0.05);">
-                                    <div class="setup-title" style="color: var(--red);">🚨 PING PONG (BUY) DISABLED</div>
-                                    <div style="font-size: 13px; color: var(--text-secondary); margin-top: 8px;">High Liquidity Drop risk near Put Wall. Buying the dip is extremely dangerous right now. Price may cascade lower.</div>
-                                </div>`;
+                                buyHtml = disabledBox('PING PONG (BUY)', 'High Liquidity Drop risk near Put Wall. Buying the dip is extremely dangerous. Price may cascade lower.');
                             }
-
-                            setup2Html = `
-                            <div class="setup-box" style="border-left: 3px solid var(--call-color);">
-                                <div class="setup-title" style="color: var(--call-color);">🟡 PING PONG (ต้านบน: SELL)</div>
-                                <div class="setup-row"><span class="setup-label">Entry Zone</span><span class="setup-val">$${eSell.toFixed(1)} <span class="prob-badge" title="โอกาสเด้งไปชน">${getProb(eSell)}% Hit</span></span></div>
-                                <div class="setup-row"><span class="setup-label">🎯 TP (Reversion)</span><span class="setup-val">$${tpSell.toFixed(1)} <span class="prob-badge">${getProb(tpSell)}% Hit</span></span></div>
-                                <div class="setup-row"><span class="setup-label">🚫 SL (Strict)</span><span class="setup-val" style="color:var(--red);">$${slSell.toFixed(1)} <span style="font-size:10px; font-weight:normal; color:var(--text-muted);">(-$10)</span></span></div>
-                            </div>`;
-
                             if (squeezeRisk === 'bull') {
-                                setup2Html = `
-                                <div class="setup-box" style="border-left: 3px solid var(--red); background: rgba(239, 83, 80, 0.05);">
-                                    <div class="setup-title" style="color: var(--red);">🚨 PING PONG (SELL) DISABLED</div>
-                                    <div style="font-size: 13px; color: var(--text-secondary); margin-top: 8px;">High Gamma Squeeze UP risk near Call Wall. Shorting resistance is extremely dangerous right now. Price may explode higher.</div>
-                                </div>`;
+                                sellHtml = disabledBox('PING PONG (SELL)', 'High Gamma Squeeze UP risk near Call Wall. Shorting resistance is extremely dangerous. Price may explode higher.');
                             }
-                        }
 
-                        setupHtml = setup1Html + setup2Html;
+                            setupHtml = `<div style="margin-bottom:6px; font-size:11px; color:var(--text-muted); font-weight:700;">▼ PING PONG (รับล่าง: BUY)</div>`
+                                + buyHtml
+                                + `<div style="margin-top:10px; margin-bottom:6px; font-size:11px; color:var(--text-muted); font-weight:700;">▲ PING PONG (ต้านบน: SELL)</div>`
+                                + sellHtml;
+                        }
                     }
                 }
 
