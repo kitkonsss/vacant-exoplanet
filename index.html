@@ -1581,12 +1581,14 @@
 
                         const t1Day = 1 / 365;
 
-                        // Calculate Probabilities (OTM Delta representation)
+                        // Calculate Probabilities: chance of price reaching a given strike within 1 day
+                        // Above price → use Call Delta (prob of rising to strike)
+                        // Below price → use |Put Delta| (prob of dropping to strike)
                         const getProb = (strike) => {
                             const callD = calcDelta(uPrice, strike, atm.volSettle, t1Day, true);
                             const putD = calcDelta(uPrice, strike, atm.volSettle, t1Day, false);
-                            const otmD = strike > uPrice ? callD : (1 - Math.abs(putD));
-                            return Math.round(otmD * 100);
+                            const prob = strike > uPrice ? callD : Math.abs(putD);
+                            return Math.round(prob * 100);
                         };
 
                         if (biasScore > 0) { // Bullish
