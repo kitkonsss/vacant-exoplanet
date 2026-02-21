@@ -17,28 +17,32 @@
         }
 
         :root {
-            --bg-primary: #1e1e24;
-            /* Lighter dark */
-            --bg-secondary: #25262c;
-            --bg-panel: #2a2b32;
-            --bg-card: #2f3037;
-            --border: #3d3e46;
-            --border-active: #565863;
-            --text-primary: #f5f5f7;
-            --text-secondary: #b4b6c3;
-            --text-muted: #828493;
-            --gold: #ffc107;
-            --gold-glow: rgba(252, 194, 27, 0.35);
-            --orange: #ffab40;
-            --orange-dim: rgba(255, 171, 64, 0.15);
-            --cyan: #40c4ff;
-            --pink: #ff4081;
-            --green: #00e676;
-            --red: #ff3d00;
-            --call-color: #4dd0e1;
-            --call-bg: rgba(77, 208, 225, 0.1);
-            --put-color: #ffb74d;
-            --put-bg: rgba(255, 183, 77, 0.1);
+            /* Backgrounds — deep blue-charcoal (TradingView-inspired) */
+            --bg-primary: #131722;
+            --bg-secondary: #1c2030;
+            --bg-panel: #1e2235;
+            --bg-card: #252a3a;
+            --border: #2a2e3e;
+            --border-active: #3d4258;
+            /* Text */
+            --text-primary: #d1d4dc;
+            --text-secondary: #9598a1;
+            --text-muted: #6a6d78;
+            /* Accent — electric blue */
+            --accent: #2962ff;
+            --accent-glow: rgba(41, 98, 255, 0.3);
+            /* Status */
+            --green: #26a69a;
+            --red: #ef5350;
+            --orange: #ff9800;
+            --orange-dim: rgba(255, 152, 0, 0.1);
+            --cyan: #42a5f5;
+            --pink: #ab47bc;
+            /* Call = Green/Teal, Put = Red/Coral (finance standard) */
+            --call-color: #26a69a;
+            --call-bg: rgba(38, 166, 154, 0.12);
+            --put-color: #ef5350;
+            --put-bg: rgba(239, 83, 80, 0.12);
         }
 
         body {
@@ -72,7 +76,7 @@
         .logo {
             font-size: 20px;
             font-weight: 900;
-            background: linear-gradient(135deg, var(--gold), #ffd54f);
+            background: linear-gradient(135deg, var(--accent), #5b8bf5);
             -webkit-background-clip: text;
             background-clip: text;
             -webkit-text-fill-color: transparent;
@@ -99,8 +103,8 @@
         .price-display {
             font-size: 22px;
             font-weight: 800;
-            color: var(--gold);
-            text-shadow: 0 0 20px var(--gold-glow);
+            color: var(--text-primary);
+            text-shadow: none;
         }
 
         .price-change {
@@ -112,12 +116,12 @@
 
         .price-change.up {
             color: var(--green);
-            background: rgba(0, 230, 118, 0.1);
+            background: rgba(38, 166, 154, 0.15);
         }
 
         .price-change.down {
             color: var(--red);
-            background: rgba(255, 23, 68, 0.1);
+            background: rgba(239, 83, 80, 0.15);
         }
 
         .header-right {
@@ -127,9 +131,9 @@
         }
 
         .dte-badge {
-            background: rgba(0, 229, 255, 0.12);
-            border: 1px solid rgba(0, 229, 255, 0.25);
-            color: var(--cyan);
+            background: rgba(41, 98, 255, 0.12);
+            border: 1px solid rgba(41, 98, 255, 0.3);
+            color: var(--accent);
             padding: 4px 12px;
             border-radius: 6px;
             font-weight: 700;
@@ -137,9 +141,9 @@
         }
 
         .refresh-btn {
-            background: rgba(240, 185, 11, 0.12);
-            border: 1px solid rgba(240, 185, 11, 0.3);
-            color: var(--gold);
+            background: rgba(41, 98, 255, 0.12);
+            border: 1px solid rgba(41, 98, 255, 0.3);
+            color: var(--accent);
             padding: 7px 16px;
             border-radius: 8px;
             cursor: pointer;
@@ -150,8 +154,8 @@
         }
 
         .refresh-btn:hover {
-            background: rgba(240, 185, 11, 0.25);
-            border-color: var(--gold);
+            background: rgba(41, 98, 255, 0.3);
+            border-color: var(--accent);
         }
 
         .status-indicator {
@@ -165,7 +169,7 @@
             height: 8px;
             border-radius: 50%;
             background: var(--green);
-            box-shadow: 0 0 8px rgba(0, 230, 118, 0.5);
+            box-shadow: 0 0 8px rgba(38, 166, 154, 0.5);
             animation: pulse 2s ease-in-out infinite;
         }
 
@@ -217,8 +221,8 @@
         }
 
         .tab-btn.active {
-            color: var(--gold);
-            border-bottom-color: var(--gold);
+            color: var(--accent);
+            border-bottom-color: var(--accent);
         }
 
         .tab-btn .tab-dte {
@@ -229,7 +233,7 @@
         }
 
         .tab-btn.active .tab-dte {
-            color: var(--gold);
+            color: var(--accent);
             opacity: 0.7;
         }
 
@@ -241,7 +245,7 @@
         }
 
         .tab-btn.active .tab-contract {
-            color: var(--gold);
+            color: var(--accent);
         }
 
         /* ===== SUMMARY STRIP ===== */
@@ -290,7 +294,7 @@
         }
 
         .val-gold {
-            color: var(--gold);
+            color: var(--accent);
         }
 
         .val-cyan {
@@ -473,8 +477,8 @@
         }
 
         .row.atm {
-            background: rgba(252, 194, 27, 0.08);
-            border-left-color: var(--gold);
+            background: rgba(41, 98, 255, 0.08);
+            border-left-color: var(--accent);
         }
 
         .row.hot {
@@ -502,10 +506,10 @@
         }
 
         .row-call.max-call {
-            background: rgba(77, 208, 225, 0.25);
+            background: rgba(38, 166, 154, 0.25);
             color: #ffffff;
             font-weight: 800;
-            box-shadow: 0 0 8px rgba(77, 208, 225, 0.5);
+            box-shadow: 0 0 8px rgba(38, 166, 154, 0.4);
         }
 
         /* Call Bar (col 3) — bar grows from right to left */
@@ -525,12 +529,12 @@
         }
 
         .row-strike.hot {
-            color: var(--orange);
+            color: var(--text-secondary);
             font-weight: 800;
         }
 
         .row-strike.atm {
-            color: var(--gold);
+            color: var(--accent);
             font-weight: 800;
             font-size: 12px;
         }
@@ -554,10 +558,10 @@
         }
 
         .row-put.max-put {
-            background: rgba(255, 183, 77, 0.25);
+            background: rgba(239, 83, 80, 0.25);
             color: #ffffff;
             font-weight: 800;
-            box-shadow: 0 0 8px rgba(255, 183, 77, 0.5);
+            box-shadow: 0 0 8px rgba(239, 83, 80, 0.4);
         }
 
         /* Put Delta (col 7) */
@@ -591,11 +595,11 @@
         }
 
         .bar-call {
-            background: linear-gradient(270deg, var(--call-color), rgba(79, 195, 247, 0.3));
+            background: linear-gradient(270deg, var(--call-color), rgba(38, 166, 154, 0.2));
         }
 
         .bar-put {
-            background: linear-gradient(90deg, var(--put-color), rgba(255, 183, 77, 0.3));
+            background: linear-gradient(90deg, var(--put-color), rgba(239, 83, 80, 0.2));
         }
 
         /* ===== PLACEHOLDER ===== */
@@ -649,7 +653,7 @@
             width: 44px;
             height: 44px;
             border: 3px solid var(--border);
-            border-top-color: var(--gold);
+            border-top-color: var(--accent);
             border-radius: 50%;
             animation: spin 0.7s linear infinite;
         }
@@ -742,7 +746,7 @@
                 id="tabDteMonthly"></span>
         </button>
         <button class="tab-btn" data-tab="chart" onclick="switchTab('chart')"
-            style="margin-left:auto; color: var(--gold);">
+            style="margin-left:auto; color: var(--accent);">
             📈 Live Chart
         </button>
     </div>
@@ -1171,12 +1175,12 @@
 
             chartInstance = LightweightCharts.createChart(container, {
                 layout: {
-                    background: { type: 'solid', color: '#1e1e24' },
-                    textColor: '#b4b6c3',
+                    background: { type: 'solid', color: '#131722' },
+                    textColor: '#9598a1',
                 },
                 grid: {
-                    vertLines: { color: '#3d3e46' },
-                    horzLines: { color: '#3d3e46' },
+                    vertLines: { color: '#2a2e3e' },
+                    horzLines: { color: '#2a2e3e' },
                 },
                 timeScale: {
                     timeVisible: true,
@@ -1250,7 +1254,7 @@
             if (maxCallStrike > 0) {
                 callLine = candleSeries.createPriceLine({
                     price: maxCallStrike,
-                    color: '#4dd0e1',
+                    color: '#26a69a',
                     lineWidth: 2,
                     lineStyle: LightweightCharts.LineStyle.Dashed,
                     axisLabelVisible: true,
@@ -1261,7 +1265,7 @@
             if (maxPutStrike > 0) {
                 putLine = candleSeries.createPriceLine({
                     price: maxPutStrike,
-                    color: '#ffb74d',
+                    color: '#ef5350',
                     lineWidth: 2,
                     lineStyle: LightweightCharts.LineStyle.Dashed,
                     axisLabelVisible: true,
