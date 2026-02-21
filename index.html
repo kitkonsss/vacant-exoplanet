@@ -1586,7 +1586,7 @@
                             return Math.round(otmD * 100);
                         };
 
-                        if (biasScore >= 0) { // Bullish or Neutral Edge Case
+                        if (biasScore > 0) { // Bullish
                             // Entry 1 (Aggressive Dip)
                             const e1 = uPrice - (er1Day * 0.4);
                             const sl1 = e1 - 10;
@@ -1612,7 +1612,7 @@
                                 <div class="setup-row"><span class="setup-label">🎯 TP</span><span class="setup-val">$${tp2.toFixed(1)} <span class="prob-badge">${getProb(tp2)}% Hit</span></span></div>
                                 <div class="setup-row"><span class="setup-label">🚫 SL (Strict)</span><span class="setup-val" style="color:var(--red);">$${sl2.toFixed(1)} <span style="font-size:10px; font-weight:normal; color:var(--text-muted);">(-$10)</span></span></div>
                             </div>`;
-                        } else { // Bearish
+                        } else if (biasScore < 0) { // Bearish
                             // Entry 1 (Aggressive Rally)
                             const e1 = uPrice + (er1Day * 0.4);
                             const sl1 = e1 + 10;
@@ -1637,6 +1637,34 @@
                                 <div class="setup-row"><span class="setup-label">Entry Zone</span><span class="setup-val">$${e2.toFixed(1)} <span class="prob-badge" title="โอกาสขึ้นมาเกี่ยว">${getProb(e2)}% Hit</span></span></div>
                                 <div class="setup-row"><span class="setup-label">🎯 TP</span><span class="setup-val">$${tp2.toFixed(1)} <span class="prob-badge">${getProb(tp2)}% Hit</span></span></div>
                                 <div class="setup-row"><span class="setup-label">🚫 SL (Strict)</span><span class="setup-val" style="color:var(--red);">$${sl2.toFixed(1)} <span style="font-size:10px; font-weight:normal; color:var(--text-muted);">(-$10)</span></span></div>
+                            </div>`;
+                        } else { // Neutral (Sideways / Ranging)
+                            // Ping Pong Setup: Buy Low, Sell High
+
+                            // Entry 1 (Buy Low / Dips)
+                            const eBuy = uPrice - (er1Day * 0.6);
+                            const slBuy = eBuy - 10;
+                            const tpBuy = uPrice + (er1Day * 0.3); // Aim for mean reversion to midpoint
+
+                            // Entry 2 (Sell High / Rallies)
+                            const eSell = uPrice + (er1Day * 0.6);
+                            const slSell = eSell + 10;
+                            const tpSell = uPrice - (er1Day * 0.3);
+
+                            setup1Html = `
+                            <div class="setup-box" style="border-left: 3px solid var(--put-color);">
+                                <div class="setup-title" style="color: var(--put-color);">🟡 PING PONG (รับล่าง: BUY)</div>
+                                <div class="setup-row"><span class="setup-label">Entry Zone</span><span class="setup-val">$${eBuy.toFixed(1)} <span class="prob-badge" title="โอกาสย่อมาชน">${getProb(eBuy)}% Hit</span></span></div>
+                                <div class="setup-row"><span class="setup-label">🎯 TP (Reversion)</span><span class="setup-val">$${tpBuy.toFixed(1)} <span class="prob-badge">${getProb(tpBuy)}% Hit</span></span></div>
+                                <div class="setup-row"><span class="setup-label">🚫 SL (Strict)</span><span class="setup-val" style="color:var(--red);">$${slBuy.toFixed(1)} <span style="font-size:10px; font-weight:normal; color:var(--text-muted);">(-$10)</span></span></div>
+                            </div>`;
+
+                            setup2Html = `
+                            <div class="setup-box" style="border-left: 3px solid var(--call-color);">
+                                <div class="setup-title" style="color: var(--call-color);">🟡 PING PONG (ต้านบน: SELL)</div>
+                                <div class="setup-row"><span class="setup-label">Entry Zone</span><span class="setup-val">$${eSell.toFixed(1)} <span class="prob-badge" title="โอกาสเด้งไปชน">${getProb(eSell)}% Hit</span></span></div>
+                                <div class="setup-row"><span class="setup-label">🎯 TP (Reversion)</span><span class="setup-val">$${tpSell.toFixed(1)} <span class="prob-badge">${getProb(tpSell)}% Hit</span></span></div>
+                                <div class="setup-row"><span class="setup-label">🚫 SL (Strict)</span><span class="setup-val" style="color:var(--red);">$${slSell.toFixed(1)} <span style="font-size:10px; font-weight:normal; color:var(--text-muted);">(-$10)</span></span></div>
                             </div>`;
                         }
 
