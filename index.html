@@ -826,6 +826,52 @@
             text-align: center;
         }
 
+        .setup-box {
+            margin-top: 10px;
+            padding: 14px;
+            border-radius: 8px;
+            background: rgba(0, 0, 0, 0.2);
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .setup-title {
+            font-size: 12px;
+            font-weight: 800;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-bottom: 4px;
+        }
+
+        .setup-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 12px;
+        }
+
+        .setup-label {
+            color: var(--text-secondary);
+            font-weight: 600;
+        }
+
+        .setup-val {
+            font-weight: 800;
+            color: var(--text-primary);
+        }
+
+        .prob-badge {
+            font-size: 10px;
+            font-weight: 600;
+            padding: 2px 6px;
+            border-radius: 4px;
+            background: rgba(255, 255, 255, 0.1);
+            color: var(--text-secondary);
+            margin-left: 6px;
+        }
+
         .bias-bull {
             color: var(--green) !important;
             background: rgba(38, 166, 154, 0.1);
@@ -1502,13 +1548,73 @@
 
                 biases.push({ score: biasScore, label: tf.label });
 
-                // Expected Range
+                // 1-Day Expected Move for Setups
                 let rangeTxt = '—';
+                let setupHtml = '';
+
                 if (intraday?.strikes) {
                     const atm = intraday.strikes.reduce((p, c) => Math.abs(c.strike - data.underlying) < Math.abs(p.strike - data.underlying) ? c : p);
                     if (atm.volSettle > 0) {
-                        const er = data.underlying * atm.volSettle * Math.sqrt(data.dte / 365);
-                        rangeTxt = `$${(data.underlying - er).toFixed(0)} – $${(data.underlying + er).toFixed(0)} <span style="font-size:11px; color:var(--text-muted)">(±${er.toFixed(1)})</span>`;
+                        // Expiry Total Expected Range
+                        const erTotal = data.underlying * atm.volSettle * Math.sqrt(data.dte / 365);
+                        rangeTxt = `$${(data.underlying - erTotal).toFixed(0)} – $${(data.underlying + erTotal).toFixed(0)} <span style="font-size:11px; color:var(--text-muted)">(±${erTotal.toFixed(1)})</span>`;
+
+                        // 1-Day Expected Move
+                        const er1Day = data.underlying * atm.volSettle * Math.sqrt(1 / 365);
+
+                        // Setup Generation Logic
+                        let setupType = '';
+                        let entry = 0, tp1 = 0, tp2 = 0, sl = 0;
+                        let setupColorClass = '';
+
+                        const t1Day = 1 / 365;
+
+                        // Calculate Probabilities (OTM Delta representation)
+                        const getProb = (strike) => {
+                            const callD = calcDelta(data.underlying, strike, atm.volSettle, t1Day, true);
+                            const putD = calcDelta(data.underlying, strike, atm.volSettle, t1Day, false);
+                            const otmD = strike > data.underlying ? callD : (1 - Math.abs(putD));
+                            return Math.round(otmD * 100);
+                        };
+
+                        if (biasScore >= 0) { // Bullish or Neutral Edge Case
+                            setupType = 'BUY ON DIP 🟢';
+                            setupColorClass = 'bull';
+                            entry = data.underlying - (er1Day * 0.8); // Dip to near 1-Day EM support
+                            tp1 = data.underlying + er1Day;
+                            tp2 = maxCall.strike > tp1 ? maxCall.strike : tp1 + er1Day;
+                            sl = entry - er1Day;
+
+                            // Adjust to walls if they are tight
+                            if (maxPut.strike > entry - 10 && maxPut.strike < data.underlying) {
+                                entry = maxPut.strike + 5;
+                                sl = maxPut.strike - 15;
+                            }
+                        } else { // Bearish
+                            setupType = 'SELL RALLY 🔴';
+                            setupColorClass = 'bear';
+                            entry = data.underlying + (er1Day * 0.8); // Rally to near 1-Day EM resistance
+                            tp1 = data.underlying - er1Day;
+                            tp2 = maxPut.strike < tp1 ? maxPut.strike : tp1 - er1Day;
+                            sl = entry + er1Day;
+
+                            if (maxCall.strike < entry + 10 && maxCall.strike > data.underlying) {
+                                entry = maxCall.strike - 5;
+                                sl = maxCall.strike + 15;
+                            }
+                        }
+
+                        const pEntry = getProb(entry);
+                        const pTp1 = getProb(tp1);
+
+                        setupHtml = `
+                        <div class="setup-box">
+                            <div class="setup-title ${setupColorClass}">${setupType} (1-Day Setup)</div>
+                            <div class="setup-row"><span class="setup-label">Entry Zone</span><span class="setup-val">$${entry.toFixed(1)} <span class="prob-badge" title="Probability to Touch">${pEntry}% Hit Prob</span></span></div>
+                            <div class="setup-row"><span class="setup-label">🎯 TP 1 (1-Day)</span><span class="setup-val">$${tp1.toFixed(1)} <span class="prob-badge">${pTp1}% Hit Prob</span></span></div>
+                            <div class="setup-row"><span class="setup-label">🎯 TP 2 (Wall)</span><span class="setup-val">$${tp2.toFixed(1)}</span></div>
+                            <div class="setup-row"><span class="setup-label">🚫 SL</span><span class="setup-val" style="color:var(--red);">$${sl.toFixed(1)}</span></div>
+                        </div>`;
                     }
                 }
 
@@ -1524,8 +1630,9 @@
                     <div class="ac-row"><span class="ac-label">Support (Max Put)</span><span class="ac-val" style="color:var(--put-color); font-weight:800;">$${maxPut.strike}</span></div>
                     <div class="ac-divider"></div>
                     
-                    <div class="ac-row"><span class="ac-label">Expected Range</span><span class="ac-val" style="color:var(--text-primary);">${rangeTxt}</span></div>
+                    <div class="ac-row"><span class="ac-label">Total Exp. Range</span><span class="ac-val" style="color:var(--text-primary);">${rangeTxt}</span></div>
                     ${squeezeTxt}
+                    ${setupHtml}
                 </div>`;
             }
             container.innerHTML = html;
