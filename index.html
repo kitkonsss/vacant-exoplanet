@@ -1563,9 +1563,8 @@
                         const er1Day = data.underlying * atm.volSettle * Math.sqrt(1 / 365);
 
                         // Setup Generation Logic
-                        let setupType = '';
-                        let entry = 0, tp1 = 0, tp2 = 0, sl = 0;
-                        let setupColorClass = '';
+                        let setup1Html = '';
+                        let setup2Html = '';
 
                         const t1Day = 1 / 365;
 
@@ -1578,43 +1577,60 @@
                         };
 
                         if (biasScore >= 0) { // Bullish or Neutral Edge Case
-                            setupType = 'BUY ON DIP 🟢';
-                            setupColorClass = 'bull';
-                            entry = data.underlying - (er1Day * 0.8); // Dip to near 1-Day EM support
-                            tp1 = data.underlying + er1Day;
-                            tp2 = maxCall.strike > tp1 ? maxCall.strike : tp1 + er1Day;
-                            sl = entry - er1Day;
+                            // Entry 1 (Aggressive Dip)
+                            const e1 = data.underlying - (er1Day * 0.4);
+                            const sl1 = e1 - 10;
+                            const tp1 = data.underlying + (er1Day * 0.5);
 
-                            // Adjust to walls if they are tight
-                            if (maxPut.strike > entry - 10 && maxPut.strike < data.underlying) {
-                                entry = maxPut.strike + 5;
-                                sl = maxPut.strike - 15;
-                            }
+                            // Entry 2 (Conservative Dip)
+                            const e2 = data.underlying - (er1Day * 0.8);
+                            const sl2 = e2 - 10;
+                            const tp2 = data.underlying + (er1Day * 0.2);
+
+                            setup1Html = `
+                            <div class="setup-box">
+                                <div class="setup-title bull">🟢 BUY แผน 1: ย่อตื้น (Aggressive)</div>
+                                <div class="setup-row"><span class="setup-label">Entry Zone</span><span class="setup-val">$${e1.toFixed(1)} <span class="prob-badge" title="โอกาสลงมาเกี่ยว">${getProb(e1)}% Hit</span></span></div>
+                                <div class="setup-row"><span class="setup-label">🎯 TP</span><span class="setup-val">$${tp1.toFixed(1)} <span class="prob-badge">${getProb(tp1)}% Hit</span></span></div>
+                                <div class="setup-row"><span class="setup-label">🚫 SL (Strict)</span><span class="setup-val" style="color:var(--red);">$${sl1.toFixed(1)} <span style="font-size:10px; font-weight:normal; color:var(--text-muted);">(-$10)</span></span></div>
+                            </div>`;
+
+                            setup2Html = `
+                            <div class="setup-box">
+                                <div class="setup-title" style="color: var(--cyan);">🔵 BUY แผน 2: ย่อลึก (Conservative)</div>
+                                <div class="setup-row"><span class="setup-label">Entry Zone</span><span class="setup-val">$${e2.toFixed(1)} <span class="prob-badge" title="โอกาสลงมาเกี่ยว">${getProb(e2)}% Hit</span></span></div>
+                                <div class="setup-row"><span class="setup-label">🎯 TP</span><span class="setup-val">$${tp2.toFixed(1)} <span class="prob-badge">${getProb(tp2)}% Hit</span></span></div>
+                                <div class="setup-row"><span class="setup-label">🚫 SL (Strict)</span><span class="setup-val" style="color:var(--red);">$${sl2.toFixed(1)} <span style="font-size:10px; font-weight:normal; color:var(--text-muted);">(-$10)</span></span></div>
+                            </div>`;
                         } else { // Bearish
-                            setupType = 'SELL RALLY 🔴';
-                            setupColorClass = 'bear';
-                            entry = data.underlying + (er1Day * 0.8); // Rally to near 1-Day EM resistance
-                            tp1 = data.underlying - er1Day;
-                            tp2 = maxPut.strike < tp1 ? maxPut.strike : tp1 - er1Day;
-                            sl = entry + er1Day;
+                            // Entry 1 (Aggressive Rally)
+                            const e1 = data.underlying + (er1Day * 0.4);
+                            const sl1 = e1 + 10;
+                            const tp1 = data.underlying - (er1Day * 0.5);
 
-                            if (maxCall.strike < entry + 10 && maxCall.strike > data.underlying) {
-                                entry = maxCall.strike - 5;
-                                sl = maxCall.strike + 15;
-                            }
+                            // Entry 2 (Conservative Rally)
+                            const e2 = data.underlying + (er1Day * 0.8);
+                            const sl2 = e2 + 10;
+                            const tp2 = data.underlying - (er1Day * 0.2);
+
+                            setup1Html = `
+                            <div class="setup-box">
+                                <div class="setup-title bear">🔴 SELL แผน 1: เด้งสั้น (Aggressive)</div>
+                                <div class="setup-row"><span class="setup-label">Entry Zone</span><span class="setup-val">$${e1.toFixed(1)} <span class="prob-badge" title="โอกาสขึ้นมาเกี่ยว">${getProb(e1)}% Hit</span></span></div>
+                                <div class="setup-row"><span class="setup-label">🎯 TP</span><span class="setup-val">$${tp1.toFixed(1)} <span class="prob-badge">${getProb(tp1)}% Hit</span></span></div>
+                                <div class="setup-row"><span class="setup-label">🚫 SL (Strict)</span><span class="setup-val" style="color:var(--red);">$${sl1.toFixed(1)} <span style="font-size:10px; font-weight:normal; color:var(--text-muted);">(-$10)</span></span></div>
+                            </div>`;
+
+                            setup2Html = `
+                            <div class="setup-box">
+                                <div class="setup-title" style="color: var(--orange);">🟠 SELL แผน 2: เด้งสูง (Conservative)</div>
+                                <div class="setup-row"><span class="setup-label">Entry Zone</span><span class="setup-val">$${e2.toFixed(1)} <span class="prob-badge" title="โอกาสขึ้นมาเกี่ยว">${getProb(e2)}% Hit</span></span></div>
+                                <div class="setup-row"><span class="setup-label">🎯 TP</span><span class="setup-val">$${tp2.toFixed(1)} <span class="prob-badge">${getProb(tp2)}% Hit</span></span></div>
+                                <div class="setup-row"><span class="setup-label">🚫 SL (Strict)</span><span class="setup-val" style="color:var(--red);">$${sl2.toFixed(1)} <span style="font-size:10px; font-weight:normal; color:var(--text-muted);">(-$10)</span></span></div>
+                            </div>`;
                         }
 
-                        const pEntry = getProb(entry);
-                        const pTp1 = getProb(tp1);
-
-                        setupHtml = `
-                        <div class="setup-box">
-                            <div class="setup-title ${setupColorClass}">${setupType} (1-Day Setup)</div>
-                            <div class="setup-row"><span class="setup-label">Entry Zone</span><span class="setup-val">$${entry.toFixed(1)} <span class="prob-badge" title="Probability to Touch">${pEntry}% Hit Prob</span></span></div>
-                            <div class="setup-row"><span class="setup-label">🎯 TP 1 (1-Day)</span><span class="setup-val">$${tp1.toFixed(1)} <span class="prob-badge">${pTp1}% Hit Prob</span></span></div>
-                            <div class="setup-row"><span class="setup-label">🎯 TP 2 (Wall)</span><span class="setup-val">$${tp2.toFixed(1)}</span></div>
-                            <div class="setup-row"><span class="setup-label">🚫 SL</span><span class="setup-val" style="color:var(--red);">$${sl.toFixed(1)}</span></div>
-                        </div>`;
+                        setupHtml = setup1Html + setup2Html;
                     }
                 }
 
