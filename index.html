@@ -1559,8 +1559,11 @@
                 let rangeTxt = '—';
                 let setupHtml = '';
 
-                if (intraday?.strikes) {
-                    const atm = intraday.strikes.reduce((p, c) => Math.abs(c.strike - uPrice) < Math.abs(p.strike - uPrice) ? c : p);
+                // Fallback to OI Data if Intraday is missing (e.g., Weekends)
+                const sourceStrikes = intraday?.strikes?.length > 0 ? intraday.strikes : data.strikes;
+
+                if (sourceStrikes && sourceStrikes.length > 0) {
+                    const atm = sourceStrikes.reduce((p, c) => Math.abs(c.strike - uPrice) < Math.abs(p.strike - uPrice) ? c : p);
                     if (atm.volSettle > 0) {
                         // Expiry Total Expected Range
                         const erTotal = uPrice * atm.volSettle * Math.sqrt(data.dte / 365);
