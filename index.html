@@ -489,6 +489,28 @@
             background: linear-gradient(90deg, var(--put-color), rgba(255, 183, 77, 0.4));
         }
 
+        .row-delta-call {
+            width: 25px;
+            text-align: right;
+            font-size: 9px;
+            color: var(--text-muted);
+            flex-shrink: 0;
+            margin-right: 4px;
+            opacity: 0.6;
+            font-variant-numeric: tabular-nums;
+        }
+
+        .row-delta-put {
+            width: 25px;
+            text-align: left;
+            font-size: 9px;
+            color: var(--text-muted);
+            flex-shrink: 0;
+            margin-left: 4px;
+            opacity: 0.6;
+            font-variant-numeric: tabular-nums;
+        }
+
         .row-call {
             width: 45px;
             text-align: right;
@@ -813,7 +835,7 @@
                 },
                 chart: { label: 'Live Chart' } // Dummy for the chart tab
             },
-            refreshIntervalMs: 60000,
+            refreshIntervalMs: 1800000, // 30 minutes
             visibleStrikeRange: 350,
             barMaxWidth: 180,
             oiHotThreshold: 100,
@@ -826,6 +848,20 @@
             refreshTimer: null,
             chartInitialized: false
         };
+
+        // ========== MATH ==========
+        function normalCDF(x) {
+            const t = 1 / (1 + 0.2316419 * Math.abs(x));
+            const d = 0.3989423 * Math.exp(-x * x / 2);
+            const p = d * t * (0.3193815 + t * (-0.3565638 + t * (1.781478 + t * (-1.821256 + t * 1.330274))));
+            return x > 0 ? 1 - p : p;
+        }
+
+        function calcDelta(F, K, sigma, t, isCall) {
+            if (sigma <= 0 || t <= 0) return isCall ? (F > K ? 1 : 0) : (F < K ? -1 : 0);
+            const d1 = (Math.log(F / K) + 0.5 * sigma * sigma * t) / (sigma * Math.sqrt(t));
+            return isCall ? normalCDF(d1) : normalCDF(d1) - 1;
+        }
 
         // ========== PARSE ==========
         function parseVol2VolData(text) {
@@ -975,14 +1011,23 @@
                 const callW = Math.max(0, (s.call / maxSingle) * CONFIG.barMaxWidth);
                 const putW = Math.max(0, (s.put / maxSingle) * CONFIG.barMaxWidth);
 
+                // Calculate Delta
+                const t = data.dte / 365;
+                const callDelta = calcDelta(underlying, s.strike, s.volSettle, t, true);
+                const putDelta = calcDelta(underlying, s.strike, s.volSettle, t, false);
+                const callDeltaStr = Math.round(callDelta * 100) + 'Δ';
+                const putDeltaStr = Math.abs(Math.round(putDelta * 100)) + 'Δ';
+
                 html += `<div class="${rowCls}" title="Strike: ${s.strike} | Call: ${s.call} | Put: ${s.put}">` +
                     `<span class="${strikeCls}" style="${strikeStyle}">${s.strike}</span>` +
+                    `<span class="row-delta-call">${callDeltaStr}</span>` +
                     `<span class="${callCls}">${s.call > 0 ? s.call : ''}</span>` +
                     `<div class="row-bars">` +
                     `${s.call > 0 ? `<div class="bar bar-call" style="width:${callW}px"></div>` : ''}` +
                     `${s.put > 0 ? `<div class="bar bar-put" style="width:${putW}px"></div>` : ''}` +
                     `</div>` +
                     `<span class="${putCls}">${s.put > 0 ? s.put : ''}</span>` +
+                    `<span class="row-delta-put">${putDeltaStr}</span>` +
                     `<span class="row-total ${isHot || (isATM && s.total >= hotThreshold) ? 'high' : ''}">${s.total}</span>` +
                     `</div>`;
             }
