@@ -1545,12 +1545,15 @@
 
                 // Check Squeeze
                 let squeezeTxt = '';
+                let squeezeRisk = null;
                 if (Math.abs(uPrice - maxCall.strike) < 30 && tc > tp) {
                     squeezeTxt = `<div class="ac-alert bias-bull">🔥 Near Call Wall (Gamma Squeeze Up Risk)</div>`;
                     biasScore += 1;
+                    squeezeRisk = 'bull';
                 } else if (Math.abs(uPrice - maxPut.strike) < 30 && tp > tc) {
                     squeezeTxt = `<div class="ac-alert bias-bear">🩸 Near Put Wall (Liquidity Drop Risk)</div>`;
                     biasScore -= 1;
+                    squeezeRisk = 'bear';
                 }
 
                 biases.push({ score: biasScore, label: tf.label });
@@ -1659,6 +1662,14 @@
                                 <div class="setup-row"><span class="setup-label">🚫 SL (Strict)</span><span class="setup-val" style="color:var(--red);">$${slBuy.toFixed(1)} <span style="font-size:10px; font-weight:normal; color:var(--text-muted);">(-$10)</span></span></div>
                             </div>`;
 
+                            if (squeezeRisk === 'bear') {
+                                setup1Html = `
+                                <div class="setup-box" style="border-left: 3px solid var(--red); background: rgba(239, 83, 80, 0.05);">
+                                    <div class="setup-title" style="color: var(--red);">🚨 PING PONG (BUY) DISABLED</div>
+                                    <div style="font-size: 13px; color: var(--text-secondary); margin-top: 8px;">High Liquidity Drop risk near Put Wall. Buying the dip is extremely dangerous right now. Price may cascade lower.</div>
+                                </div>`;
+                            }
+
                             setup2Html = `
                             <div class="setup-box" style="border-left: 3px solid var(--call-color);">
                                 <div class="setup-title" style="color: var(--call-color);">🟡 PING PONG (ต้านบน: SELL)</div>
@@ -1666,6 +1677,14 @@
                                 <div class="setup-row"><span class="setup-label">🎯 TP (Reversion)</span><span class="setup-val">$${tpSell.toFixed(1)} <span class="prob-badge">${getProb(tpSell)}% Hit</span></span></div>
                                 <div class="setup-row"><span class="setup-label">🚫 SL (Strict)</span><span class="setup-val" style="color:var(--red);">$${slSell.toFixed(1)} <span style="font-size:10px; font-weight:normal; color:var(--text-muted);">(-$10)</span></span></div>
                             </div>`;
+
+                            if (squeezeRisk === 'bull') {
+                                setup2Html = `
+                                <div class="setup-box" style="border-left: 3px solid var(--red); background: rgba(239, 83, 80, 0.05);">
+                                    <div class="setup-title" style="color: var(--red);">🚨 PING PONG (SELL) DISABLED</div>
+                                    <div style="font-size: 13px; color: var(--text-secondary); margin-top: 8px;">High Gamma Squeeze UP risk near Call Wall. Shorting resistance is extremely dangerous right now. Price may explode higher.</div>
+                                </div>`;
+                            }
                         }
 
                         setupHtml = setup1Html + setup2Html;
