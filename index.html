@@ -952,6 +952,16 @@
                 if (isATM) rowCls += ' atm';
                 else if (isHot) rowCls += ' hot';
 
+                // Strike color: ATM=white, above underlying=green, below=red
+                let strikeStyle = '';
+                if (isATM) {
+                    strikeStyle = 'color:#ffffff;font-weight:800;font-size:12px;';
+                } else if (s.strike > underlying) {
+                    strikeStyle = 'color:var(--green);';
+                } else {
+                    strikeStyle = 'color:var(--red);';
+                }
+
                 let strikeCls = 'row-strike';
                 if (isATM) strikeCls += ' atm';
                 else if (isHot) strikeCls += ' hot';
@@ -966,7 +976,7 @@
                 const putW = Math.max(0, (s.put / maxSingle) * CONFIG.barMaxWidth);
 
                 html += `<div class="${rowCls}" title="Strike: ${s.strike} | Call: ${s.call} | Put: ${s.put}">` +
-                    `<span class="${strikeCls}">${s.strike}</span>` +
+                    `<span class="${strikeCls}" style="${strikeStyle}">${s.strike}</span>` +
                     `<span class="${callCls}">${s.call > 0 ? s.call : ''}</span>` +
                     `<div class="row-bars">` +
                     `${s.call > 0 ? `<div class="bar bar-call" style="width:${callW}px"></div>` : ''}` +
@@ -1209,8 +1219,74 @@
             btn.disabled = false;
         }
 
+        // ========== WEEKEND SCHEDULE ==========
+        // On Sat/Sun (Thai time, UTC+7): fetch once at 13:00, then stop until next day.
+        // On weekdays: refresh every CONFIG.refreshIntervalMs.
+
+        function getThaiTime() {
+            // Thai Standard Time = UTC+7
+            const now = new Date();
+            const utcMs = now.getTime() + now.getTimezoneOffset() * 60000;
+            return new Date(utcMs + 7 * 3600000);
+        }
+
+        function isWeekend() {
+            const d = getThaiTime().getDay(); // 0=Sun, 6=Sat
+            return d === 0 || d === 6;
+        }
+
+        function scheduleRefresh() {
+            if (state.refreshTimer) {
+                clearTimeout(state.refreshTimer);
+                clearInterval(state.refreshTimer);
+                state.refreshTimer = null;
+            }
+
+            if (!isWeekend()) {
+                // Weekday: normal periodic refresh
+                state.refreshTimer = setInterval(refreshData, CONFIG.refreshIntervalMs);
+                return;
+            }
+
+            // Weekend: schedule a single fetch at 13:00 Thai if not yet done today
+            const thai = getThaiTime();
+            const thaiHour = thai.getHours();
+            const thaiMin = thai.getMinutes();
+            const thaiSec = thai.getSeconds();
+
+            const todayKey = `${thai.getFullYear()}-${thai.getMonth()}-${thai.getDate()}`;
+
+            if (state.weekendFetchedDate === todayKey) {
+                // Already fetched today; check again at start of next day (midnight Thai)
+                const msUntilMidnight = ((23 - thaiHour) * 3600 + (59 - thaiMin) * 60 + (60 - thaiSec)) * 1000;
+                state.refreshTimer = setTimeout(() => {
+                    state.weekendFetchedDate = null;
+                    scheduleRefresh();
+                }, msUntilMidnight);
+                return;
+            }
+
+            const targetHour = 13;
+            let msUntilTarget;
+            if (thaiHour < targetHour || (thaiHour === targetHour && thaiMin === 0 && thaiSec === 0)) {
+                // Before or exactly at 13:00 – wait
+                msUntilTarget = ((targetHour - thaiHour) * 3600 - thaiMin * 60 - thaiSec) * 1000;
+            } else {
+                // After 13:00 on weekend: fetch immediately (missed window)
+                msUntilTarget = 0;
+            }
+
+            state.refreshTimer = setTimeout(async () => {
+                state.weekendFetchedDate = todayKey;
+                await refreshData();
+                scheduleRefresh(); // re-schedule (will wait until next day)
+            }, msUntilTarget);
+        }
+
         // ========== INIT ==========
         async function init() {
+            state.weekendFetchedDate = null;
+
             // Fetch ALL tabs in parallel
             await Promise.all([
                 fetchTabData('current'),
@@ -1232,7 +1308,13 @@
 
             renderActiveTab();
             document.getElementById('loading').classList.add('hidden');
-            state.refreshTimer = setInterval(refreshData, CONFIG.refreshIntervalMs);
+
+            // Mark weekend initial load as done (we just fetched on init)
+            if (isWeekend()) {
+                const thai = getThaiTime();
+                state.weekendFetchedDate = `${thai.getFullYear()}-${thai.getMonth()}-${thai.getDate()}`;
+            }
+            scheduleRefresh();
         }
         init();
     </script>
