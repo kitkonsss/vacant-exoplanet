@@ -1000,6 +1000,16 @@
             <span class="summary-label">P/C Ratio</span>
             <span class="summary-value" id="sumPCRatio">—</span>
         </div>
+        <div class="summary-card">
+            <span class="summary-label">Max Pain</span>
+            <span class="summary-value val-pink" id="sumMaxPain">—</span>
+            <span class="summary-sub" id="sumMaxPainDetail"></span>
+        </div>
+        <div class="summary-card">
+            <span class="summary-label">Net GEX</span>
+            <span class="summary-value" id="sumNetGEX">—</span>
+            <span class="summary-sub" id="sumNetGEXDetail"></span>
+        </div>
     </div>
 
     <!-- ===== MAIN 2-COL ===== -->
@@ -1126,6 +1136,64 @@
             if (sigma <= 0 || t <= 0) return isCall ? (F > K ? 1 : 0) : (F < K ? -1 : 0);
             const d1 = (Math.log(F / K) + 0.5 * sigma * sigma * t) / (sigma * Math.sqrt(t));
             return isCall ? normalCDF(d1) : normalCDF(d1) - 1;
+        }
+
+        function calcGamma(F, K, sigma, t) {
+            if (sigma <= 0 || t <= 0) return 0;
+            const sqrtT = Math.sqrt(t);
+            const d1 = (Math.log(F / K) + 0.5 * sigma * sigma * t) / (sigma * sqrtT);
+            const phi = 0.3989423 * Math.exp(-d1 * d1 / 2); // standard normal PDF
+            return phi / (F * sigma * sqrtT);
+        }
+
+        // Max Pain: strike where total intrinsic value (pain to writers) is minimized
+        function calcMaxPain(strikes) {
+            if (!strikes || strikes.length === 0) return null;
+            let minPain = Infinity;
+            let maxPainStrike = strikes[0].strike;
+            for (const target of strikes) {
+                let pain = 0;
+                for (const s of strikes) {
+                    // Calls ITM: strike < target expiry price → writers pay (target - strike) × OI
+                    if (s.strike < target.strike) pain += s.call * (target.strike - s.strike);
+                    // Puts ITM: strike > target expiry price → writers pay (strike - target) × OI
+                    if (s.strike > target.strike) pain += s.put * (s.strike - target.strike);
+                }
+                if (pain < minPain) { minPain = pain; maxPainStrike = target.strike; }
+            }
+            return maxPainStrike;
+        }
+
+        // GEX: Net Gamma Exposure (positive = dealers long gamma = stabilizing)
+        function calcNetGEX(strikes, F, dte) {
+            if (!strikes || strikes.length === 0 || dte <= 0) return { netGEX: 0, flipStrike: null };
+            const t = dte / 365;
+            const contractMultiplier = 100; // Gold options = 100 oz
+            let netGEX = 0;
+            let gexByStrike = [];
+            for (const s of strikes) {
+                const g = calcGamma(F, s.strike, s.volSettle, t);
+                const callGEX = g * s.call * contractMultiplier * F * F * 0.01;
+                const putGEX = g * s.put * contractMultiplier * F * F * 0.01;
+                // Dealers are typically short calls (long gamma) and short puts (short gamma)
+                // Net GEX = Call GEX - Put GEX
+                const strikeGEX = callGEX - putGEX;
+                netGEX += strikeGEX;
+                gexByStrike.push({ strike: s.strike, gex: strikeGEX });
+            }
+            // Find GEX flip point (where cumulative crosses zero)
+            let flipStrike = null;
+            gexByStrike.sort((a, b) => a.strike - b.strike);
+            let cumGEX = 0;
+            for (let i = 0; i < gexByStrike.length; i++) {
+                const prev = cumGEX;
+                cumGEX += gexByStrike[i].gex;
+                if (prev <= 0 && cumGEX > 0 && i > 0) {
+                    flipStrike = gexByStrike[i].strike;
+                    break;
+                }
+            }
+            return { netGEX, flipStrike };
         }
 
         // ========== PARSE ==========
@@ -1362,6 +1430,30 @@
                 document.getElementById('sumTotalCall').textContent = tc.toLocaleString();
                 document.getElementById('sumTotalPut').textContent = tp.toLocaleString();
                 document.getElementById('sumPCRatio').textContent = tc > 0 ? (tp / tc).toFixed(2) : '—';
+
+                // Max Pain
+                const mpStrike = calcMaxPain(oi.strikes);
+                if (mpStrike !== null) {
+                    document.getElementById('sumMaxPain').textContent = mpStrike.toString();
+                    const dist = data.underlying - mpStrike;
+                    const distStr = dist >= 0 ? `+${dist.toFixed(0)}` : dist.toFixed(0);
+                    document.getElementById('sumMaxPainDetail').textContent = `Dist: ${distStr} from price`;
+                }
+
+                // Net GEX
+                const gexResult = calcNetGEX(oi.strikes, data.underlying, data.dte);
+                const gexVal = gexResult.netGEX;
+                const gexEl = document.getElementById('sumNetGEX');
+                if (gexVal > 0) {
+                    gexEl.textContent = '+' + (gexVal / 1e6).toFixed(1) + 'M';
+                    gexEl.className = 'summary-value val-green';
+                    document.getElementById('sumNetGEXDetail').textContent = 'Long Gamma (Stable)';
+                } else {
+                    gexEl.textContent = (gexVal / 1e6).toFixed(1) + 'M';
+                    gexEl.className = 'summary-value' + (gexVal < 0 ? ' bear' : '');
+                    gexEl.style.color = 'var(--red)';
+                    document.getElementById('sumNetGEXDetail').textContent = 'Short Gamma (Volatile)';
+                }
             }
         }
 
@@ -1638,18 +1730,20 @@
                         // ── Multi-Tier Setup Generator ──
                         // 4 tiers from shallow (high prob ~80%) to deep (low prob ~40%)
                         const tiers = [
-                            { n: 1, label: 'ย่อน้อย', emEntry: 0.10, emTP: 0.15, color: 'var(--green)', icon: '🟢' },
-                            { n: 2, label: 'ย่อตื้น', emEntry: 0.25, emTP: 0.30, color: 'var(--cyan)', icon: '🔵' },
-                            { n: 3, label: 'ย่อกลาง', emEntry: 0.45, emTP: 0.50, color: 'var(--accent)', icon: '🟡' },
-                            { n: 4, label: 'ย่อลึก', emEntry: 0.70, emTP: 0.80, color: 'var(--orange)', icon: '🟠' },
+                            { n: 1, label: 'ย่อน้อย', emEntry: 0.10, emTP: 0.15, sl: 8, color: 'var(--green)', icon: '🟢' },
+                            { n: 2, label: 'ย่อตื้น', emEntry: 0.25, emTP: 0.30, sl: 12, color: 'var(--cyan)', icon: '🔵' },
+                            { n: 3, label: 'ย่อกลาง', emEntry: 0.45, emTP: 0.50, sl: 16, color: 'var(--accent)', icon: '🟡' },
+                            { n: 4, label: 'ย่อลึก', emEntry: 0.70, emTP: 0.80, sl: 20, color: 'var(--orange)', icon: '🟠' },
                         ];
 
                         const buildSetup = (dir, tier) => {
                             // dir: 'buy' or 'sell'
                             const isBuy = dir === 'buy';
                             const entry = isBuy ? uPrice - (er1Day * tier.emEntry) : uPrice + (er1Day * tier.emEntry);
-                            const sl = isBuy ? entry - 10 : entry + 10;
+                            const slDist = tier.sl;
+                            const sl = isBuy ? entry - slDist : entry + slDist;
                             const tp = isBuy ? uPrice + (er1Day * tier.emTP) : uPrice - (er1Day * tier.emTP);
+                            const rr = Math.abs(tp - entry) / slDist;
                             const dirLabel = isBuy ? 'BUY' : 'SELL';
                             const labelTh = isBuy
                                 ? tier.label
@@ -1658,8 +1752,9 @@
                             <div class="setup-box">
                                 <div class="setup-title" style="color:${tier.color};">${tier.icon} ${dirLabel} แผน ${tier.n}: ${labelTh}</div>
                                 <div class="setup-row"><span class="setup-label">📍 Entry</span><span class="setup-val val-entry">$${entry.toFixed(1)} <span class="prob-badge">${getProb(entry)}%</span></span></div>
-                                <div class="setup-row"><span class="setup-label">🚫 SL</span><span class="setup-val val-sl">$${sl.toFixed(1)} <span style="font-size:10px; font-weight:normal; opacity:0.6;">(-$10)</span></span></div>
+                                <div class="setup-row"><span class="setup-label">🚫 SL</span><span class="setup-val val-sl">$${sl.toFixed(1)} <span style="font-size:10px; font-weight:normal; opacity:0.6;">(-$${slDist})</span></span></div>
                                 <div class="setup-row"><span class="setup-label">🎯 TP</span><span class="setup-val val-tp">$${tp.toFixed(1)} <span class="prob-badge">${getProb(tp)}%</span></span></div>
+                                <div class="setup-row"><span class="setup-label">📊 R:R</span><span class="setup-val" style="color:${rr >= 2 ? 'var(--green)' : rr >= 1 ? 'var(--text-primary)' : 'var(--red)'};">1:${rr.toFixed(1)}</span></div>
                             </div>`;
                         };
 
@@ -1692,6 +1787,20 @@
                     }
                 }
 
+                // Max Pain for this timeframe
+                const mpStrike = calcMaxPain(data.strikes);
+                const mpDist = mpStrike !== null ? (uPrice - mpStrike) : 0;
+                const mpDistStr = mpDist >= 0 ? `+${mpDist.toFixed(0)}` : mpDist.toFixed(0);
+                const mpBias = mpStrike !== null ? (uPrice > mpStrike ? '(Price above → Bearish pull)' : uPrice < mpStrike ? '(Price below → Bullish pull)' : '(At Max Pain)') : '';
+
+                // GEX for this timeframe
+                const gexResult = calcNetGEX(data.strikes, uPrice, data.dte);
+                const gexVal = gexResult.netGEX;
+                const gexStr = gexVal >= 0 ? `+${(gexVal / 1e6).toFixed(1)}M` : `${(gexVal / 1e6).toFixed(1)}M`;
+                const gexColor = gexVal >= 0 ? 'var(--green)' : 'var(--red)';
+                const gexLabel = gexVal >= 0 ? 'Long Gamma ▸ Stable / Mean-Revert' : 'Short Gamma ▸ Volatile / Trend';
+                const gexFlipTxt = gexResult.flipStrike ? `<div class="ac-row"><span class="ac-label">GEX Flip Point</span><span class="ac-val" style="color:var(--accent);">$${gexResult.flipStrike}</span></div>` : '';
+
                 html += `
                 <div class="analysis-card">
                     <div class="ac-title">${tf.label} <span style="font-size:10px; color:var(--accent); font-weight:800;">[${data.dte.toFixed(1)} DTE]</span></div>
@@ -1700,6 +1809,15 @@
                     <div class="ac-row"><span class="ac-label">P/C Ratio</span><span class="ac-val">${pcr.toFixed(2)}</span></div>
                     <div class="ac-divider"></div>
                     
+                    <div class="ac-row"><span class="ac-label">Max Pain</span><span class="ac-val" style="color:var(--pink); font-weight:800;">$${mpStrike || '—'} <span style="font-size:10px; color:var(--text-muted);">${mpDistStr} from price</span></span></div>
+                    <div class="ac-row"><span class="ac-label" style="font-size:11px;"></span><span class="ac-val" style="font-size:11px; color:var(--text-muted); font-weight:500;">${mpBias}</span></div>
+                    <div class="ac-divider"></div>
+
+                    <div class="ac-row"><span class="ac-label">Net GEX</span><span class="ac-val" style="color:${gexColor}; font-weight:800;">${gexStr}</span></div>
+                    <div class="ac-row"><span class="ac-label" style="font-size:11px;"></span><span class="ac-val" style="font-size:11px; color:var(--text-muted); font-weight:500;">${gexLabel}</span></div>
+                    ${gexFlipTxt}
+                    <div class="ac-divider"></div>
+
                     <div class="ac-row"><span class="ac-label">Resistance (Max Call)</span><span class="ac-val" style="color:var(--call-color); font-weight:800;">$${maxCall.strike}</span></div>
                     <div class="ac-row"><span class="ac-label">Support (Max Put)</span><span class="ac-val" style="color:var(--put-color); font-weight:800;">$${maxPut.strike}</span></div>
                     <div class="ac-divider"></div>
@@ -1760,11 +1878,13 @@
                 volC.innerHTML = `<div class="placeholder-msg"><div class="icon">🔒</div><div class="title">No Data Yet</div><div class="desc">Configure the scraper to populate ${CONFIG.contracts[state.activeTab].label} contract Intraday Volume.</div></div>`;
 
                 // Clear summary
-                ['sumVolSettle', 'sumExpRange', 'sumMaxOI', 'sumTotalCall', 'sumTotalPut', 'sumPCRatio'].forEach(id => {
+                ['sumVolSettle', 'sumExpRange', 'sumMaxOI', 'sumTotalCall', 'sumTotalPut', 'sumPCRatio', 'sumMaxPain', 'sumNetGEX'].forEach(id => {
                     document.getElementById(id).textContent = '—';
                 });
                 document.getElementById('sumExpRangePrices').textContent = '';
                 document.getElementById('sumMaxOIDetail').textContent = '';
+                document.getElementById('sumMaxPainDetail').textContent = '';
+                document.getElementById('sumNetGEXDetail').textContent = '';
                 return;
             }
             renderPanel('oiContainer', tabData.oi, CONFIG.oiHotThreshold);
