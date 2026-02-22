@@ -1329,6 +1329,7 @@
             }
 
             // --- 5. Gamma Zone — is price inside or outside the gamma concentration? (0-20) ---
+            let gammaMean = null;
             if (oiStrikes && oiStrikes.length > 0 && dte > 0) {
                 const t = dte / 365;
                 // Calculate gamma-weighted center and spread
@@ -1346,6 +1347,7 @@
 
                 if (totalGammaWeight > 0) {
                     const gammaCenter = gammaWeightedSum / totalGammaWeight;
+                    gammaMean = gammaCenter;
                     // Find range containing 80% of gamma
                     gammaByStrike.sort((a, b) => b.gamma - a.gamma);
                     let cum = 0;
@@ -1398,7 +1400,7 @@
                 if (riskLevel === 'LOW') { riskLevel = 'MODERATE'; riskColor = 'var(--accent)'; riskIcon = '🟡'; }
             }
 
-            return { totalScore, riskLevel, riskColor, riskIcon, positionAdv, components, noMansLand, noMansLandSide };
+            return { totalScore, riskLevel, riskColor, riskIcon, positionAdv, components, noMansLand, noMansLandSide, gammaMean };
         }
 
         // ========== PARSE ==========
@@ -2086,14 +2088,16 @@
                         <div style="margin-top:10px; padding:8px 10px; border-radius:6px; background:rgba(255,255,255,0.03); font-size:11px; color:var(--text-muted);">
                             <strong style="color:var(--text-secondary);">กรอบเทรด:</strong>
                             Support <span style="color:var(--put-color);font-weight:700;">$${maxPut.strike}</span>
-                            → Max Pain <span style="color:var(--pink);font-weight:700;">$${mpStrike || '—'}</span>
+                            → ${risk.gammaMean ? `<strong style="color:var(--cyan);">Mean $${risk.gammaMean.toFixed(0)}</strong> →` : ''}
+                            Max Pain <span style="color:var(--pink);font-weight:700;">$${mpStrike || '—'}</span>
                             → Resistance <span style="color:var(--call-color);font-weight:700;">$${maxCall.strike}</span>
                         </div>
                     </div>`;
 
                 // GEX label for card
+                const gammaMeanStr = risk.gammaMean ? `<span style="color:var(--cyan);font-weight:800;"> (เทรดกลับ Mean $${risk.gammaMean.toFixed(0)})</span>` : '';
                 const gexLabel = isLongGamma
-                    ? '<span style="color:var(--green);">Long Gamma</span> → ราคา Stable, เทรดกลับ Mean'
+                    ? `<span style="color:var(--green);">Long Gamma</span> → ราคา Stable, เทรดกลับ Mean${gammaMeanStr}`
                     : '<span style="color:var(--red);">Short Gamma</span> → ราคา Volatile, เทรดตาม Trend';
 
                 // ── Risk Monitor (risk already calculated above) ──
@@ -2155,6 +2159,7 @@
                     <div class="ac-row"><span class="ac-label">Net GEX</span><span class="ac-val" style="color:${gexColor}; font-weight:800;">${gexStr}</span></div>
                     <div class="ac-row"><span class="ac-label" style="font-size:11px;"></span><span class="ac-val" style="font-size:11px; color:var(--text-muted); font-weight:500;">${gexLabel}</span></div>
                     ${gexFlipTxt}
+                    ${risk.gammaMean ? `<div class="ac-row"><span class="ac-label" style="color:var(--cyan);">Gamma Mean (จุดดึงกลับ)</span><span class="ac-val" style="color:var(--cyan); font-weight:800;">$${risk.gammaMean.toFixed(0)} <span style="font-size:10px; color:var(--text-muted);">${uPrice > risk.gammaMean ? '-' : '+'}${Math.abs(uPrice - risk.gammaMean).toFixed(0)} จากราคา</span></span></div>` : ''}
                     <div class="ac-divider"></div>
 
                     <div class="ac-row"><span class="ac-label">Resistance (Max Call)</span><span class="ac-val" style="color:var(--call-color); font-weight:800;">$${maxCall.strike} <span style="font-size:10px; color:var(--text-muted);">+${distToCallWall.toFixed(0)} จากราคา</span></span></div>
