@@ -1221,7 +1221,7 @@
         function calcBreakdownRisk(oiStrikes, intradayStrikes, uPrice, dte, gexFlipStrike, er1Day) {
             const components = {
                 gexFlip: { score: 0, max: 25, label: 'GEX Flip Distance', detail: '' },
-                support: { score: 0, max: 25, label: 'Support Strength', detail: '' },
+                support: { score: 0, max: 25, label: 'Wall Strength (S/R)', detail: '' },
                 volume: { score: 0, max: 25, label: 'Volume Anomaly', detail: '' },
                 skew: { score: 0, max: 25, label: 'IV Skew Stress', detail: '' },
             };
@@ -1238,78 +1238,97 @@
                 components.gexFlip.detail = 'ไม่มี Flip Point';
             }
 
-            // --- 2. Support Strength (0-25) ---
+            // --- 2. Wall Strength — weakest of Put Wall (support) vs Call Wall (resistance) (0-25) ---
             if (oiStrikes && oiStrikes.length > 0) {
+                const evalWall = (strikes, side) => {
+                    if (strikes.length === 0) return { score: 25, detail: `ไม่มี ${side} Wall!` };
+                    const oiKey = side === 'Put' ? 'put' : 'call';
+                    const maxOI = Math.max(...strikes.map(s => s[oiKey]));
+                    const avgOI = strikes.reduce((sum, s) => sum + s[oiKey], 0) / strikes.length;
+                    const wallRatio = maxOI / Math.max(avgOI, 1);
+                    const significantWalls = strikes.filter(s => s[oiKey] > maxOI * 0.4).length;
+                    let score = 0, detail = '';
+                    if (wallRatio < 2) { score = 22; detail = `${side} Wall บางมาก (${wallRatio.toFixed(1)}×)`; }
+                    else if (wallRatio < 3.5) { score = 12; detail = `${side} Wall ปานกลาง (${wallRatio.toFixed(1)}×)`; }
+                    else { score = 3; detail = `${side} Wall หนา (${wallRatio.toFixed(1)}×)`; }
+                    if (significantWalls <= 1) { score = Math.min(25, score + 8); detail += ' ⚠️ Wall เดียว!'; }
+                    return { score, detail };
+                };
                 const putsBelow = oiStrikes.filter(s => s.strike < uPrice && s.put > 0);
-                if (putsBelow.length > 0) {
-                    const maxPutOI = Math.max(...putsBelow.map(s => s.put));
-                    const avgPutOI = putsBelow.reduce((sum, s) => sum + s.put, 0) / putsBelow.length;
-                    const wallRatio = maxPutOI / Math.max(avgPutOI, 1);
-
-                    // Check depth: significant walls below (> 50% of max)
-                    const significantWalls = putsBelow.filter(s => s.put > maxPutOI * 0.4).length;
-
-                    if (wallRatio < 2) { components.support.score = 22; components.support.detail = `Wall บางมาก (${wallRatio.toFixed(1)}× avg)`; }
-                    else if (wallRatio < 3.5) { components.support.score = 12; components.support.detail = `Wall ปานกลาง (${wallRatio.toFixed(1)}× avg)`; }
-                    else { components.support.score = 3; components.support.detail = `Wall หนา (${wallRatio.toFixed(1)}× avg)`; }
-
-                    if (significantWalls <= 1) {
-                        components.support.score = Math.min(25, components.support.score + 8);
-                        components.support.detail += ' ⚠️ Wall เดียว!';
-                    }
+                const callsAbove = oiStrikes.filter(s => s.strike > uPrice && s.call > 0);
+                const putWall = evalWall(putsBelow, 'Put');
+                const callWall = evalWall(callsAbove, 'Call');
+                // Use the WORST wall (weakest side = most danger)
+                if (putWall.score >= callWall.score) {
+                    components.support.score = putWall.score;
+                    components.support.detail = `▼ ${putWall.detail} | ▲ ${callWall.detail}`;
                 } else {
-                    components.support.score = 25;
-                    components.support.detail = 'ไม่มี Put Wall ใต้ราคา!';
+                    components.support.score = callWall.score;
+                    components.support.detail = `▲ ${callWall.detail} | ▼ ${putWall.detail}`;
                 }
             }
 
-            // --- 3. Volume Anomaly (0-25) ---
+            // --- 3. Volume Anomaly — checks BOTH put and call vol surges (0-25) ---
             if (intradayStrikes && intradayStrikes.length > 0 && oiStrikes && oiStrikes.length > 0) {
                 let totalPutVol = intradayStrikes.reduce((sum, s) => sum + s.put, 0);
-                let totalPutOI = oiStrikes.reduce((sum, s) => sum + s.put, 0);
-                const volOIRatio = totalPutOI > 0 ? totalPutVol / totalPutOI : 0;
-
-                // Also check call/put volume ratio (put-heavy = bearish flow)
                 let totalCallVol = intradayStrikes.reduce((sum, s) => sum + s.call, 0);
-                const volPCR = totalCallVol > 0 ? totalPutVol / totalCallVol : 1;
+                let totalPutOI = oiStrikes.reduce((sum, s) => sum + s.put, 0);
+                let totalCallOI = oiStrikes.reduce((sum, s) => sum + s.call, 0);
+                const putVolOIRatio = totalPutOI > 0 ? totalPutVol / totalPutOI : 0;
+                const callVolOIRatio = totalCallOI > 0 ? totalCallVol / totalCallOI : 0;
+                // Use the HIGHER ratio (whichever side is more abnormal)
+                const maxRatio = Math.max(putVolOIRatio, callVolOIRatio);
+                const dominantSide = putVolOIRatio >= callVolOIRatio ? 'Put' : 'Call';
+                const otherSide = dominantSide === 'Put' ? 'Call' : 'Put';
+                const otherRatio = dominantSide === 'Put' ? callVolOIRatio : putVolOIRatio;
 
-                if (volOIRatio > 0.5) { components.volume.score = 22; components.volume.detail = `Put Vol/OI: ${(volOIRatio * 100).toFixed(0)}% — ซื้อ Put ใหม่เยอะ!`; }
-                else if (volOIRatio > 0.3) { components.volume.score = 14; components.volume.detail = `Put Vol/OI: ${(volOIRatio * 100).toFixed(0)}% — ค่อนข้างสูง`; }
-                else if (volOIRatio > 0.15) { components.volume.score = 6; components.volume.detail = `Put Vol/OI: ${(volOIRatio * 100).toFixed(0)}% — ปกติ`; }
-                else { components.volume.score = 0; components.volume.detail = `Put Vol/OI: ${(volOIRatio * 100).toFixed(0)}% — เบา`; }
+                if (maxRatio > 0.5) { components.volume.score = 22; components.volume.detail = `${dominantSide} Vol/OI: ${(maxRatio * 100).toFixed(0)}% — ซื้อ ${dominantSide} ใหม่เยอะ!`; }
+                else if (maxRatio > 0.3) { components.volume.score = 14; components.volume.detail = `${dominantSide} Vol/OI: ${(maxRatio * 100).toFixed(0)}% — ค่อนข้างสูง`; }
+                else if (maxRatio > 0.15) { components.volume.score = 6; components.volume.detail = `${dominantSide} Vol/OI: ${(maxRatio * 100).toFixed(0)}% — ปกติ`; }
+                else { components.volume.score = 0; components.volume.detail = `Vol/OI เบาทั้ง 2 ฝั่ง`; }
 
-                if (volPCR > 2) {
-                    components.volume.score = Math.min(25, components.volume.score + 5);
-                    components.volume.detail += ` (Put:Call Vol = ${volPCR.toFixed(1)}:1)`;
-                }
+                components.volume.detail += ` (${otherSide}: ${(otherRatio * 100).toFixed(0)}%)`;
             } else {
                 components.volume.detail = 'ไม่มี Intraday data';
             }
 
-            // --- 4. IV Skew Stress (0-25) ---
+            // --- 4. IV Skew Stress — checks BOTH OTM put and OTM call skew (0-25) ---
             if (oiStrikes && oiStrikes.length > 0) {
-                // Find ATM strike
                 const atm = oiStrikes.reduce((p, c) => Math.abs(c.strike - uPrice) < Math.abs(p.strike - uPrice) ? c : p);
                 const atmVol = atm.volSettle;
 
                 if (atmVol > 0) {
-                    // OTM Puts: strikes 3-7% below price
+                    // OTM Puts: 2-8% below price
                     const otmPuts = oiStrikes.filter(s => {
-                        const pctBelow = (uPrice - s.strike) / uPrice;
-                        return pctBelow > 0.02 && pctBelow < 0.08 && s.volSettle > 0;
+                        const pct = (uPrice - s.strike) / uPrice;
+                        return pct > 0.02 && pct < 0.08 && s.volSettle > 0;
+                    });
+                    // OTM Calls: 2-8% above price
+                    const otmCalls = oiStrikes.filter(s => {
+                        const pct = (s.strike - uPrice) / uPrice;
+                        return pct > 0.02 && pct < 0.08 && s.volSettle > 0;
                     });
 
-                    if (otmPuts.length > 0) {
-                        const avgOTMVol = otmPuts.reduce((sum, s) => sum + s.volSettle, 0) / otmPuts.length;
-                        const skewRatio = avgOTMVol / atmVol;
+                    const putSkewRatio = otmPuts.length > 0
+                        ? otmPuts.reduce((sum, s) => sum + s.volSettle, 0) / otmPuts.length / atmVol
+                        : 1.0;
+                    const callSkewRatio = otmCalls.length > 0
+                        ? otmCalls.reduce((sum, s) => sum + s.volSettle, 0) / otmCalls.length / atmVol
+                        : 1.0;
 
-                        if (skewRatio > 1.4) { components.skew.score = 25; components.skew.detail = `Skew ${(skewRatio * 100 - 100).toFixed(0)}% — Extreme Fear!`; }
-                        else if (skewRatio > 1.2) { components.skew.score = 18; components.skew.detail = `Skew +${(skewRatio * 100 - 100).toFixed(0)}% — Fear สูง`; }
-                        else if (skewRatio > 1.05) { components.skew.score = 8; components.skew.detail = `Skew +${(skewRatio * 100 - 100).toFixed(0)}% — ปกติ`; }
-                        else { components.skew.score = 0; components.skew.detail = `Skew flat — ไม่มี Fear`; }
-                    } else {
-                        components.skew.detail = 'ไม่มี OTM Put data';
-                    }
+                    // Use the HIGHER skew (whichever side market fears more)
+                    const maxSkew = Math.max(putSkewRatio, callSkewRatio);
+                    const skewSide = putSkewRatio >= callSkewRatio ? 'Put' : 'Call';
+                    const otherSkew = skewSide === 'Put' ? callSkewRatio : putSkewRatio;
+
+                    if (maxSkew > 1.4) { components.skew.score = 25; components.skew.detail = `${skewSide} Skew +${(maxSkew * 100 - 100).toFixed(0)}% — Extreme Fear!`; }
+                    else if (maxSkew > 1.2) { components.skew.score = 18; components.skew.detail = `${skewSide} Skew +${(maxSkew * 100 - 100).toFixed(0)}% — Fear สูง`; }
+                    else if (maxSkew > 1.05) { components.skew.score = 8; components.skew.detail = `${skewSide} Skew +${(maxSkew * 100 - 100).toFixed(0)}% — ปกติ`; }
+                    else { components.skew.score = 0; components.skew.detail = `Skew flat ทั้ง 2 ฝั่ง`; }
+
+                    const otherPct = ((otherSkew - 1) * 100).toFixed(0);
+                    const otherSideName = skewSide === 'Put' ? 'Call' : 'Put';
+                    components.skew.detail += ` (${otherSideName}: ${otherPct >= 0 ? '+' : ''}${otherPct}%)`;
                 }
             }
 
