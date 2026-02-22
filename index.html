@@ -1220,45 +1220,47 @@
         // ========== BREAKDOWN RISK SCORE (0-100) ==========
         function calcBreakdownRisk(oiStrikes, intradayStrikes, uPrice, dte, gexFlipStrike, er1Day) {
             const components = {
-                gexFlip: { score: 0, max: 25, label: 'GEX Flip Distance', detail: '' },
-                support: { score: 0, max: 25, label: 'Wall Strength (S/R)', detail: '' },
-                volume: { score: 0, max: 25, label: 'Volume Anomaly', detail: '' },
-                skew: { score: 0, max: 25, label: 'IV Skew Stress', detail: '' },
+                gexFlip: { score: 0, max: 20, label: 'GEX Flip Distance', detail: '' },
+                support: { score: 0, max: 20, label: 'Wall Strength (S/R)', detail: '' },
+                volume: { score: 0, max: 20, label: 'Volume Anomaly', detail: '' },
+                skew: { score: 0, max: 20, label: 'IV Skew Stress', detail: '' },
+                gammaZone: { score: 0, max: 20, label: 'Gamma Zone', detail: '' },
             };
+            let noMansLand = false;
+            let noMansLandSide = ''; // 'above' or 'below'
 
-            // --- 1. GEX Flip Distance (0-25) ---
+            // --- 1. GEX Flip Distance (0-20) ---
             if (gexFlipStrike && er1Day > 0) {
                 const distToFlip = Math.abs(uPrice - gexFlipStrike);
                 const ratio = distToFlip / er1Day;
-                if (ratio < 0.5) { components.gexFlip.score = 25; components.gexFlip.detail = `ใกล้มาก! $${gexFlipStrike} (${distToFlip.toFixed(0)} pts)`; }
-                else if (ratio < 1.0) { components.gexFlip.score = 18; components.gexFlip.detail = `ใกล้ $${gexFlipStrike} (${distToFlip.toFixed(0)} pts)`; }
-                else if (ratio < 2.0) { components.gexFlip.score = 8; components.gexFlip.detail = `ห่างพอสมควร $${gexFlipStrike}`; }
+                if (ratio < 0.5) { components.gexFlip.score = 20; components.gexFlip.detail = `ใกล้มาก! $${gexFlipStrike} (${distToFlip.toFixed(0)} pts)`; }
+                else if (ratio < 1.0) { components.gexFlip.score = 14; components.gexFlip.detail = `ใกล้ $${gexFlipStrike} (${distToFlip.toFixed(0)} pts)`; }
+                else if (ratio < 2.0) { components.gexFlip.score = 6; components.gexFlip.detail = `ห่างพอสมควร $${gexFlipStrike}`; }
                 else { components.gexFlip.score = 0; components.gexFlip.detail = `ห่างมาก $${gexFlipStrike}`; }
             } else {
                 components.gexFlip.detail = 'ไม่มี Flip Point';
             }
 
-            // --- 2. Wall Strength — weakest of Put Wall (support) vs Call Wall (resistance) (0-25) ---
+            // --- 2. Wall Strength — weakest of Put Wall (support) vs Call Wall (resistance) (0-20) ---
             if (oiStrikes && oiStrikes.length > 0) {
                 const evalWall = (strikes, side) => {
-                    if (strikes.length === 0) return { score: 25, detail: `ไม่มี ${side} Wall!` };
+                    if (strikes.length === 0) return { score: 20, detail: `ไม่มี ${side} Wall!` };
                     const oiKey = side === 'Put' ? 'put' : 'call';
                     const maxOI = Math.max(...strikes.map(s => s[oiKey]));
                     const avgOI = strikes.reduce((sum, s) => sum + s[oiKey], 0) / strikes.length;
                     const wallRatio = maxOI / Math.max(avgOI, 1);
                     const significantWalls = strikes.filter(s => s[oiKey] > maxOI * 0.4).length;
                     let score = 0, detail = '';
-                    if (wallRatio < 2) { score = 22; detail = `${side} Wall บางมาก (${wallRatio.toFixed(1)}×)`; }
-                    else if (wallRatio < 3.5) { score = 12; detail = `${side} Wall ปานกลาง (${wallRatio.toFixed(1)}×)`; }
-                    else { score = 3; detail = `${side} Wall หนา (${wallRatio.toFixed(1)}×)`; }
-                    if (significantWalls <= 1) { score = Math.min(25, score + 8); detail += ' ⚠️ Wall เดียว!'; }
+                    if (wallRatio < 2) { score = 18; detail = `${side} Wall บางมาก (${wallRatio.toFixed(1)}×)`; }
+                    else if (wallRatio < 3.5) { score = 10; detail = `${side} Wall ปานกลาง (${wallRatio.toFixed(1)}×)`; }
+                    else { score = 2; detail = `${side} Wall หนา (${wallRatio.toFixed(1)}×)`; }
+                    if (significantWalls <= 1) { score = Math.min(20, score + 6); detail += ' ⚠️ Wall เดียว!'; }
                     return { score, detail };
                 };
                 const putsBelow = oiStrikes.filter(s => s.strike < uPrice && s.put > 0);
                 const callsAbove = oiStrikes.filter(s => s.strike > uPrice && s.call > 0);
                 const putWall = evalWall(putsBelow, 'Put');
                 const callWall = evalWall(callsAbove, 'Call');
-                // Use the WORST wall (weakest side = most danger)
                 if (putWall.score >= callWall.score) {
                     components.support.score = putWall.score;
                     components.support.detail = `▼ ${putWall.detail} | ▲ ${callWall.detail}`;
@@ -1268,7 +1270,7 @@
                 }
             }
 
-            // --- 3. Volume Anomaly — checks BOTH put and call vol surges (0-25) ---
+            // --- 3. Volume Anomaly — checks BOTH put and call vol surges (0-20) ---
             if (intradayStrikes && intradayStrikes.length > 0 && oiStrikes && oiStrikes.length > 0) {
                 let totalPutVol = intradayStrikes.reduce((sum, s) => sum + s.put, 0);
                 let totalCallVol = intradayStrikes.reduce((sum, s) => sum + s.call, 0);
@@ -1276,15 +1278,14 @@
                 let totalCallOI = oiStrikes.reduce((sum, s) => sum + s.call, 0);
                 const putVolOIRatio = totalPutOI > 0 ? totalPutVol / totalPutOI : 0;
                 const callVolOIRatio = totalCallOI > 0 ? totalCallVol / totalCallOI : 0;
-                // Use the HIGHER ratio (whichever side is more abnormal)
                 const maxRatio = Math.max(putVolOIRatio, callVolOIRatio);
                 const dominantSide = putVolOIRatio >= callVolOIRatio ? 'Put' : 'Call';
                 const otherSide = dominantSide === 'Put' ? 'Call' : 'Put';
                 const otherRatio = dominantSide === 'Put' ? callVolOIRatio : putVolOIRatio;
 
-                if (maxRatio > 0.5) { components.volume.score = 22; components.volume.detail = `${dominantSide} Vol/OI: ${(maxRatio * 100).toFixed(0)}% — ซื้อ ${dominantSide} ใหม่เยอะ!`; }
-                else if (maxRatio > 0.3) { components.volume.score = 14; components.volume.detail = `${dominantSide} Vol/OI: ${(maxRatio * 100).toFixed(0)}% — ค่อนข้างสูง`; }
-                else if (maxRatio > 0.15) { components.volume.score = 6; components.volume.detail = `${dominantSide} Vol/OI: ${(maxRatio * 100).toFixed(0)}% — ปกติ`; }
+                if (maxRatio > 0.5) { components.volume.score = 18; components.volume.detail = `${dominantSide} Vol/OI: ${(maxRatio * 100).toFixed(0)}% — ซื้อ ${dominantSide} ใหม่เยอะ!`; }
+                else if (maxRatio > 0.3) { components.volume.score = 12; components.volume.detail = `${dominantSide} Vol/OI: ${(maxRatio * 100).toFixed(0)}% — ค่อนข้างสูง`; }
+                else if (maxRatio > 0.15) { components.volume.score = 5; components.volume.detail = `${dominantSide} Vol/OI: ${(maxRatio * 100).toFixed(0)}% — ปกติ`; }
                 else { components.volume.score = 0; components.volume.detail = `Vol/OI เบาทั้ง 2 ฝั่ง`; }
 
                 components.volume.detail += ` (${otherSide}: ${(otherRatio * 100).toFixed(0)}%)`;
@@ -1292,38 +1293,33 @@
                 components.volume.detail = 'ไม่มี Intraday data';
             }
 
-            // --- 4. IV Skew Stress — checks BOTH OTM put and OTM call skew (0-25) ---
+            // --- 4. IV Skew Stress — checks BOTH OTM put and OTM call skew (0-20) ---
             if (oiStrikes && oiStrikes.length > 0) {
                 const atm = oiStrikes.reduce((p, c) => Math.abs(c.strike - uPrice) < Math.abs(p.strike - uPrice) ? c : p);
                 const atmVol = atm.volSettle;
 
                 if (atmVol > 0) {
-                    // OTM Puts: 2-8% below price
                     const otmPuts = oiStrikes.filter(s => {
                         const pct = (uPrice - s.strike) / uPrice;
                         return pct > 0.02 && pct < 0.08 && s.volSettle > 0;
                     });
-                    // OTM Calls: 2-8% above price
                     const otmCalls = oiStrikes.filter(s => {
                         const pct = (s.strike - uPrice) / uPrice;
                         return pct > 0.02 && pct < 0.08 && s.volSettle > 0;
                     });
 
                     const putSkewRatio = otmPuts.length > 0
-                        ? otmPuts.reduce((sum, s) => sum + s.volSettle, 0) / otmPuts.length / atmVol
-                        : 1.0;
+                        ? otmPuts.reduce((sum, s) => sum + s.volSettle, 0) / otmPuts.length / atmVol : 1.0;
                     const callSkewRatio = otmCalls.length > 0
-                        ? otmCalls.reduce((sum, s) => sum + s.volSettle, 0) / otmCalls.length / atmVol
-                        : 1.0;
+                        ? otmCalls.reduce((sum, s) => sum + s.volSettle, 0) / otmCalls.length / atmVol : 1.0;
 
-                    // Use the HIGHER skew (whichever side market fears more)
                     const maxSkew = Math.max(putSkewRatio, callSkewRatio);
                     const skewSide = putSkewRatio >= callSkewRatio ? 'Put' : 'Call';
                     const otherSkew = skewSide === 'Put' ? callSkewRatio : putSkewRatio;
 
-                    if (maxSkew > 1.4) { components.skew.score = 25; components.skew.detail = `${skewSide} Skew +${(maxSkew * 100 - 100).toFixed(0)}% — Extreme Fear!`; }
-                    else if (maxSkew > 1.2) { components.skew.score = 18; components.skew.detail = `${skewSide} Skew +${(maxSkew * 100 - 100).toFixed(0)}% — Fear สูง`; }
-                    else if (maxSkew > 1.05) { components.skew.score = 8; components.skew.detail = `${skewSide} Skew +${(maxSkew * 100 - 100).toFixed(0)}% — ปกติ`; }
+                    if (maxSkew > 1.4) { components.skew.score = 20; components.skew.detail = `${skewSide} Skew +${(maxSkew * 100 - 100).toFixed(0)}% — Extreme Fear!`; }
+                    else if (maxSkew > 1.2) { components.skew.score = 14; components.skew.detail = `${skewSide} Skew +${(maxSkew * 100 - 100).toFixed(0)}% — Fear สูง`; }
+                    else if (maxSkew > 1.05) { components.skew.score = 6; components.skew.detail = `${skewSide} Skew +${(maxSkew * 100 - 100).toFixed(0)}% — ปกติ`; }
                     else { components.skew.score = 0; components.skew.detail = `Skew flat ทั้ง 2 ฝั่ง`; }
 
                     const otherPct = ((otherSkew - 1) * 100).toFixed(0);
@@ -1332,7 +1328,61 @@
                 }
             }
 
-            const totalScore = components.gexFlip.score + components.support.score + components.volume.score + components.skew.score;
+            // --- 5. Gamma Zone — is price inside or outside the gamma concentration? (0-20) ---
+            if (oiStrikes && oiStrikes.length > 0 && dte > 0) {
+                const t = dte / 365;
+                // Calculate gamma-weighted center and spread
+                let totalGammaWeight = 0;
+                let gammaWeightedSum = 0;
+                let gammaByStrike = [];
+                for (const s of oiStrikes) {
+                    const g = calcGamma(uPrice, s.strike, s.volSettle, t);
+                    const totalOI = s.call + s.put;
+                    const weight = g * totalOI;
+                    totalGammaWeight += weight;
+                    gammaWeightedSum += weight * s.strike;
+                    gammaByStrike.push({ strike: s.strike, gamma: weight });
+                }
+
+                if (totalGammaWeight > 0) {
+                    const gammaCenter = gammaWeightedSum / totalGammaWeight;
+                    // Find range containing 80% of gamma
+                    gammaByStrike.sort((a, b) => b.gamma - a.gamma);
+                    let cum = 0;
+                    let gammaHigh = -Infinity, gammaLow = Infinity;
+                    for (const gs of gammaByStrike) {
+                        cum += gs.gamma;
+                        gammaHigh = Math.max(gammaHigh, gs.strike);
+                        gammaLow = Math.min(gammaLow, gs.strike);
+                        if (cum / totalGammaWeight >= 0.80) break;
+                    }
+
+                    const priceDistFromCenter = Math.abs(uPrice - gammaCenter);
+                    const zoneWidth = gammaHigh - gammaLow;
+                    const isAboveZone = uPrice > gammaHigh;
+                    const isBelowZone = uPrice < gammaLow;
+                    const distOutside = isAboveZone ? (uPrice - gammaHigh) : isBelowZone ? (gammaLow - uPrice) : 0;
+
+                    if (isAboveZone || isBelowZone) {
+                        noMansLand = true;
+                        noMansLandSide = isAboveZone ? 'above' : 'below';
+                        const outsidePct = zoneWidth > 0 ? (distOutside / zoneWidth * 100).toFixed(0) : '∞';
+                        if (distOutside > er1Day) {
+                            components.gammaZone.score = 20;
+                            components.gammaZone.detail = `🚨 NO MAN'S LAND! ราคา${isAboveZone ? 'เหนือ' : 'ต่ำกว่า'}โซน Gamma $${distOutside.toFixed(0)} — Mean Reversion ไม่ทำงาน`;
+                        } else {
+                            components.gammaZone.score = 14;
+                            components.gammaZone.detail = `⚠️ ราคาออกนอก Gamma Zone — ${isAboveZone ? 'เหนือ' : 'ต่ำกว่า'} $${distOutside.toFixed(0)}`;
+                        }
+                    } else {
+                        components.gammaZone.score = 0;
+                        components.gammaZone.detail = `ราคาอยู่ใน Gamma Zone ($${gammaLow.toFixed(0)}–$${gammaHigh.toFixed(0)})`;
+                    }
+                    components.gammaZone.detail += ` | ศูนย์กลาง $${gammaCenter.toFixed(0)}`;
+                }
+            }
+
+            const totalScore = components.gexFlip.score + components.support.score + components.volume.score + components.skew.score + components.gammaZone.score;
 
             let riskLevel = 'LOW';
             let riskColor = 'var(--green)';
@@ -1343,7 +1393,12 @@
             else if (totalScore >= 35) { riskLevel = 'MODERATE'; riskColor = 'var(--accent)'; riskIcon = '🟡'; positionAdv = 'ระวัง / Position ปกติแต่ SL ต้องแน่น'; }
             else { positionAdv = 'สภาพปกติ / เทรดตาม Setup ได้'; }
 
-            return { totalScore, riskLevel, riskColor, riskIcon, positionAdv, components };
+            if (noMansLand) {
+                positionAdv = `⛔ NO MAN'S LAND — ราคาออกนอก Gamma Zone (${noMansLandSide === 'above' ? 'ทะลุขึ้น' : 'หลุดลง'}). Mean Reversion ไม่ทำงาน! ห้าม fade, รอ OI update ใหม่`;
+                if (riskLevel === 'LOW') { riskLevel = 'MODERATE'; riskColor = 'var(--accent)'; riskIcon = '🟡'; }
+            }
+
+            return { totalScore, riskLevel, riskColor, riskIcon, positionAdv, components, noMansLand, noMansLandSide };
         }
 
         // ========== PARSE ==========
@@ -1950,7 +2005,7 @@
                 const gexColor = gexVal >= 0 ? 'var(--green)' : 'var(--red)';
                 const gexFlipTxt = gexResult.flipStrike ? `<div class="ac-row"><span class="ac-label">GEX Flip Point</span><span class="ac-val" style="color:var(--accent);">$${gexResult.flipStrike}</span></div>` : '';
 
-                // ── Build "How to Trade" guidance ──
+                // ── Calculate Risk FIRST (needed for trade guidance) ──
                 const isLongGamma = gexVal >= 0;
                 const priceAboveMP = mpStrike !== null && uPrice > mpStrike;
                 const priceBelowMP = mpStrike !== null && uPrice < mpStrike;
@@ -1959,12 +2014,36 @@
                 const nearCallWall = distToCallWall < 40;
                 const nearPutWall = distToPutWall < 40;
 
+                const sourceStrikes2 = intraday?.strikes?.length > 0 ? intraday.strikes : null;
+                const atm2 = data.strikes.reduce((p, c) => Math.abs(c.strike - uPrice) < Math.abs(p.strike - uPrice) ? c : p);
+                const er1DayForRisk = atm2.volSettle > 0 ? uPrice * atm2.volSettle * Math.sqrt(1 / 365) : 50;
+                const risk = calcBreakdownRisk(data.strikes, sourceStrikes2, uPrice, data.dte, gexResult.flipStrike, er1DayForRisk);
+                const vannaExp = calcNetVannaExposure(data.strikes, uPrice, data.dte);
+
+                // ── Build "How to Trade" guidance ──
                 let tradeStyle = '';
                 let tradeIcon = '';
                 let tradeColor = '';
                 let tradeRules = [];
 
-                if (isLongGamma) {
+                if (risk.noMansLand) {
+                    // NO MAN'S LAND — price is outside gamma zone
+                    tradeStyle = `NO MAN'S LAND (ราคานอก Gamma Zone — ${risk.noMansLandSide === 'above' ? 'ทะลุขึ้น' : 'หลุดลง'})`;
+                    tradeIcon = '⛔';
+                    tradeColor = '#ff1744';
+                    tradeRules.push('🚨 ราคาออกนอกโซนที่มี Gamma กระจุก → ไม่มีแรงดึงกลับ!');
+                    tradeRules.push('❌ Mean Reversion ไม่ทำงาน — แม้ Net GEX จะเป็น + ก็ตาม');
+                    tradeRules.push('❌ ห้าม Short สวนทาง (ถ้าราคาทะลุขึ้น) / ห้าม Buy รับ (ถ้าหลุดลง)');
+                    if (risk.noMansLandSide === 'above') {
+                        tradeRules.push('📍 Dealers delta ≈ 1 แล้ว → ไม่ต้อง hedge เพิ่ม → ราคาวิ่งอิสระ');
+                        tradeRules.push('✅ ถ้าจะ Buy → SL ต้องแน่นมาก เพราะถ้าย่อจะย่อแรง');
+                        tradeRules.push('⏳ รอ OI update ใหม่ — เมื่อสถาบันเปิด OI ที่ strike สูงขึ้นค่อยประเมินใหม่');
+                    } else {
+                        tradeRules.push('📍 Dealers delta ≈ -1 แล้ว → hedge หมดแล้ว → ราคาร่วงอิสระ');
+                        tradeRules.push('✅ ถ้าจะ Sell → SL ต้องแน่นมาก เพราะถ้า bounce จะ bounce แรง');
+                        tradeRules.push('⏳ รอ OI update ใหม่ — เมื่อสถาบันเปิด OI ที่ strike ต่ำลงค่อยประเมินใหม่');
+                    }
+                } else if (isLongGamma) {
                     tradeStyle = 'MEAN REVERSION (เทรดกลับ Mean)';
                     tradeIcon = '🔄';
                     tradeColor = 'var(--cyan)';
@@ -2017,12 +2096,7 @@
                     ? '<span style="color:var(--green);">Long Gamma</span> → ราคา Stable, เทรดกลับ Mean'
                     : '<span style="color:var(--red);">Short Gamma</span> → ราคา Volatile, เทรดตาม Trend';
 
-                // ── Risk Monitor ──
-                const sourceStrikes2 = intraday?.strikes?.length > 0 ? intraday.strikes : null;
-                const atm2 = data.strikes.reduce((p, c) => Math.abs(c.strike - uPrice) < Math.abs(p.strike - uPrice) ? c : p);
-                const er1DayForRisk = atm2.volSettle > 0 ? uPrice * atm2.volSettle * Math.sqrt(1 / 365) : 50;
-                const risk = calcBreakdownRisk(data.strikes, sourceStrikes2, uPrice, data.dte, gexResult.flipStrike, er1DayForRisk);
-                const vannaExp = calcNetVannaExposure(data.strikes, uPrice, data.dte);
+                // ── Risk Monitor (risk already calculated above) ──
                 const vannaStr = vannaExp < 0
                     ? `IV ขึ้น 1% → Dealers ต้อง <span style="color:var(--red);font-weight:700;">SELL $${Math.abs(vannaExp / 1e6).toFixed(1)}M</span> = แรงกดลง`
                     : `IV ขึ้น 1% → Dealers ต้อง <span style="color:var(--green);font-weight:700;">BUY $${Math.abs(vannaExp / 1e6).toFixed(1)}M</span> = แรงดันขึ้น`;
@@ -2055,6 +2129,7 @@
                         ${compHtml(risk.components.support)}
                         ${compHtml(risk.components.volume)}
                         ${compHtml(risk.components.skew)}
+                        ${compHtml(risk.components.gammaZone)}
                         <div style="margin-top:10px; padding:8px 10px; border-radius:6px; background:rgba(255,255,255,0.03); border-left:3px solid ${vannaExp < 0 ? 'var(--red)' : 'var(--green)'};">
                             <div style="font-size:10px; color:var(--text-muted); margin-bottom:3px; font-weight:700;">⚡ Vanna Exposure (Vol Spike Risk)</div>
                             <div style="font-size:11px; color:var(--text-secondary);">${vannaStr}</div>
