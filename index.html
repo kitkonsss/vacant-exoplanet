@@ -951,7 +951,7 @@
 
     <!-- Contract Tabs -->
     <div class="tab-bar">
-        <button class="tab-btn active" data-tab="current" onclick="switchTab('current')">
+        <button class="tab-btn" data-tab="current" onclick="switchTab('current')">
             Current <span class="tab-contract" id="tabContractCurrent"></span> <span class="tab-dte"
                 id="tabDteCurrent"></span>
         </button>
@@ -963,7 +963,7 @@
             Monthly <span class="tab-contract" id="tabContractMonthly"></span> <span class="tab-dte"
                 id="tabDteMonthly"></span>
         </button>
-        <button class="tab-btn" data-tab="analysis" onclick="switchTab('analysis')"
+        <button class="tab-btn active" data-tab="analysis" onclick="switchTab('analysis')"
             style="margin-left:auto; color: #ff9800;">
             🧠 Trade Setup
         </button>
@@ -973,7 +973,7 @@
     </div>
 
     <!-- Summary Strip -->
-    <div class="summary-strip" id="summaryStrip">
+    <div class="summary-strip" id="summaryStrip" style="display:none;">
         <div class="summary-card">
             <span class="summary-label">Vol Settle (ATM)</span>
             <span class="summary-value val-cyan" id="sumVolSettle">—</span>
@@ -1013,20 +1013,12 @@
     </div>
 
     <!-- ===== MAIN 2-COL ===== -->
-    <div class="main-container" id="mainContainer">
+    <div class="main-container hide-main" id="mainContainer">
 
         <!-- LEFT: OI Panel -->
         <div class="data-panel">
             <div class="panel-header">
                 <span class="panel-title">Open Interest</span>
-                <div class="panel-legend">
-                    <div class="legend-item">
-                        <div class="legend-dot call"></div><span class="legend-call">Call</span>
-                    </div>
-                    <div class="legend-item">
-                        <div class="legend-dot put"></div><span class="legend-put">Put</span>
-                    </div>
-                </div>
             </div>
             <div class="data-rows" id="oiContainer">
                 <div class="placeholder-msg">
@@ -1060,7 +1052,7 @@
     </div>
 
     <!-- ===== ANALYSIS CONTAINER ===== -->
-    <div class="analysis-container" id="analysisContainer">
+    <div class="analysis-container active" id="analysisContainer">
         <div class="analysis-header" id="analysisHeader">
             <!-- Overall Bias Header -->
         </div>
@@ -1118,7 +1110,7 @@
         };
 
         let state = {
-            activeTab: 'current',
+            activeTab: 'analysis',
             data: { current: {}, friday: {}, monthly: {}, analysis: {}, chart: {} },
             refreshTimer: null,
             chartInitialized: false
