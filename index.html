@@ -1952,11 +1952,11 @@
                 if (priceAboveMP) {
                     bText = '🔄 PULLBACK ZONE';
                     bColor = 'var(--cyan)';
-                    bDesc = `Long Gamma + ราคาเหนือ Max Pain $${mpStrike} (+${mpDist.toFixed(0)}) → แรงดึงลง เน้น Sell ที่ Resistance`;
+                    bDesc = `Long Gamma + ราคาเหนือ Max Pain $${mpStrike} (+${mpDist.toFixed(0)}) → แรงดึงลง เน้น Sell ที่ Call Wall $${maxCall.strike}`;
                 } else if (priceBelowMP) {
                     bText = '🔄 BOUNCE ZONE';
                     bColor = 'var(--green)';
-                    bDesc = `Long Gamma + ราคาต่ำกว่า Max Pain $${mpStrike} (${mpDist.toFixed(0)}) → แรงดึงขึ้น เน้น Buy ที่ Support`;
+                    bDesc = `Long Gamma + ราคาต่ำกว่า Max Pain $${mpStrike} (${mpDist.toFixed(0)}) → แรงดึงขึ้น เน้น Buy ที่ Put Wall $${maxPut.strike}`;
                 } else {
                     bText = '🔄 RANGE BOUND';
                     bColor = 'var(--cyan)';
@@ -1989,16 +1989,28 @@
                     ? `<span style="color:#ff1744;font-weight:700">ห้าม Short!</span> ราคาออกนอก Zone แล้ว — รอ Pullback เล็ก แล้ว Buy ตาม | SL ใต้จุด High ล่าสุด`
                     : `<span style="color:#ff1744;font-weight:700">ห้าม Buy!</span> ราคาออกนอก Zone แล้ว — รอ Bounce เล็ก แล้ว Sell ตาม | SL เหนือจุด Low ล่าสุด`;
             } else if (gexVal >= 0) {
-                const s = `<span style="color:var(--put-color);font-weight:700">$${maxPut.strike}</span>`;
-                const r = `<span style="color:var(--call-color);font-weight:700">$${maxCall.strike}</span>`;
-                const mp = mpStrike ? `<span style="color:var(--pink);font-weight:700">$${mpStrike}</span>` : '';
-                action = priceAboveMP
-                    ? `เทรดกลับ Max Pain → <b>Sell</b> แถว ${r}, TP ที่ ${mp} | <b>Buy</b> รับที่ ${s} ถ้าราคาย่อลงมา`
-                    : `เทรดกลับ Max Pain → <b>Buy</b> แถว ${s}, TP ที่ ${mp} | <b>Sell</b> รับที่ ${r} ถ้าราคาดีดขึ้นมา`;
+                const sStr = `<span style="color:var(--put-color);font-weight:700">$${maxPut.strike}</span>`;
+                const rStr = `<span style="color:var(--call-color);font-weight:700">$${maxCall.strike}</span>`;
+                const mpStr = mpStrike ? `<span style="color:var(--pink);font-weight:700">$${mpStrike}</span>` : '';
+                const distToR = (maxCall.strike - uPrice).toFixed(0);
+                const distToS = (uPrice - maxPut.strike).toFixed(0);
+                if (priceAboveMP) {
+                    // Price above Max Pain → mean reversion pull down
+                    action = `แรงดึงกลับ Max Pain ${mpStr} → <b>Sell</b> ที่ Call Wall ${rStr} <span style="font-size:10px;opacity:.7">(+${distToR})</span>, TP ${mpStr}`;
+                    if (maxPut.strike !== mpStrike) {
+                        action += ` | <b>Buy</b> รับที่ Put Wall ${sStr} <span style="font-size:10px;opacity:.7">(-${distToS})</span>`;
+                    }
+                } else {
+                    // Price below Max Pain → mean reversion pull up
+                    action = `แรงดึงกลับ Max Pain ${mpStr} → <b>Buy</b> ที่ Put Wall ${sStr} <span style="font-size:10px;opacity:.7">(-${distToS})</span>, TP ${mpStr}`;
+                    if (maxCall.strike !== mpStrike) {
+                        action += ` | <b>Sell</b> รับที่ Call Wall ${rStr} <span style="font-size:10px;opacity:.7">(+${distToR})</span>`;
+                    }
+                }
             } else {
-                const s = `<span style="color:var(--put-color);font-weight:700">$${maxPut.strike}</span>`;
-                const r = `<span style="color:var(--call-color);font-weight:700">$${maxCall.strike}</span>`;
-                action = `Breakout เหนือ ${r} → <b style="color:var(--green)">Long</b> &nbsp;|&nbsp; Breakdown ต่ำกว่า ${s} → <b style="color:var(--red)">Short</b> &nbsp;|&nbsp; ห้าม Fade`;
+                const sStr = `<span style="color:var(--put-color);font-weight:700">$${maxPut.strike}</span>`;
+                const rStr = `<span style="color:var(--call-color);font-weight:700">$${maxCall.strike}</span>`;
+                action = `Breakout เหนือ ${rStr} → <b style="color:var(--green)">Long</b> &nbsp;|&nbsp; Breakdown ต่ำกว่า ${sStr} → <b style="color:var(--red)">Short</b> &nbsp;|&nbsp; ห้าม Fade`;
             }
 
             const cell = (label, valueHtml, subHtml, barPct, barColor) => `
@@ -2084,9 +2096,17 @@
                 let tp = data.totalPut !== undefined ? data.totalPut : data.strikes.reduce((sum, s) => sum + s.put, 0);
                 const pcr = tc > 0 ? (tp / tc) : 1;
 
-                // Find Support (Max Put) and Resistance (Max Call)
-                let maxCall = data.strikes.reduce((p, c) => c.call > p.call ? c : p);
-                let maxPut = data.strikes.reduce((p, c) => c.put > p.put ? c : p);
+                // Find Support (Max Put BELOW price) and Resistance (Max Call ABOVE price)
+                // Use directionally relevant walls: Call Wall = highest call OI at/above price,
+                // Put Wall = highest put OI at/below price. Fallback to overall max if none found.
+                const callsAbove = data.strikes.filter(s => s.strike >= uPrice && s.call > 0);
+                const putsBelow = data.strikes.filter(s => s.strike <= uPrice && s.put > 0);
+                let maxCall = callsAbove.length > 0
+                    ? callsAbove.reduce((p, c) => c.call > p.call ? c : p)
+                    : data.strikes.reduce((p, c) => c.call > p.call ? c : p);
+                let maxPut = putsBelow.length > 0
+                    ? putsBelow.reduce((p, c) => c.put > p.put ? c : p)
+                    : data.strikes.reduce((p, c) => c.put > p.put ? c : p);
 
                 // Determine bias
                 let biasStr = 'Neutral';
@@ -2390,8 +2410,8 @@
                     </div>` : ''}
                     <div class="ac-divider"></div>
 
-                    <div class="ac-row"><span class="ac-label">Resistance (Max Call)</span><span class="ac-val" style="color:var(--call-color); font-weight:800;">$${maxCall.strike} <span style="font-size:10px; color:var(--text-muted);">+${distToCallWall.toFixed(0)} จากราคา</span></span></div>
-                    <div class="ac-row"><span class="ac-label">Support (Max Put)</span><span class="ac-val" style="color:var(--put-color); font-weight:800;">$${maxPut.strike} <span style="font-size:10px; color:var(--text-muted);">-${distToPutWall.toFixed(0)} จากราคา</span></span></div>
+                    <div class="ac-row"><span class="ac-label">Resistance (Call Wall)</span><span class="ac-val" style="color:var(--call-color); font-weight:800;">$${maxCall.strike} <span style="font-size:10px; color:var(--text-muted);">+${distToCallWall.toFixed(0)} จากราคา</span></span></div>
+                    <div class="ac-row"><span class="ac-label">Support (Put Wall)</span><span class="ac-val" style="color:var(--put-color); font-weight:800;">$${maxPut.strike} <span style="font-size:10px; color:var(--text-muted);">-${distToPutWall.toFixed(0)} จากราคา</span></span></div>
                     <div class="ac-divider"></div>
                     
                     <div class="ac-row"><span class="ac-label">Total Exp. Range</span><span class="ac-val" style="color:var(--text-primary);">${rangeTxt}</span></div>
