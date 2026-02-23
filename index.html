@@ -1909,9 +1909,9 @@
         }
 
         function buildPulse(p) {
-            const { uPrice, gexVal, risk, vannaExp, mpStrike, mpDist, maxCall, maxPut,
+            const { uPrice, gexVal, gexResult, risk, vannaExp, mpStrike, mpDist, maxCall, maxPut,
                     biasScore, priceAboveMP, priceBelowMP, nearCallWall, nearPutWall,
-                    tradeIcon, tradeColor, isFallback } = p;
+                    tradeIcon, tradeColor, isFallback, hedgeLabel, hedgeItmPct, dte } = p;
 
             const fallbackBanner = isFallback ? `
                 <div style="display:flex;align-items:center;gap:8px;padding:7px 12px;border-radius:6px;
@@ -1963,7 +1963,7 @@
                     bDesc = `Long Gamma + ราคาใกล้ Max Pain $${mpStrike} → Sideway เทรดกรอบ`;
                 }
             } else {
-                const upBias = biasScore > 0 || priceAboveMP === false;
+                const upBias = biasScore > 0 || priceBelowMP;
                 bText = upBias ? '🌊 TREND UP' : '🌊 TREND DOWN';
                 bColor = upBias ? 'var(--green)' : 'var(--red)';
                 bDesc = `Short Gamma → ราคาวิ่งรุนแรงเมื่อหลุดแนว ติดตามทิศทาง ห้ามสวน`;
@@ -1982,35 +1982,63 @@
             const vannaColor = vannaExp < 0 ? 'var(--red)' : 'var(--green)';
             const vannaDir = vannaExp < 0 ? 'IV↑ → Dealers SELL' : 'IV↑ → Dealers BUY';
 
-            // ── Action line ──
+            // ── Action line (synthesize ALL signals) ──
+            const sStr = `<span style="color:var(--put-color);font-weight:700">$${maxPut.strike}</span>`;
+            const rStr = `<span style="color:var(--call-color);font-weight:700">$${maxCall.strike}</span>`;
+            const mpStr = mpStrike ? `<span style="color:var(--pink);font-weight:700">$${mpStrike}</span>` : '';
+            const gmStr = risk.gammaMean ? `<span style="color:var(--cyan);font-weight:700">$${risk.gammaMean.toFixed(0)}</span>` : '';
+            const distToR = (maxCall.strike - uPrice).toFixed(0);
+            const distToS = (uPrice - maxPut.strike).toFixed(0);
+
+            // Vanna confirmation tag
+            const vannaTag = vannaExp < 0
+                ? `<span style="font-size:10px;color:var(--red);opacity:.85"> · Vanna: IV↑ยิ่งกดลง</span>`
+                : `<span style="font-size:10px;color:var(--green);opacity:.85"> · Vanna: IV↑ช่วยดัน</span>`;
+
+            // Hedge confidence tag
+            const hedgeTag = hedgeLabel
+                ? `<span style="font-size:10px;opacity:.7"> · ${hedgeLabel === 'Heavy Hedge' ? '🛡️ สถาบัน Hedge หนัก (มั่นใจสูง)' : hedgeLabel === 'Moderate Hedge' ? '🛡️ Hedge ปานกลาง' : '🎰 Spec-Driven (ขาเก็งกำไร)'}</span>`
+                : '';
+
+            // GEX Flip proximity warning
+            const flipStrike = gexResult?.flipStrike;
+            const flipTag = flipStrike && Math.abs(uPrice - flipStrike) < 60
+                ? `<span style="font-size:10px;color:var(--orange);font-weight:700"> · ⚠️ ใกล้ GEX Flip $${flipStrike} — ระวังเปลี่ยน regime!</span>`
+                : '';
+
+            // Pick best TP target: Gamma Mean (if between price and MP) or Max Pain
+            let tpTarget = mpStr;
+            let tpLabel = 'Max Pain';
+            if (risk.gammaMean && mpStrike) {
+                if (priceAboveMP && risk.gammaMean < uPrice && risk.gammaMean > mpStrike) {
+                    tpTarget = gmStr; tpLabel = 'Gamma Mean';
+                } else if (priceBelowMP && risk.gammaMean > uPrice && risk.gammaMean < mpStrike) {
+                    tpTarget = gmStr; tpLabel = 'Gamma Mean';
+                }
+            }
+
             let action;
             if (risk.noMansLand) {
-                action = risk.noMansLandSide === 'above'
-                    ? `<span style="color:#ff1744;font-weight:700">ห้าม Short!</span> ราคาออกนอก Zone แล้ว — รอ Pullback เล็ก แล้ว Buy ตาม | SL ใต้จุด High ล่าสุด`
-                    : `<span style="color:#ff1744;font-weight:700">ห้าม Buy!</span> ราคาออกนอก Zone แล้ว — รอ Bounce เล็ก แล้ว Sell ตาม | SL เหนือจุด Low ล่าสุด`;
+                const isUp = risk.noMansLandSide === 'above';
+                action = isUp
+                    ? `<span style="color:#ff1744;font-weight:700">ห้าม Short!</span> ราคาออกนอก Gamma Zone แล้ว — รอ Pullback เล็กแล้ว Buy ตาม | SL ใต้ High ล่าสุด`
+                    : `<span style="color:#ff1744;font-weight:700">ห้าม Buy!</span> ราคาออกนอก Gamma Zone แล้ว — รอ Bounce เล็กแล้ว Sell ตาม | SL เหนือ Low ล่าสุด`;
+                action += vannaTag + hedgeTag + flipTag;
             } else if (gexVal >= 0) {
-                const sStr = `<span style="color:var(--put-color);font-weight:700">$${maxPut.strike}</span>`;
-                const rStr = `<span style="color:var(--call-color);font-weight:700">$${maxCall.strike}</span>`;
-                const mpStr = mpStrike ? `<span style="color:var(--pink);font-weight:700">$${mpStrike}</span>` : '';
-                const distToR = (maxCall.strike - uPrice).toFixed(0);
-                const distToS = (uPrice - maxPut.strike).toFixed(0);
                 if (priceAboveMP) {
-                    // Price above Max Pain → mean reversion pull down
-                    action = `แรงดึงกลับ Max Pain ${mpStr} → <b>Sell</b> ที่ Call Wall ${rStr} <span style="font-size:10px;opacity:.7">(+${distToR})</span>, TP ${mpStr}`;
-                    if (maxPut.strike !== mpStrike) {
-                        action += ` | <b>Buy</b> รับที่ Put Wall ${sStr} <span style="font-size:10px;opacity:.7">(-${distToS})</span>`;
-                    }
+                    action = `Long γ + เหนือ Max Pain → <b>Sell</b> ที่ Call Wall ${rStr} <span style="font-size:10px;opacity:.7">(+${distToR})</span>, TP ${tpTarget} (${tpLabel})`;
+                    if (maxPut.strike !== mpStrike) action += ` | <b>Buy</b> รับ ${sStr} <span style="font-size:10px;opacity:.7">(-${distToS})</span>`;
+                } else if (priceBelowMP) {
+                    action = `Long γ + ต่ำกว่า Max Pain → <b>Buy</b> ที่ Put Wall ${sStr} <span style="font-size:10px;opacity:.7">(-${distToS})</span>, TP ${tpTarget} (${tpLabel})`;
+                    if (maxCall.strike !== mpStrike) action += ` | <b>Sell</b> รับ ${rStr} <span style="font-size:10px;opacity:.7">(+${distToR})</span>`;
                 } else {
-                    // Price below Max Pain → mean reversion pull up
-                    action = `แรงดึงกลับ Max Pain ${mpStr} → <b>Buy</b> ที่ Put Wall ${sStr} <span style="font-size:10px;opacity:.7">(-${distToS})</span>, TP ${mpStr}`;
-                    if (maxCall.strike !== mpStrike) {
-                        action += ` | <b>Sell</b> รับที่ Call Wall ${rStr} <span style="font-size:10px;opacity:.7">(+${distToR})</span>`;
-                    }
+                    action = `Long γ + ราคา ≈ Max Pain ${mpStr} → Sideway เทรดกรอบ ${sStr} – ${rStr}`;
                 }
+                action += vannaTag + hedgeTag + flipTag;
             } else {
-                const sStr = `<span style="color:var(--put-color);font-weight:700">$${maxPut.strike}</span>`;
-                const rStr = `<span style="color:var(--call-color);font-weight:700">$${maxCall.strike}</span>`;
-                action = `Breakout เหนือ ${rStr} → <b style="color:var(--green)">Long</b> &nbsp;|&nbsp; Breakdown ต่ำกว่า ${sStr} → <b style="color:var(--red)">Short</b> &nbsp;|&nbsp; ห้าม Fade`;
+                const dir = priceBelowMP ? 'ลง' : priceAboveMP ? 'ขึ้น' : '';
+                action = `Short γ — Breakout > ${rStr} → <b style="color:var(--green)">Long</b> | Breakdown < ${sStr} → <b style="color:var(--red)">Short</b> | ห้าม Fade${dir ? ` (bias ${dir})` : ''}`;
+                action += vannaTag + hedgeTag + flipTag;
             }
 
             const cell = (label, valueHtml, subHtml, barPct, barColor) => `
@@ -2307,11 +2335,25 @@
                     if (nearPutWall) tradeRules.push('⚡ ใกล้ Put Wall → ถ้าหลุด = Cascade DOWN → SELL ทันที');
                 }
 
+                // Institutional Hedge for this timeframe
+                const t_pulse = Math.max(data.dte, 0.01) / 365;
+                let itmOI_p = 0, atmOI_p = 0, otmOI_p = 0;
+                data.strikes.forEach(s => {
+                    const cd = calcDelta(uPrice, s.strike, s.volSettle, t_pulse, true);
+                    const pd = Math.abs(calcDelta(uPrice, s.strike, s.volSettle, t_pulse, false));
+                    itmOI_p += (cd > 0.70 ? s.call : 0) + (pd > 0.70 ? s.put : 0);
+                    atmOI_p += (cd >= 0.30 && cd <= 0.70 ? s.call : 0) + (pd >= 0.30 && pd <= 0.70 ? s.put : 0);
+                    otmOI_p += (cd < 0.30 ? s.call : 0) + (pd < 0.30 ? s.put : 0);
+                });
+                const totalHedgeOI_p = (itmOI_p + atmOI_p + otmOI_p) || 1;
+                const itmPct_p = itmOI_p / totalHedgeOI_p * 100;
+                const hedgeLabel_p = itmPct_p > 40 ? 'Heavy Hedge' : itmPct_p > 20 ? 'Moderate Hedge' : 'Spec-Driven';
+
                 // Capture Daily signals for Market Pulse
                 if (tf.key === 'current') {
                     pulseData = { uPrice, gexVal, gexResult, risk, vannaExp, mpStrike, mpDist, maxCall, maxPut,
                                   biasScore, priceAboveMP, priceBelowMP, nearCallWall, nearPutWall,
-                                  tradeStyle, tradeIcon, tradeColor };
+                                  tradeStyle, tradeIcon, tradeColor, hedgeLabel: hedgeLabel_p, hedgeItmPct: itmPct_p, dte: data.dte };
                 }
 
                 const tradeGuidanceHtml = `
