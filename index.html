@@ -1413,7 +1413,7 @@
             if (lines.length < 2) return null;
             const header = lines[0];
             const dteMatch = header.match(/\(([\d.]+)\s*DTE\)/);
-            const priceMatch = header.match(/vs\s+([\d.]+)/);
+            const priceMatch = header.match(/FutPrc:\s+([\d.]+)/) || header.match(/vs\s+([\d.]+)/);
             const changeMatches = header.match(/\(([+-]?[\d.]+)\)/g);
             const typeMatch = header.match(/- (.+)$/);
 
@@ -1493,7 +1493,12 @@
                 container.innerHTML = '<div class="placeholder-msg"><div class="icon">📊</div><div class="desc">No data available</div></div>';
                 return;
             }
-            const underlying = data.underlying;
+            // Use globalUnderlying (from Current contract) for consistency with Trade Setup
+            let globalUnderlying = 0;
+            if (state.data.current?.oi?.underlying) globalUnderlying = state.data.current.oi.underlying;
+            else if (state.data.monthly?.oi?.underlying) globalUnderlying = state.data.monthly.oi.underlying;
+            else if (state.data.friday?.oi?.underlying) globalUnderlying = state.data.friday.oi.underlying;
+            const underlying = globalUnderlying > 0 ? globalUnderlying : data.underlying;
             const filtered = data.strikes.filter(s =>
                 s.strike >= underlying - CONFIG.visibleStrikeRange &&
                 s.strike <= underlying + CONFIG.visibleStrikeRange &&

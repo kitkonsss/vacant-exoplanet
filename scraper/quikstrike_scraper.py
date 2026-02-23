@@ -671,7 +671,8 @@ def extract_chart(driver):
             var info = {
                 title: chart.title ? chart.title.textStr : '',
                 subtitle: chart.subtitle ? chart.subtitle.textStr : '',
-                series: []
+                series: [],
+                futurePrice: null
             };
             for (var ser of chart.series) {
                 if (!ser.visible) continue;
@@ -680,6 +681,28 @@ def extract_chart(driver):
                     y: p.y !== undefined ? p.y : 0
                 }));
                 info.series.push({name: ser.name || '', type: ser.type || '', data: pts});
+            }
+            // Extract futures price from xAxis plotLines (vertical reference line)
+            if (chart.xAxis && chart.xAxis.length > 0) {
+                var ax = chart.xAxis[0];
+                // Check rendered plotLines
+                if (ax.plotLinesAndBands) {
+                    for (var pl of ax.plotLinesAndBands) {
+                        if (pl.options && pl.options.value && pl.options.value > 1000) {
+                            info.futurePrice = pl.options.value;
+                            break;
+                        }
+                    }
+                }
+                // Fallback: check options.plotLines config
+                if (!info.futurePrice && ax.options && ax.options.plotLines) {
+                    for (var pl of ax.options.plotLines) {
+                        if (pl.value && pl.value > 1000) {
+                            info.futurePrice = pl.value;
+                            break;
+                        }
+                    }
+                }
             }
             results.push(info);
         }
@@ -741,6 +764,11 @@ def chart_to_text(chart_data, header_line):
         target = chart_data['charts'][0]
     if not target:
         return None
+
+    # Append futures price to header if extracted from xAxis plotLines
+    future_price = target.get('futurePrice')
+    if future_price and future_price > 0:
+        header_line = f"{header_line} FutPrc: {future_price}"
 
     call_d, put_d, vol_d = {}, {}, {}
     for s in target['series']:
