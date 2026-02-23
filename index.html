@@ -495,13 +495,13 @@
             font-variant-numeric: tabular-nums;
         }
 
-        /* Call OI (col 2) */
+        /* Call OI (col 6) */
         .row-call {
-            text-align: right;
+            text-align: left;
             color: var(--call-color);
             font-variant-numeric: tabular-nums;
             font-weight: 600;
-            padding-right: 6px;
+            padding-left: 6px;
             border-radius: 3px;
         }
 
@@ -512,11 +512,11 @@
             box-shadow: 0 0 8px rgba(77, 208, 225, 0.4);
         }
 
-        /* Call Bar (col 3) — bar grows from right to left */
+        /* Call Bar (col 5) — bar grows from left to right */
         .row-bar-call {
             display: flex;
             align-items: center;
-            justify-content: flex-end;
+            justify-content: flex-start;
             height: 16px;
         }
 
@@ -539,21 +539,21 @@
             font-size: 12px;
         }
 
-        /* Put Bar (col 5) — bar grows from left to right */
+        /* Put Bar (col 3) — bar grows from right to left */
         .row-bar-put {
             display: flex;
             align-items: center;
-            justify-content: flex-start;
+            justify-content: flex-end;
             height: 16px;
         }
 
-        /* Put OI (col 6) */
+        /* Put OI (col 2) */
         .row-put {
-            text-align: left;
+            text-align: right;
             color: var(--put-color);
             font-variant-numeric: tabular-nums;
             font-weight: 600;
-            padding-left: 6px;
+            padding-right: 6px;
             border-radius: 3px;
         }
 
@@ -595,11 +595,11 @@
         }
 
         .bar-call {
-            background: linear-gradient(270deg, var(--call-color), rgba(77, 208, 225, 0.2));
+            background: linear-gradient(90deg, var(--call-color), rgba(77, 208, 225, 0.2));
         }
 
         .bar-put {
-            background: linear-gradient(90deg, var(--put-color), rgba(255, 183, 77, 0.2));
+            background: linear-gradient(270deg, var(--put-color), rgba(255, 183, 77, 0.2));
         }
 
         /* ===== PLACEHOLDER ===== */
@@ -1021,10 +1021,10 @@
                 <span class="panel-title">Intraday Volume</span>
                 <div class="panel-legend">
                     <div class="legend-item">
-                        <div class="legend-dot call"></div><span class="legend-call">Call</span>
+                        <div class="legend-dot put"></div><span class="legend-put">Put</span>
                     </div>
                     <div class="legend-item">
-                        <div class="legend-dot put"></div><span class="legend-put">Put</span>
+                        <div class="legend-dot call"></div><span class="legend-call">Call</span>
                     </div>
                 </div>
             </div>
@@ -1522,13 +1522,13 @@
 
             // Grid header
             let html = '<div class="grid-header">' +
-                '<span class="h-call">OTM Δ</span>' +
-                '<span class="h-call h-right">Call</span>' +
+                '<span class="h-put">OTM Δ</span>' +
+                '<span class="h-put h-right">Put</span>' +
                 '<span></span>' +
                 '<span>Strike</span>' +
                 '<span></span>' +
-                '<span class="h-put h-left">Put</span>' +
-                '<span class="h-put">OTM Δ</span>' +
+                '<span class="h-call h-left">Call</span>' +
+                '<span class="h-call">OTM Δ</span>' +
                 '<span class="h-right">Total</span>' +
                 '</div>';
 
@@ -1580,13 +1580,13 @@
                 const putDeltaStr = Math.round(putDeltaOTM * 100);
 
                 html += `<div class="${rowCls}">` +
-                    `<span class="row-delta-call">${callDeltaStr}</span>` +
-                    `<span class="${callCls}">${s.call > 0 ? s.call.toLocaleString() : ''}</span>` +
-                    `<div class="row-bar-call">${s.call > 0 ? `<div class="bar bar-call" style="width:${callPct}%"></div>` : ''}</div>` +
-                    `<span class="${strikeCls}" style="${strikeStyle}">${s.strike}</span>` +
-                    `<div class="row-bar-put">${s.put > 0 ? `<div class="bar bar-put" style="width:${putPct}%"></div>` : ''}</div>` +
-                    `<span class="${putCls}">${s.put > 0 ? s.put.toLocaleString() : ''}</span>` +
                     `<span class="row-delta-put">${putDeltaStr}</span>` +
+                    `<span class="${putCls}">${s.put > 0 ? s.put.toLocaleString() : ''}</span>` +
+                    `<div class="row-bar-put">${s.put > 0 ? `<div class="bar bar-put" style="width:${putPct}%"></div>` : ''}</div>` +
+                    `<span class="${strikeCls}" style="${strikeStyle}">${s.strike}</span>` +
+                    `<div class="row-bar-call">${s.call > 0 ? `<div class="bar bar-call" style="width:${callPct}%"></div>` : ''}</div>` +
+                    `<span class="${callCls}">${s.call > 0 ? s.call.toLocaleString() : ''}</span>` +
+                    `<span class="row-delta-call">${callDeltaStr}</span>` +
                     `<span class="row-total ${isHot || (isATM && s.total >= hotThreshold) ? 'high' : ''}">${s.total.toLocaleString()}</span>` +
                     `</div>`;
             }
