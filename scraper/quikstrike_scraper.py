@@ -796,10 +796,10 @@ def chart_to_text(chart_data, header_line):
     if not target:
         return None
 
-    # Append futures price to header (try plotLine first, then yfinance fallback)
-    future_price = target.get('futurePrice')
+    # Append futures price to header (yfinance primary, plotLine fallback)
+    future_price = get_gold_futures_price()
     if not future_price or future_price <= 0:
-        future_price = get_gold_futures_price()
+        future_price = target.get('futurePrice')
     if future_price and future_price > 0:
         header_line = f"{header_line} FutPrc: {future_price}"
 
