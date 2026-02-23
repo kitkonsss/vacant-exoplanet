@@ -1075,6 +1075,7 @@
 
     <!-- ===== ANALYSIS CONTAINER ===== -->
     <div class="analysis-container active" id="analysisContainer">
+        <div id="marketPulse"></div>
         <div class="analysis-header" id="analysisHeader">
             <!-- Overall Bias Header -->
         </div>
@@ -1905,6 +1906,137 @@
             }
         }
 
+        function buildPulse(p) {
+            const { uPrice, gexVal, risk, vannaExp, mpStrike, mpDist, maxCall, maxPut,
+                    biasScore, priceAboveMP, priceBelowMP, nearCallWall, nearPutWall,
+                    tradeIcon, tradeColor } = p;
+
+            // ── Badge ──
+            let bText, bColor, bDesc;
+            if (risk.noMansLand) {
+                const up = risk.noMansLandSide === 'above';
+                bText = up ? '⛔ BREAKOUT TERRITORY' : '⛔ CASCADE TERRITORY';
+                bColor = '#ff1744';
+                bDesc = up
+                    ? `ราคาออกนอก Gamma Zone ด้านบน (+${(uPrice - risk.gammaZoneHigh).toFixed(0)} pts) → ห้ามสวนทาง ติดตามขึ้น`
+                    : `ราคาออกนอก Gamma Zone ด้านล่าง (-${(risk.gammaZoneLow - uPrice).toFixed(0)} pts) → ห้ามสวนทาง ติดตามลง`;
+            } else if (nearCallWall && gexVal >= 0) {
+                bText = '⚡ RESISTANCE TEST';
+                bColor = '#ffd54f';
+                bDesc = `ราคาใกล้ Call Wall $${maxCall.strike} (+${(maxCall.strike - uPrice).toFixed(0)}) → จุดแตกหัก: ทะลุ=Squeeze ✦ ย่อ=Short`;
+            } else if (nearPutWall && gexVal >= 0) {
+                bText = '⚡ SUPPORT TEST';
+                bColor = '#ffd54f';
+                bDesc = `ราคาใกล้ Put Wall $${maxPut.strike} (-${(uPrice - maxPut.strike).toFixed(0)}) → จุดแตกหัก: หลุด=Cascade ✦ เด้ง=Long`;
+            } else if (nearCallWall && gexVal < 0) {
+                bText = '🚀 GAMMA SQUEEZE RISK';
+                bColor = 'var(--orange)';
+                bDesc = `Short Gamma + ใกล้ Call Wall $${maxCall.strike} → ถ้าทะลุ Squeeze รุนแรงมาก`;
+            } else if (nearPutWall && gexVal < 0) {
+                bText = '💧 LIQUIDITY DROP RISK';
+                bColor = 'var(--orange)';
+                bDesc = `Short Gamma + ใกล้ Put Wall $${maxPut.strike} → ถ้าหลุด Cascade ลงรุนแรง`;
+            } else if (gexVal >= 0) {
+                if (priceAboveMP) {
+                    bText = '🔄 PULLBACK ZONE';
+                    bColor = 'var(--cyan)';
+                    bDesc = `Long Gamma + ราคาเหนือ Max Pain $${mpStrike} (+${mpDist.toFixed(0)}) → แรงดึงลง เน้น Sell ที่ Resistance`;
+                } else if (priceBelowMP) {
+                    bText = '🔄 BOUNCE ZONE';
+                    bColor = 'var(--green)';
+                    bDesc = `Long Gamma + ราคาต่ำกว่า Max Pain $${mpStrike} (${mpDist.toFixed(0)}) → แรงดึงขึ้น เน้น Buy ที่ Support`;
+                } else {
+                    bText = '🔄 RANGE BOUND';
+                    bColor = 'var(--cyan)';
+                    bDesc = `Long Gamma + ราคาใกล้ Max Pain $${mpStrike} → Sideway เทรดกรอบ`;
+                }
+            } else {
+                const upBias = biasScore > 0 || priceAboveMP === false;
+                bText = upBias ? '🌊 TREND UP' : '🌊 TREND DOWN';
+                bColor = upBias ? 'var(--green)' : 'var(--red)';
+                bDesc = `Short Gamma → ราคาวิ่งรุนแรงเมื่อหลุดแนว ติดตามทิศทาง ห้ามสวน`;
+            }
+
+            // ── GEX meter (mapped -150M→+150M to 0→100%) ──
+            const gexPct = Math.min(100, Math.max(0, (gexVal / 1.5e8 + 1) / 2 * 100));
+            const gexColor = gexVal >= 0 ? 'var(--green)' : 'var(--red)';
+
+            // ── Max Pain gravity arrow ──
+            let mpArrow = '↔', mpAColor = 'var(--text-muted)';
+            if (mpDist > 60)  { mpArrow = '↓'; mpAColor = 'var(--red)'; }
+            else if (mpDist < -60) { mpArrow = '↑'; mpAColor = 'var(--green)'; }
+
+            // ── Vanna ──
+            const vannaColor = vannaExp < 0 ? 'var(--red)' : 'var(--green)';
+            const vannaDir = vannaExp < 0 ? 'IV↑ → Dealers SELL' : 'IV↑ → Dealers BUY';
+
+            // ── Action line ──
+            let action;
+            if (risk.noMansLand) {
+                action = risk.noMansLandSide === 'above'
+                    ? `<span style="color:#ff1744;font-weight:700">ห้าม Short!</span> ราคาออกนอก Zone แล้ว — รอ Pullback เล็ก แล้ว Buy ตาม | SL ใต้จุด High ล่าสุด`
+                    : `<span style="color:#ff1744;font-weight:700">ห้าม Buy!</span> ราคาออกนอก Zone แล้ว — รอ Bounce เล็ก แล้ว Sell ตาม | SL เหนือจุด Low ล่าสุด`;
+            } else if (gexVal >= 0) {
+                const s = `<span style="color:var(--put-color);font-weight:700">$${maxPut.strike}</span>`;
+                const r = `<span style="color:var(--call-color);font-weight:700">$${maxCall.strike}</span>`;
+                const mp = mpStrike ? `<span style="color:var(--pink);font-weight:700">$${mpStrike}</span>` : '';
+                action = priceAboveMP
+                    ? `เทรดกลับ Max Pain → <b>Sell</b> แถว ${r}, TP ที่ ${mp} | <b>Buy</b> รับที่ ${s} ถ้าราคาย่อลงมา`
+                    : `เทรดกลับ Max Pain → <b>Buy</b> แถว ${s}, TP ที่ ${mp} | <b>Sell</b> รับที่ ${r} ถ้าราคาดีดขึ้นมา`;
+            } else {
+                const s = `<span style="color:var(--put-color);font-weight:700">$${maxPut.strike}</span>`;
+                const r = `<span style="color:var(--call-color);font-weight:700">$${maxCall.strike}</span>`;
+                action = `Breakout เหนือ ${r} → <b style="color:var(--green)">Long</b> &nbsp;|&nbsp; Breakdown ต่ำกว่า ${s} → <b style="color:var(--red)">Short</b> &nbsp;|&nbsp; ห้าม Fade`;
+            }
+
+            const cell = (label, valueHtml, subHtml, barPct, barColor) => `
+                <div style="background:rgba(0,0,0,0.3);border:1px solid var(--border);border-radius:8px;padding:10px 12px;">
+                    <div style="font-size:9px;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">${label}</div>
+                    <div style="font-size:15px;font-weight:800;margin-bottom:2px">${valueHtml}</div>
+                    <div style="height:3px;background:rgba(255,255,255,.07);border-radius:2px;margin:5px 0 4px;overflow:hidden">
+                        <div style="width:${barPct}%;height:100%;background:${barColor};border-radius:2px"></div>
+                    </div>
+                    <div style="font-size:10px;color:var(--text-muted)">${subHtml}</div>
+                </div>`;
+
+            return `
+            <div style="padding:14px 20px;border-bottom:1px solid var(--border);background:linear-gradient(135deg,rgba(255,255,255,.02) 0%,transparent 100%)">
+                <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px">
+                    <div style="font-size:10px;font-weight:700;color:var(--text-muted);letter-spacing:1px">⚡ MARKET PULSE</div>
+                    <div style="display:inline-flex;align-items:center;padding:4px 14px;border-radius:16px;
+                        font-size:13px;font-weight:900;letter-spacing:.8px;
+                        background:${bColor}1a;border:1px solid ${bColor}55;color:${bColor}">${bText}</div>
+                    <div style="font-size:11px;color:var(--text-secondary);flex:1;min-width:200px">${bDesc}</div>
+                </div>
+                <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:10px">
+                    ${cell('GEX Regime',
+                        `<span style="color:${gexColor}">${gexVal >= 0 ? 'Long \u03B3' : 'Short \u03B3'}</span>`,
+                        `${(gexVal/1e6).toFixed(1)}M net GEX`,
+                        gexPct, `linear-gradient(to right,var(--red),var(--text-muted) 50%,var(--green))`
+                    )}
+                    ${cell('Max Pain Gravity',
+                        `<span style="color:${mpAColor};font-size:22px;line-height:1">${mpArrow}</span>`,
+                        `${mpDist >= 0 ? '+' : ''}${mpDist.toFixed(0)} pts to $${mpStrike || '—'}`,
+                        Math.min(100, Math.max(0, 50 + mpDist / 4)),
+                        mpDist > 0 ? 'var(--red)' : 'var(--green)'
+                    )}
+                    ${cell('Breakout Risk',
+                        `<span style="color:${risk.riskColor}">${risk.riskIcon} ${risk.totalScore}/100</span>`,
+                        risk.riskLevel,
+                        risk.totalScore, risk.riskColor
+                    )}
+                    ${cell('Vanna (Vol Spike)',
+                        `<span style="color:${vannaColor}">${vannaDir}</span>`,
+                        `${Math.abs(vannaExp/1e6).toFixed(1)}M dealer flow`,
+                        Math.min(100, Math.abs(vannaExp/1e6) / 2),
+                        vannaColor
+                    )}
+                </div>
+                <div style="padding:9px 13px;border-radius:7px;background:rgba(255,255,255,.02);border-left:3px solid ${bColor};
+                    font-size:12px;color:var(--text-secondary);line-height:1.7">${action}</div>
+            </div>`;
+        }
+
         function renderAnalysisTab() {
             const container = document.getElementById('analysisGrid');
             const header = document.getElementById('analysisHeader');
@@ -1917,6 +2049,7 @@
 
             let html = '';
             let biases = [];
+            let pulseData = null;
 
             // Sync underlying price across all timeframes since they map to the same Future
             let globalUnderlying = 0;
@@ -2142,6 +2275,13 @@
                     if (nearPutWall) tradeRules.push('⚡ ใกล้ Put Wall → ถ้าหลุด = Cascade DOWN → SELL ทันที');
                 }
 
+                // Capture Daily signals for Market Pulse
+                if (tf.key === 'current') {
+                    pulseData = { uPrice, gexVal, gexResult, risk, vannaExp, mpStrike, mpDist, maxCall, maxPut,
+                                  biasScore, priceAboveMP, priceBelowMP, nearCallWall, nearPutWall,
+                                  tradeStyle, tradeIcon, tradeColor };
+                }
+
                 const tradeGuidanceHtml = `
                     <div style="margin-top:8px; padding:14px; border-radius:8px; background:rgba(0,0,0,0.25); border:1px solid ${tradeColor}30;">
                         <div style="font-size:13px; font-weight:900; color:${tradeColor}; margin-bottom:10px; letter-spacing:0.5px;">
@@ -2282,6 +2422,10 @@
             } else {
                 header.innerHTML = `<div class="placeholder-msg">Loading data...</div>`;
             }
+
+            // Market Pulse panel
+            const pulseEl = document.getElementById('marketPulse');
+            if (pulseEl) pulseEl.innerHTML = pulseData ? buildPulse(pulseData) : '';
         }
 
         function renderActiveTab() {
@@ -2308,6 +2452,7 @@
                 document.getElementById('sumMaxPainDetail').textContent = '';
                 document.getElementById('sumNetGEXDetail').textContent = '';
                 document.getElementById('sumHedgeDetail').textContent = '';
+                const pe = document.getElementById('marketPulse'); if (pe) pe.innerHTML = '';
                 document.getElementById('hedgeBarITM').style.flex = '0';
                 document.getElementById('hedgeBarATM').style.flex = '1';
                 document.getElementById('hedgeBarOTM').style.flex = '0';
