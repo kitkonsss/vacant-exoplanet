@@ -2,11 +2,14 @@
 # ============================================================
 # Oracle Cloud VM Setup Script
 # Run once after creating the VM to install all dependencies
+# Supports both x86 (amd64) and ARM (aarch64) VMs
 # Usage: chmod +x setup.sh && sudo ./setup.sh
 # ============================================================
 set -e
 
 echo "=== QuikStrike Scraper VM Setup ==="
+ARCH=$(dpkg --print-architecture)
+echo "Detected architecture: $ARCH"
 
 # ── 1. System packages ──
 echo "[1/6] Installing system packages..."
@@ -19,15 +22,31 @@ apt-get install -y \
     libnss3 libx11-xcb1 libxcomposite1 libxdamage1 libxrandr2 \
     xdg-utils
 
-# ── 2. Google Chrome ──
-echo "[2/6] Installing Google Chrome..."
-if ! command -v google-chrome &> /dev/null; then
-    wget -q https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
-    dpkg -i google-chrome-stable_current_amd64.deb || apt-get install -f -y
-    rm -f google-chrome-stable_current_amd64.deb
-    echo "Chrome installed: $(google-chrome --version)"
+# ── 2. Browser (Chrome for x86, Chromium for ARM) ──
+echo "[2/6] Installing browser..."
+if [ "$ARCH" = "amd64" ]; then
+    if ! command -v google-chrome &> /dev/null; then
+        wget -q https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
+        dpkg -i google-chrome-stable_current_amd64.deb || apt-get install -f -y
+        rm -f google-chrome-stable_current_amd64.deb
+    fi
+    echo "Chrome: $(google-chrome --version)"
 else
-    echo "Chrome already installed: $(google-chrome --version)"
+    # ARM — use Chromium (Chrome doesn't have ARM .deb)
+    apt-get install -y chromium-browser chromium-chromedriver || \
+    snap install chromium
+    echo "Chromium: $(chromium-browser --version 2>/dev/null || chromium --version)"
+fi
+
+# ── 2b. Add swap (important for 1GB micro VMs) ──
+if [ ! -f /swapfile ]; then
+    echo "Creating 2GB swap..."
+    fallocate -l 2G /swapfile
+    chmod 600 /swapfile
+    mkswap /swapfile
+    swapon /swapfile
+    echo '/swapfile none swap sw 0 0' >> /etc/fstab
+    echo "Swap enabled"
 fi
 
 # ── 3. Create app user (if not exists) ──
