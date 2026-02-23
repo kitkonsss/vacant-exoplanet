@@ -1,16 +1,13 @@
 name: Scrape QuikStrike Data
 
 on:
-  # Schedule disabled — scraping is now handled by Oracle Cloud VM cron (every 1 min)
-  # Kept here as backup; uncomment if VM is down
-  # schedule:
-  #   # Normal: every 30 min, 12:00-18:30 & 22:00 ICT (05-11,15 UTC), Mon-Fri
-  #   - cron: '0,30 5-11,15 * * 1-5'
-  #   # Peak (US Open) every 5 min, 19:30-21:30 ICT = 12:30-14:30 UTC, Mon-Fri
-  #   - cron: '30,35,40,45,50,55 12 * * 1-5'
-  #   - cron: '*/5 13 * * 1-5'
-  #   - cron: '0,5,10,15,20,25,30 14 * * 1-5'
-  # Manual trigger (still works)
+  schedule:
+    # Normal: every 30 min, 12:00-18:30 & 22:00 ICT (05-11,15 UTC), Mon-Fri
+    - cron: '0,30 5-11,15 * * 1-5'
+    # Peak (US Open) every 5 min, 19:30-21:30 ICT = 12:30-14:30 UTC, Mon-Fri
+    - cron: '30,35,40,45,50,55 12 * * 1-5'
+    - cron: '*/5 13 * * 1-5'
+    - cron: '0,5,10,15,20,25,30 14 * * 1-5'
   workflow_dispatch:
 
 jobs:
