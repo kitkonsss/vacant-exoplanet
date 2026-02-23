@@ -1577,12 +1577,9 @@
                 const callDeltaRaw = calcDelta(underlying, s.strike, s.volSettle, t, true);
                 const putDeltaRaw = calcDelta(underlying, s.strike, s.volSettle, t, false);
 
-                // Show as OTM Delta (probability)
-                const callDeltaOTM = s.strike > underlying ? callDeltaRaw : (1 - callDeltaRaw);
-                const putDeltaOTM = s.strike < underlying ? Math.abs(putDeltaRaw) : (1 - Math.abs(putDeltaRaw));
-
-                const callDeltaStr = Math.round(callDeltaOTM * 100);
-                const putDeltaStr = Math.round(putDeltaOTM * 100);
+                // Convention A: left = |Put Δ|, right = Call Δ (actual delta each side)
+                const callDeltaStr = Math.round(callDeltaRaw * 100);
+                const putDeltaStr = Math.round(Math.abs(putDeltaRaw) * 100);
 
                 html += `<div class="${rowCls}">` +
                     `<span class="row-delta-put">${putDeltaStr}</span>` +
