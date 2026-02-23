@@ -956,12 +956,12 @@ function renderAnalysisTab() {
     const levelsHtml = levels.map(l => {
         const ds = l.dist >= 0 ? `+${l.dist.toFixed(0)}` : l.dist.toFixed(0);
         const dc = Math.abs(l.dist) < 40 ? 'var(--orange)' : 'var(--text-muted)';
-        return `<div style="display:flex;align-items:center;gap:10px;padding:7px 0;border-bottom:1px solid rgba(255,255,255,.04)">
-            <span style="font-size:13px;width:18px;text-align:center">${l.icon}</span>
-            <span style="font-size:12px;font-weight:700;color:${l.color};min-width:130px">${l.label}</span>
-            <span style="font-size:14px;font-weight:800;color:var(--text-primary);min-width:60px">$${l.price}</span>
-            <span style="font-size:11px;font-weight:700;color:${dc};min-width:45px">(${ds})</span>
-            <span style="font-size:10px;color:var(--text-muted);flex:1">${l.action}</span>
+        return `<div style="display:flex;align-items:center;gap:12px;padding:9px 0;border-bottom:1px solid rgba(255,255,255,.05)">
+            <span style="font-size:15px;width:22px;text-align:center">${l.icon}</span>
+            <span style="font-size:14px;font-weight:700;color:${l.color};min-width:150px">${l.label}</span>
+            <span style="font-size:16px;font-weight:800;color:var(--text-primary);min-width:70px">$${l.price}</span>
+            <span style="font-size:13px;font-weight:700;color:${dc};min-width:50px">(${ds})</span>
+            <span style="font-size:12px;color:var(--text-secondary);flex:1">${l.action}</span>
         </div>`;
     }).join('');
 
@@ -969,15 +969,15 @@ function renderAnalysisTab() {
     let breakoutHtml = '';
     if (d.risk.gammaZoneHigh && d.risk.gammaZoneLow) {
         breakoutHtml = `
-        <div style="display:flex;gap:12px;margin-top:10px;padding:10px 12px;background:rgba(0,0,0,.2);border-radius:8px;border:1px dashed rgba(255,255,255,.08)">
+        <div style="display:flex;gap:16px;margin-top:12px;padding:14px 16px;background:rgba(0,0,0,.25);border-radius:10px;border:1px dashed rgba(255,255,255,.1)">
             <div style="flex:1">
-                <div style="font-size:10px;color:var(--text-muted);margin-bottom:2px">🔼 Squeeze (ทะลุขึ้น = Follow Long)</div>
-                <div style="font-size:14px;font-weight:800;color:var(--call-color)">$${d.risk.gammaZoneHigh.toFixed(0)} <span style="font-size:10px;color:var(--text-muted)">(+${(d.risk.gammaZoneHigh - d.uPrice).toFixed(0)})</span></div>
+                <div style="font-size:12px;color:var(--text-secondary);margin-bottom:4px">🔼 Squeeze (ทะลุขึ้น = Follow Long)</div>
+                <div style="font-size:16px;font-weight:800;color:var(--call-color)">$${d.risk.gammaZoneHigh.toFixed(0)} <span style="font-size:12px;color:var(--text-muted)">(+${(d.risk.gammaZoneHigh - d.uPrice).toFixed(0)})</span></div>
             </div>
-            <div style="width:1px;background:rgba(255,255,255,.08)"></div>
+            <div style="width:1px;background:rgba(255,255,255,.1)"></div>
             <div style="flex:1">
-                <div style="font-size:10px;color:var(--text-muted);margin-bottom:2px">🔽 Cascade (หลุดลง = Follow Short)</div>
-                <div style="font-size:14px;font-weight:800;color:var(--put-color)">$${d.risk.gammaZoneLow.toFixed(0)} <span style="font-size:10px;color:var(--text-muted)">(-${(d.uPrice - d.risk.gammaZoneLow).toFixed(0)})</span></div>
+                <div style="font-size:12px;color:var(--text-secondary);margin-bottom:4px">🔽 Cascade (หลุดลง = Follow Short)</div>
+                <div style="font-size:16px;font-weight:800;color:var(--put-color)">$${d.risk.gammaZoneLow.toFixed(0)} <span style="font-size:12px;color:var(--text-muted)">(-${(d.uPrice - d.risk.gammaZoneLow).toFixed(0)})</span></div>
             </div>
         </div>`;
     }
@@ -993,23 +993,23 @@ function renderAnalysisTab() {
     if (d.gexResult.flipStrike) markers.push({ pct: Math.max(0, Math.min(100, ((d.gexResult.flipStrike - barLow) / barRange) * 100)), color: 'var(--accent)', label: 'Flip' });
 
     const mkHtml = markers.map(m => `
-        <div style="position:absolute;left:${m.pct}%;top:-1px;transform:translateX(-50%)">
-            <div style="width:2px;height:12px;background:${m.color};margin:0 auto;border-radius:1px"></div>
-            <div style="font-size:7px;color:${m.color};font-weight:700;text-align:center;margin-top:1px;white-space:nowrap">${m.label}</div>
+        <div style="position:absolute;left:${m.pct}%;top:-2px;transform:translateX(-50%)">
+            <div style="width:2px;height:16px;background:${m.color};margin:0 auto;border-radius:1px"></div>
+            <div style="font-size:9px;color:${m.color};font-weight:700;text-align:center;margin-top:2px;white-space:nowrap">${m.label}</div>
         </div>`).join('');
 
     const rangeBarHtml = `
-    <div style="padding:6px 0;margin:4px 0 8px">
-        <div style="display:flex;justify-content:space-between;font-size:9px;margin-bottom:5px">
+    <div style="padding:8px 0;margin:6px 0 10px">
+        <div style="display:flex;justify-content:space-between;font-size:11px;margin-bottom:6px">
             <span style="color:var(--put-color);font-weight:700">$${barLow} Support</span>
             <span style="color:var(--call-color);font-weight:700">Resistance $${barHigh}</span>
         </div>
-        <div style="position:relative;height:10px;background:rgba(255,255,255,.06);border-radius:5px;overflow:visible">
-            <div style="position:absolute;left:0;top:0;height:100%;width:${pricePct}%;background:linear-gradient(to right,var(--put-color)22,var(--cyan)33,transparent);border-radius:5px 0 0 5px"></div>
+        <div style="position:relative;height:12px;background:rgba(255,255,255,.07);border-radius:6px;overflow:visible">
+            <div style="position:absolute;left:0;top:0;height:100%;width:${pricePct}%;background:linear-gradient(to right,var(--put-color)22,var(--cyan)33,transparent);border-radius:6px 0 0 6px"></div>
             ${mkHtml}
-            <div style="position:absolute;left:${pricePct}%;top:-5px;transform:translateX(-50%);z-index:2">
-                <div style="width:0;height:0;border-left:5px solid transparent;border-right:5px solid transparent;border-top:6px solid white;margin:0 auto"></div>
-                <div style="font-size:8px;color:white;font-weight:800;text-align:center;margin-top:0">$${d.uPrice.toFixed(0)}</div>
+            <div style="position:absolute;left:${pricePct}%;top:-6px;transform:translateX(-50%);z-index:2">
+                <div style="width:0;height:0;border-left:6px solid transparent;border-right:6px solid transparent;border-top:7px solid white;margin:0 auto"></div>
+                <div style="font-size:10px;color:white;font-weight:800;text-align:center;margin-top:1px">$${d.uPrice.toFixed(0)}</div>
             </div>
         </div>
     </div>`;
@@ -1042,12 +1042,12 @@ function renderAnalysisTab() {
         } else {
             actionHtml = `Sideway — <b>Buy</b> ${sStr} / <b>Sell</b> ${rStr} เทรดกรอบ`;
         }
-        actionHtml += `<div style="font-size:10px;color:var(--text-muted);margin-top:4px">❌ ห้ามไล่ซื้อ breakout (Long γ = fake breakout สูง)</div>`;
+        actionHtml += `<div style="font-size:12px;color:var(--text-muted);margin-top:6px">❌ ห้ามไล่ซื้อ breakout (Long γ = fake breakout สูง)</div>`;
     } else {
         const dir = d.priceBelowMP ? 'ลง' : d.priceAboveMP ? 'ขึ้น' : '';
         actionHtml = `Breakout > ${rStr} → <b style="color:var(--green)">Long</b> | Breakdown < ${sStr} → <b style="color:var(--red)">Short</b>`;
         if (dir) actionHtml += ` <span style="font-size:10px;opacity:.8">(bias ${dir})</span>`;
-        actionHtml += `<div style="font-size:10px;color:var(--text-muted);margin-top:4px">❌ ห้าม Fade สวนทาง (Short γ = วิ่งต่อไม่หยุด)</div>`;
+        actionHtml += `<div style="font-size:12px;color:var(--text-muted);margin-top:6px">❌ ห้าม Fade สวนทาง (Short γ = วิ่งต่อไม่หยุด)</div>`;
     }
 
     // ── INSTITUTIONAL INTEL ──
@@ -1067,63 +1067,63 @@ function renderAnalysisTab() {
         const r = tfData[key];
         if (!r) continue;
         const lbl = key === 'current' ? 'Daily' : key === 'friday' ? 'Weekly' : 'Monthly';
-        const bc = r.biasScore > 0 ? 'var(--green)' : r.biasScore < 0 ? 'var(--red)' : 'var(--text-muted)';
+        const bc = r.biasScore > 0 ? 'var(--green)' : r.biasScore < 0 ? 'var(--red)' : 'var(--text-secondary)';
         tfHints.push(`<span style="color:${bc};font-weight:700">${lbl}: ${r.biasLabel}</span>`);
     }
 
     // ── Regime label ──
     const regimeLabel = d.isLongGamma
-        ? `<span style="color:var(--green);font-weight:700">Long Gamma</span> <span style="color:var(--text-muted);font-size:10px">· Mean Reversion · ราคา Stable</span>`
-        : `<span style="color:var(--red);font-weight:700">Short Gamma</span> <span style="color:var(--text-muted);font-size:10px">· Trend Following · ราคา Volatile</span>`;
+        ? `<span style="color:var(--green);font-weight:700">Long Gamma</span> <span style="color:var(--text-secondary);font-size:12px">· Mean Reversion · ราคา Stable</span>`
+        : `<span style="color:var(--red);font-weight:700">Short Gamma</span> <span style="color:var(--text-secondary);font-size:12px">· Trend Following · ราคา Volatile</span>`;
 
     // ── Fallback warning ──
     const fallbackHtml = isFallback ? `
-        <div style="display:flex;align-items:center;gap:8px;padding:8px 12px;border-radius:8px;background:rgba(255,152,0,.08);border:1px solid rgba(255,152,0,.3);margin-bottom:12px">
-            <span style="font-size:14px">⚠️</span>
-            <span style="font-size:11px;color:var(--orange);font-weight:700">ราคา Futures ไม่พบในข้อมูล — ค่าทุกอย่างใช้ค่าประมาณ → รัน Scraper ใหม่</span>
+        <div style="display:flex;align-items:center;gap:10px;padding:10px 14px;border-radius:10px;background:rgba(255,152,0,.1);border:1px solid rgba(255,152,0,.35);margin-bottom:14px">
+            <span style="font-size:16px">⚠️</span>
+            <span style="font-size:13px;color:var(--orange);font-weight:700">ราคา Futures ไม่พบในข้อมูล — ค่าทุกอย่างใช้ค่าประมาณ → รัน Scraper ใหม่</span>
         </div>` : '';
 
     // ── RENDER SINGLE PANEL ──
     header.innerHTML = '';
     container.innerHTML = `
-    <div style="max-width:680px;margin:0 auto">
+    <div style="max-width:760px;margin:0 auto">
         ${fallbackHtml}
 
         <!-- HERO -->
-        <div style="padding:16px 20px;background:linear-gradient(135deg,rgba(255,255,255,.03),transparent);border:1px solid ${bColor}40;border-radius:12px;margin-bottom:12px">
-            <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:6px">
-                <div style="display:inline-flex;padding:4px 14px;border-radius:16px;font-size:14px;font-weight:900;letter-spacing:.5px;background:${bColor}1a;border:1px solid ${bColor}55;color:${bColor}">${bText}</div>
-                <div style="font-size:22px;font-weight:900;color:var(--text-primary)">$${d.uPrice.toFixed(1)}</div>
-                <div style="font-size:11px;color:var(--text-muted);font-weight:700">${d.dte.toFixed(1)} DTE</div>
-                <div style="margin-left:auto;font-size:13px;font-weight:800;color:${d.risk.riskColor}">${d.risk.riskIcon} Risk ${d.risk.totalScore}/100</div>
+        <div style="padding:20px 24px;background:linear-gradient(135deg,rgba(255,255,255,.04),transparent);border:1px solid ${bColor}40;border-radius:14px;margin-bottom:16px">
+            <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:8px">
+                <div style="display:inline-flex;padding:6px 16px;border-radius:20px;font-size:15px;font-weight:900;letter-spacing:.5px;background:${bColor}1a;border:1px solid ${bColor}55;color:${bColor}">${bText}</div>
+                <div style="font-size:26px;font-weight:900;color:#ffffff">$${d.uPrice.toFixed(1)}</div>
+                <div style="font-size:13px;color:var(--text-secondary);font-weight:700">${d.dte.toFixed(1)} DTE</div>
+                <div style="margin-left:auto;font-size:14px;font-weight:800;color:${d.risk.riskColor}">${d.risk.riskIcon} Risk ${d.risk.totalScore}/100</div>
             </div>
-            <div style="font-size:12px;color:var(--text-secondary);margin-bottom:3px">${bDesc}</div>
-            <div style="font-size:11px">${regimeLabel}</div>
+            <div style="font-size:14px;color:var(--text-secondary);margin-bottom:4px;line-height:1.6">${bDesc}</div>
+            <div style="font-size:13px">${regimeLabel}</div>
         </div>
 
         <!-- KEY LEVELS -->
-        <div style="padding:14px 18px;background:var(--bg-panel);border:1px solid var(--border);border-radius:12px;margin-bottom:12px">
-            <div style="font-size:10px;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:1px;margin-bottom:4px">📍 Key Levels <span style="font-weight:400;text-transform:none;letter-spacing:0">(เรียงจากใกล้ราคา)</span></div>
+        <div style="padding:18px 22px;background:var(--bg-panel);border:1px solid var(--border);border-radius:14px;margin-bottom:16px">
+            <div style="font-size:12px;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px">📍 Key Levels <span style="font-weight:400;text-transform:none;letter-spacing:0">(เรียงจากใกล้ราคา)</span></div>
             ${rangeBarHtml}
             ${levelsHtml}
             ${breakoutHtml}
         </div>
 
         <!-- INSTITUTIONAL INTEL -->
-        <div style="padding:12px 18px;background:var(--bg-panel);border:1px solid var(--border);border-radius:12px;margin-bottom:12px">
-            <div style="font-size:10px;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px">🏦 Institutional Intel</div>
-            <div style="font-size:12px;color:var(--text-secondary);padding:3px 0">${hedgeIcon} ${hedgeText}</div>
-            <div style="font-size:12px;color:var(--text-secondary);padding:3px 0">⚡ Vanna: ${vannaText}</div>
+        <div style="padding:16px 22px;background:var(--bg-panel);border:1px solid var(--border);border-radius:14px;margin-bottom:16px">
+            <div style="font-size:12px;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px">🏦 Institutional Intel</div>
+            <div style="font-size:14px;color:var(--text-secondary);padding:5px 0;line-height:1.6">${hedgeIcon} ${hedgeText}</div>
+            <div style="font-size:14px;color:var(--text-secondary);padding:5px 0;line-height:1.6">⚡ Vanna: ${vannaText}</div>
         </div>
 
         <!-- ACTION -->
-        <div style="padding:14px 18px;background:rgba(0,0,0,.3);border:1px solid ${bColor}30;border-left:4px solid ${bColor};border-radius:12px;margin-bottom:12px">
-            <div style="font-size:10px;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px">📋 What to Do</div>
-            <div style="font-size:13px;color:var(--text-primary);line-height:1.8;font-weight:600">${actionHtml}</div>
+        <div style="padding:18px 22px;background:rgba(0,0,0,.3);border:1px solid ${bColor}30;border-left:4px solid ${bColor};border-radius:14px;margin-bottom:16px">
+            <div style="font-size:12px;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px">📋 What to Do</div>
+            <div style="font-size:15px;color:var(--text-primary);line-height:1.9;font-weight:600">${actionHtml}</div>
         </div>
 
         <!-- MULTI-TIMEFRAME -->
-        <div style="padding:8px 18px;font-size:11px;color:var(--text-muted);display:flex;gap:12px;flex-wrap:wrap;justify-content:center">
+        <div style="padding:10px 22px;font-size:13px;color:var(--text-secondary);display:flex;gap:16px;flex-wrap:wrap;justify-content:center">
             ${tfHints.join(' <span style="opacity:.3">|</span> ')}
         </div>
     </div>`;
