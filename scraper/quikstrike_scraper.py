@@ -332,79 +332,50 @@ def debug_page(driver, label=''):
 
 def get_expiration_contracts(driver):
     """
-    Get contracts from the ExpirationTab links in the tab bar.
-    
-    From debug output, these links have IDs like:
-      ctl00_MainContent_ucViewControl_OptionsInfo_ucExpirationTabs_lvTabs_ctrl0_lbExpirationTab
-    And title attributes with DTE info like:
-      "Contract: ... (Mar 2026) Expiration: 2/24/2026 (11.58 DTE) Future: GCJ6"
+    Get all contracts including Daily, Friday, and Monthly.
+    We must open the Expiration dropdown to see all contracts (like Mondays G4MG6).
     """
     wait_ready(driver)
 
-    # Read ExpirationTab links directly — these are the contract tabs
-    contracts = driver.execute_script("""
-        var result = [];
-        document.querySelectorAll('a').forEach(function(a) {
-            var id = a.id || '';
-            if (id.indexOf('lbExpirationTab') >= 0) {
-                var txt = a.textContent.trim();
-                var title = a.title || '';
-                var dte = null;
-                var match = title.match(/([\d.]+)\s*DTE/i);
-                if (match) dte = parseFloat(match[1]);
-                result.push({
-                    text: txt,
-                    id: id,
-                    title: title,
-                    dte: dte
-                });
-            }
-        });
-        return result;
-    """)
-
-    if contracts:
-        print(f'[EXPIRY] Found {len(contracts)} expiration tabs:')
-        for c in contracts:
-            dte_str = f'{c["dte"]:.1f} DTE' if c['dte'] is not None else 'no DTE'
-            print(f'  {c["text"]:8s} ({dte_str}) id=...{c["id"][-20:]}')
-        return contracts
-
-    # Fallback: look for contract links in the selector popup  
-    print('[EXPIRY] No ExpirationTab links found. Trying selector popup...')
-    
+    print('[EXPIRY] Opening expiration selector popup to get all contracts...')
     # Try to open selector popup
     for sel in ['[id*="hlExpiration"]', '[id*="Expiration"]']:
         try:
-            driver.find_element(By.CSS_SELECTOR, sel).click()
-            time.sleep(2)
-            print(f'[EXPIRY] Clicked: {sel}')
-            break
+            el = driver.find_element(By.CSS_SELECTOR, sel)
+            if el.tag_name == 'a' and el.is_displayed():
+                driver.execute_script('arguments[0].click();', el)
+                time.sleep(2)
+                print(f'[EXPIRY] Clicked dropdown: {sel}')
+                break
         except:
             continue
 
+    # Read from the popup grid first
     contracts = driver.execute_script("""
         var result = [];
-        var contractPattern = /^(OG|G[0-9])/;
+        var contractPattern = /^(OG|G[0-9])/; // OG (Monthly/Friday) OR G+Digit (Daily)
         document.querySelectorAll('a').forEach(function(a) {
             var id = a.id || '';
             var txt = a.textContent.trim();
             if (id.indexOf('lbExpiration') >= 0 && contractPattern.test(txt) && txt.length < 15) {
                 var title = a.title || '';
                 var dte = null;
-                var match = title.match(/([\d.]+)\s*DTE/i);
+                var match = title.match(/([\\d.]+)\\s*DTE/i);
                 if (match) dte = parseFloat(match[1]);
-                result.push({text: txt, id: id, title: title, dte: dte});
+                // avoid duplicates
+                if (!result.find(c => c.text === txt)) {
+                    result.push({text: txt, id: id, title: title, dte: dte});
+                }
             }
         });
         return result;
     """)
 
-    if contracts:
-        print(f'[EXPIRY] Found {len(contracts)} contracts in popup:')
+    if contracts and len(contracts) > 0:
+        print(f'[EXPIRY] Found {len(contracts)} contracts in popup/page:')
         for c in contracts[:15]:
             dte_str = f'{c["dte"]:.1f} DTE' if c['dte'] is not None else 'no DTE'
-            print(f'  {c["text"]:8s} ({dte_str})')
+            print(f'  {c["text"]:8s} ({dte_str}) id=...{c["id"][-20:]}')
         return contracts
 
     print('[EXPIRY] ❌ No contracts found')
@@ -468,34 +439,35 @@ def select_contract(driver, contract):
 # CONTRACT CLASSIFICATION
 # ============================================================
 
-def is_weekly_contract(symbol):
+def is_monthly_contract(symbol):
     """
-    Determine if a Gold option symbol is weekly (Friday) or monthly.
-    
-    Weekly/Friday pattern: OG + digit + month + year  (e.g. OG2G6, OG3G6, OG1H6)
-    Monthly pattern:       OG + month_letter + year   (e.g. OGH6, OGJ6, OGK6)
-    
-    The digit after 'OG' indicates which week of the month.
+    Monthly pattern: OG + month_letter + year (e.g. OGH6, OGJ6, OGK6)
     """
     if len(symbol) >= 4 and symbol[:2] == 'OG':
-        # Check 3rd character: digit = weekly, letter = monthly
-        return symbol[2].isdigit()
+        return symbol[2].isalpha()
     return False
 
+def is_friday_contract(symbol):
+    """
+    Friday pattern: OG + digit + month + year (e.g. OG4G6, OG1H6)
+    """
+    if len(symbol) >= 4 and symbol[:2] == 'OG':
+        return symbol[2].isdigit()
+    return False
 
 def classify_contracts(contracts):
     """
     Classify contracts into current/friday/monthly using symbol pattern + DTE.
     
     Symbol patterns:
-      OG2G6 = weekly (digit after OG) -> Friday contract
-      OGH6  = monthly (letter after OG) -> Monthly contract
+      OGH6  = monthly (OG + letter)
+      OG4G6 = friday (OG + digit)
+      G4MG6 = daily Monday (G + digit + M + letter ...)
     
     Rules:
-      current = lowest DTE overall (nearest expiry)
-      friday  = lowest DTE weekly contract
-               -> if same as current, mark to skip redundant scrape
-      monthly = lowest DTE monthly contract (OGH6, OGJ6, etc.)
+      current = lowest DTE overall (nearest expiry, could be Daily, Friday, or Monthly)
+      friday  = lowest DTE Friday contract
+      monthly = lowest DTE Monthly contract
     """
     result = {'current': None, 'friday': None, 'monthly': None, 'friday_is_current': False}
 
@@ -504,32 +476,23 @@ def classify_contracts(contracts):
     sorted_c = sorted(with_dte, key=lambda c: c['dte'])
 
     if not sorted_c:
-        print('[CLASSIFY] No DTE data — using first 3 contracts')
-        if len(contracts) >= 1:
-            result['current'] = contracts[0]
-        if len(contracts) >= 2:
-            result['friday'] = contracts[1]
-        if len(contracts) >= 3:
-            result['monthly'] = contracts[2]
+        print('[CLASSIFY] No DTE data — using first contracts')
+        if len(contracts) >= 1: result['current'] = contracts[0]
+        if len(contracts) >= 2: result['friday'] = contracts[1]
+        if len(contracts) >= 3: result['monthly'] = contracts[2]
         return result
 
-    # Separate weekly vs monthly based on symbol pattern
-    weeklies = [c for c in sorted_c if is_weekly_contract(c['text'])]
-    monthlies = [c for c in sorted_c if not is_weekly_contract(c['text'])]
+    # Current = lowest DTE overall (could be Daily, Friday, or Monthly)
+    result['current'] = sorted_c[0]
 
-    print(f'[CLASSIFY] Found {len(weeklies)} weekly (Friday) and {len(monthlies)} monthly contracts')
+    # Separate Friday vs Monthly based on symbol pattern
+    fridays = [c for c in sorted_c if is_friday_contract(c['text'])]
+    monthlies = [c for c in sorted_c if is_monthly_contract(c['text'])]
 
-    # Current = lowest DTE overall
-    if sorted_c:
-        result['current'] = sorted_c[0]
+    print(f'[CLASSIFY] Found {len(fridays)} Friday and {len(monthlies)} Monthly contracts')
 
-    # Friday = lowest DTE weekly contract (that is NOT expired or is valid)
-    if weeklies:
-        result['friday'] = weeklies[0]
-    
-    # Monthly = lowest DTE monthly contract
-    if monthlies:
-        result['monthly'] = monthlies[0]
+    if fridays: result['friday'] = fridays[0]
+    if monthlies: result['monthly'] = monthlies[0]
 
     # LOGGING
     print(f'[CLASSIFY] Current candidate: {result["current"].get("text", "?") if result["current"] else "None"} (DTE={result["current"].get("dte") if result["current"] else "?"})')
