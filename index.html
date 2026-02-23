@@ -1598,10 +1598,18 @@
             const data = oi || intraday;
             if (!data) return;
 
+            // Sync underlying price across all timeframes (same logic as Trade Setup)
+            // All contracts map to the same underlying future (e.g. GCJ6)
+            let globalUnderlying = 0;
+            if (state.data.current?.oi?.underlying) globalUnderlying = state.data.current.oi.underlying;
+            else if (state.data.monthly?.oi?.underlying) globalUnderlying = state.data.monthly.oi.underlying;
+            else if (state.data.friday?.oi?.underlying) globalUnderlying = state.data.friday.oi.underlying;
+            const uPrice = globalUnderlying > 0 ? globalUnderlying : data.underlying;
+
             // Header info
             document.getElementById('contractName').textContent = 'Gold (GC)';
             document.getElementById('contractDetail').textContent = data.contract || '';
-            document.getElementById('priceDisplay').textContent = data.underlying.toFixed(1);
+            document.getElementById('priceDisplay').textContent = uPrice.toFixed(1);
             const ce = document.getElementById('priceChange');
             ce.textContent = `${data.change >= 0 ? '+' : ''}${data.change.toFixed(1)}`;
             ce.className = `price-change ${data.change >= 0 ? 'up' : 'down'}`;
@@ -1612,13 +1620,13 @@
             // Vol Settle & Expected Range
             if (intraday?.strikes) {
                 const atm = intraday.strikes.reduce((p, c) =>
-                    Math.abs(c.strike - data.underlying) < Math.abs(p.strike - data.underlying) ? c : p);
+                    Math.abs(c.strike - uPrice) < Math.abs(p.strike - uPrice) ? c : p);
                 if (atm.volSettle > 0) {
                     document.getElementById('sumVolSettle').textContent = (atm.volSettle * 100).toFixed(2) + '%';
-                    const er = data.underlying * atm.volSettle * Math.sqrt(data.dte / 365);
+                    const er = uPrice * atm.volSettle * Math.sqrt(data.dte / 365);
                     document.getElementById('sumExpRange').textContent = `±${er.toFixed(1)}`;
                     document.getElementById('sumExpRangePrices').textContent =
-                        `$${(data.underlying - er).toFixed(0)} – $${(data.underlying + er).toFixed(0)}`;
+                        `$${(uPrice - er).toFixed(0)} – $${(uPrice + er).toFixed(0)}`;
                 }
                 document.getElementById('footerDataType').textContent = intraday.dataType || '';
             }
@@ -1646,13 +1654,13 @@
                 const mpStrike = calcMaxPain(oi.strikes);
                 if (mpStrike !== null) {
                     document.getElementById('sumMaxPain').textContent = mpStrike.toString();
-                    const dist = data.underlying - mpStrike;
+                    const dist = uPrice - mpStrike;
                     const distStr = dist >= 0 ? `+${dist.toFixed(0)}` : dist.toFixed(0);
                     document.getElementById('sumMaxPainDetail').textContent = `Dist: ${distStr} from price`;
                 }
 
-                // Net GEX
-                const gexResult = calcNetGEX(oi.strikes, data.underlying, data.dte);
+                // Net GEX (use synced underlying price — same as Trade Setup)
+                const gexResult = calcNetGEX(oi.strikes, uPrice, data.dte);
                 const gexVal = gexResult.netGEX;
                 const gexEl = document.getElementById('sumNetGEX');
                 if (gexVal > 0) {
