@@ -6,7 +6,7 @@
 #   - Sidebar links: Volume > Intraday, EOD | Open Interest > OI, OI Change, Churn
 #   - Highcharts charts with Put/Call/Vol Settle/Ranges series
 #
-# Requirements: pip install selenium webdriver-manager yfinance
+# Requirements: pip install selenium webdriver-manager
 
 import os
 import sys
@@ -25,6 +25,13 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException, NoSuchElementException, ElementClickInterceptedException
 from webdriver_manager.chrome import ChromeDriverManager
 
+try:
+    import yfinance as yf
+    HAS_YFINANCE = True
+except ImportError:
+    HAS_YFINANCE = False
+    print('[WARN] yfinance not installed — futures price fallback unavailable. pip install yfinance')
+
 # ============================================================
 # CONFIG
 # ============================================================
@@ -35,23 +42,6 @@ QUIKSTRIKE_URL = 'https://cmegroup-sso.quikstrike.net/User/QuikStrikeView.aspx?p
 DATA_REPO_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'atas-data')
 
 # ============================================================
-
-def fetch_futures_price(symbol='GC=F'):
-    """Fetch current Gold futures price from Yahoo Finance via yfinance.
-    Uses GC=F (continuous front-month contract) — free, no auth required.
-    Returns float price or None on failure.
-    """
-    try:
-        import yfinance as yf
-        ticker = yf.Ticker(symbol)
-        price = ticker.fast_info.get('last_price') or ticker.fast_info.get('lastPrice')
-        if price and price > 100:
-            print(f'[FUTURES] ✅ {symbol} = ${price:.1f} (via yfinance)')
-            return float(price)
-    except Exception as e:
-        print(f'[FUTURES] ⚠ yfinance failed: {e}')
-    return None
-
 
 def create_driver():
     options = Options()
@@ -763,7 +753,31 @@ def extract_header(driver):
     return ' '.join(raw.split())
 
 
-def chart_to_text(chart_data, header_line, yf_price=None):
+_cached_futures_price = None
+_cached_futures_ts = 0
+
+def get_gold_futures_price():
+    """Fetch Gold futures price from yfinance (cached 60s)."""
+    global _cached_futures_price, _cached_futures_ts
+    if not HAS_YFINANCE:
+        return None
+    now = time.time()
+    if _cached_futures_price and (now - _cached_futures_ts) < 60:
+        return _cached_futures_price
+    try:
+        ticker = yf.Ticker('GC=F')
+        price = ticker.fast_info.get('lastPrice') or ticker.fast_info.get('last_price')
+        if price and price > 1000:
+            _cached_futures_price = round(float(price), 1)
+            _cached_futures_ts = now
+            print(f'[PRICE] Gold futures from yfinance: ${_cached_futures_price}')
+            return _cached_futures_price
+    except Exception as e:
+        print(f'[PRICE] yfinance error: {e}')
+    return None
+
+
+def chart_to_text(chart_data, header_line):
     """Convert chart data to pageth-compatible text format."""
     if not chart_data or 'charts' not in chart_data:
         return None
@@ -782,10 +796,12 @@ def chart_to_text(chart_data, header_line, yf_price=None):
     if not target:
         return None
 
-    # Append futures price to header: yfinance (primary) > plotLines (fallback)
-    future_price = yf_price or target.get('futurePrice')
+    # Append futures price to header (try plotLine first, then yfinance fallback)
+    future_price = target.get('futurePrice')
+    if not future_price or future_price <= 0:
+        future_price = get_gold_futures_price()
     if future_price and future_price > 0:
-        header_line = f"{header_line} FutPrc: {future_price:.1f}"
+        header_line = f"{header_line} FutPrc: {future_price}"
 
     call_d, put_d, vol_d = {}, {}, {}
     for s in target['series']:
@@ -814,7 +830,7 @@ def chart_to_text(chart_data, header_line, yf_price=None):
 # SCRAPING
 # ============================================================
 
-def scrape_view(driver, view_type, prefix, header_prefix='', skip_switch=False, fut_price=None):
+def scrape_view(driver, view_type, prefix, header_prefix='', skip_switch=False):
     """Scrape one view and save to file."""
     suffix = 'IntradayData' if view_type == 'intraday' else 'OIData'
     label = 'Intraday Volume' if view_type == 'intraday' else 'Open Interest'
@@ -836,7 +852,7 @@ def scrape_view(driver, view_type, prefix, header_prefix='', skip_switch=False, 
 
     # header = extract_header(driver) or f'Gold (OG|GC) - {label}' # Original line
     # text = chart_to_text(chart, header) # Original line
-    text = chart_to_text(chart_data, header_line, yf_price=fut_price) # Modified line
+    text = chart_to_text(chart_data, header_line) # Modified line
     if not text:
         print(f'[SCRAPE] No data for {view_type}')
         return None
@@ -850,7 +866,7 @@ def scrape_view(driver, view_type, prefix, header_prefix='', skip_switch=False, 
     return filepath
 
 
-def scrape_contract(driver, contract, prefix, fut_price=None):
+def scrape_contract(driver, contract, prefix):
     """
     Scrape both Intraday + OI for one contract.
     
@@ -880,13 +896,13 @@ def scrape_contract(driver, contract, prefix, fut_price=None):
 
     # 1. Intraday Volume (Default view usually)
     print(f'[SCRAPE] Default view = Intraday Volume — scraping immediately...')
-    path = scrape_view(driver, 'intraday', prefix, header_prefix=contract_text, skip_switch=True, fut_price=fut_price)
+    path = scrape_view(driver, 'intraday', prefix, header_prefix=contract_text, skip_switch=True)
     if path:
         results['intraday'] = path
 
     # 2. Open Interest
     print(f'[SCRAPE] Switching to Open Interest...')
-    path = scrape_view(driver, 'oi', prefix, header_prefix=contract_text, fut_price=fut_price)
+    path = scrape_view(driver, 'oi', prefix, header_prefix=contract_text)
     if path:
         results['oi'] = path
 
@@ -931,21 +947,14 @@ def main():
         # ─── GET CONTRACTS ───
         contracts = get_expiration_contracts(driver)
 
-        # ─── FETCH FUTURES PRICE (yfinance — primary source) ───
-        fut_price = fetch_futures_price('GC=F')
-        if fut_price:
-            print(f'[FUTURES] Will embed FutPrc: {fut_price:.1f} in all scraped files')
-        else:
-            print('[FUTURES] ⚠ Could not fetch price — will try plotLines fallback')
-
         if not contracts:
             print('[WARN] No contracts found.')
             save_debug(driver, 'no_contracts')
 
             # Fallback: try to scrape whatever is currently shown
             print('[FALLBACK] Scraping current view...')
-            scrape_view(driver, 'intraday', 'current', skip_switch=True, fut_price=fut_price)
-            scrape_view(driver, 'oi', 'current', fut_price=fut_price)
+            scrape_view(driver, 'intraday', 'current', skip_switch=True)
+            scrape_view(driver, 'oi', 'current')
             return
 
         # ─── CLASSIFY ───
@@ -976,7 +985,7 @@ def main():
                 continue
 
             if c:
-                scrape_contract(driver, c, key, fut_price=fut_price)
+                scrape_contract(driver, c, key)
             else:
                 print(f'\n[SKIP] {key}: no contract')
 
