@@ -395,6 +395,20 @@ def select_contract(driver, contract):
     except:
         pass
 
+    is_in_popup = 'ExpirationTab' not in contract_id
+
+    if is_in_popup:
+        print(f'[SELECT] Contract {contract_text} is in popup. Opening popup...')
+        for sel in ['[id*="hlExpiration"]', '[id*="Expiration"]']:
+            try:
+                el = driver.find_element(By.CSS_SELECTOR, sel)
+                if el.tag_name == 'a' and el.is_displayed():
+                    driver.execute_script('arguments[0].click();', el)
+                    time.sleep(2)
+                    break
+            except:
+                continue
+
     # Strategy 1: Click by exact ID (most reliable)
     if contract_id:
         try:
@@ -406,7 +420,7 @@ def select_contract(driver, contract):
         except Exception as e:
             print(f'[SELECT] ID click failed: {e}')
 
-    # Strategy 2: Find by text + ExpirationTab pattern
+    # Strategy 2: Find by text + ExpirationTab pattern (if it is a tab)
     links = driver.find_elements(By.TAG_NAME, 'a')
     for link in links:
         txt = link.text.strip()
