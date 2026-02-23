@@ -1477,14 +1477,16 @@
 
             // Check if underlying is valid (sometimes it's 0 if header regex failed)
             let finalUnderlying = underlying;
+            let underlyingIsFallback = false;
             if (finalUnderlying === 0 && strikes.length > 0) {
                 // Fallback: use median strike
                 const sorted = [...strikes].sort((a, b) => a.strike - b.strike);
                 const mid = Math.floor(sorted.length / 2);
                 finalUnderlying = sorted[mid].strike;
+                underlyingIsFallback = true;
             }
 
-            return { header, dte, underlying: finalUnderlying, change, dataType, contract, strikes, totalPut, totalCall };
+            return { header, dte, underlying: finalUnderlying, underlyingIsFallback, change, dataType, contract, strikes, totalPut, totalCall };
         }
 
         // ========== FETCH ==========
@@ -1909,7 +1911,17 @@
         function buildPulse(p) {
             const { uPrice, gexVal, risk, vannaExp, mpStrike, mpDist, maxCall, maxPut,
                     biasScore, priceAboveMP, priceBelowMP, nearCallWall, nearPutWall,
-                    tradeIcon, tradeColor } = p;
+                    tradeIcon, tradeColor, isFallback } = p;
+
+            const fallbackBanner = isFallback ? `
+                <div style="display:flex;align-items:center;gap:8px;padding:7px 12px;border-radius:6px;
+                    background:rgba(255,152,0,0.08);border:1px solid rgba(255,152,0,0.35);margin-bottom:10px;">
+                    <span style="font-size:14px;">⚠️</span>
+                    <div>
+                        <div style="font-size:11px;font-weight:800;color:var(--orange);">ราคา Futures ไม่พบในข้อมูล — ค่าทุกอย่างในหน้านี้ไม่ถูกต้อง</div>
+                        <div style="font-size:10px;color:var(--text-muted);margin-top:2px;">Scraper ยังไม่ได้ดึงข้อมูลใหม่หลัง fix → GEX, Delta, Expected Range ใช้ค่าประมาณ (Median Strike) · รัน <code style="background:rgba(255,255,255,.08);padding:1px 4px;border-radius:3px;">quikstrike_scraper.py</code> เพื่ออัปเดท</div>
+                    </div>
+                </div>` : '';
 
             // ── Badge ──
             let bText, bColor, bDesc;
@@ -2000,7 +2012,7 @@
                 </div>`;
 
             return `
-            <div style="padding:14px 20px;border-bottom:1px solid var(--border);background:linear-gradient(135deg,rgba(255,255,255,.02) 0%,transparent 100%)">
+            <div style="padding:14px 20px;border-bottom:1px solid var(--border);background:linear-gradient(135deg,rgba(255,255,255,.02) 0%,transparent 100%)">${fallbackBanner}
                 <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px">
                     <div style="font-size:10px;font-weight:700;color:var(--text-muted);letter-spacing:1px">⚡ MARKET PULSE</div>
                     <div style="display:inline-flex;align-items:center;padding:4px 14px;border-radius:16px;
@@ -2411,10 +2423,19 @@
                 overallAction = 'Favor short setups but respect Support levels. Watch for bounces off Put Walls.';
             }
 
+            // Check if underlying is a fallback (no FutPrc in scraped data)
+            const isFallback = state.data.current?.oi?.underlyingIsFallback
+                            || state.data.monthly?.oi?.underlyingIsFallback
+                            || state.data.friday?.oi?.underlyingIsFallback;
+            const fallbackWarning = isFallback
+                ? `<div style="display:inline-flex;align-items:center;gap:6px;padding:3px 10px;border-radius:12px;background:rgba(255,152,0,0.15);border:1px solid rgba(255,152,0,0.4);font-size:10px;font-weight:700;color:var(--orange);margin-left:8px;">
+                    ⚠️ ราคา Futures ไม่พบในข้อมูล — ใช้ค่าประมาณ (Median Strike) → GEX, Delta, Range ไม่ถูกต้อง — รัน Scraper ใหม่เพื่ออัปเดท
+                  </div>` : '';
+
             if (globalUnderlying > 0) {
                 header.innerHTML = `
                     <div class="ah-top">
-                        <div class="ah-price">Current Price: <span>$${globalUnderlying.toFixed(1)}</span></div>
+                        <div class="ah-price">Current Price: <span>$${globalUnderlying.toFixed(1)}</span>${fallbackWarning}</div>
                         <div class="ah-bias bias-${overallCls}">${overallStr}</div>
                     </div>
                     <div class="ah-action"><strong>Setup Strategy:</strong> ${overallAction}</div>
@@ -2425,7 +2446,7 @@
 
             // Market Pulse panel
             const pulseEl = document.getElementById('marketPulse');
-            if (pulseEl) pulseEl.innerHTML = pulseData ? buildPulse(pulseData) : '';
+            if (pulseEl) pulseEl.innerHTML = pulseData ? buildPulse({ ...pulseData, isFallback }) : '';
         }
 
         function renderActiveTab() {
