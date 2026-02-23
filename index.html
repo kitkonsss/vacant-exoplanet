@@ -293,6 +293,18 @@
             font-variant-numeric: tabular-nums;
         }
 
+        .hedge-bar {
+            display: flex;
+            height: 4px;
+            border-radius: 2px;
+            overflow: hidden;
+            gap: 1px;
+            margin-top: 3px;
+        }
+        .hedge-bar-itm { background: var(--orange); border-radius: 2px 0 0 2px; }
+        .hedge-bar-atm { background: var(--text-muted); }
+        .hedge-bar-otm { background: var(--cyan); border-radius: 0 2px 2px 0; }
+
         .val-gold {
             color: var(--accent);
         }
@@ -1010,6 +1022,16 @@
             <span class="summary-value" id="sumNetGEX">—</span>
             <span class="summary-sub" id="sumNetGEXDetail"></span>
         </div>
+        <div class="summary-card">
+            <span class="summary-label">Inst. Hedge</span>
+            <span class="summary-value" id="sumHedgePct">—</span>
+            <div class="hedge-bar" id="hedgeBar">
+                <div class="hedge-bar-itm" id="hedgeBarITM" style="flex:0"></div>
+                <div class="hedge-bar-atm" id="hedgeBarATM" style="flex:1"></div>
+                <div class="hedge-bar-otm" id="hedgeBarOTM" style="flex:0"></div>
+            </div>
+            <span class="summary-sub" id="sumHedgeDetail"></span>
+        </div>
     </div>
 
     <!-- ===== MAIN 2-COL ===== -->
@@ -1675,6 +1697,33 @@
                     gexEl.style.color = 'var(--red)';
                     document.getElementById('sumNetGEXDetail').textContent = 'Short Gamma (Volatile)';
                 }
+
+                // Institutional Hedge Analysis
+                // Splits total OI into 3 delta buckets:
+                //   ITM  (|Δ|>0.70): institutional hedges / deep-in-the-money
+                //   ATM  (0.30-0.70): near-money, mixed
+                //   OTM  (|Δ|<0.30): speculative / lottery tickets
+                const t_h = Math.max(data.dte, 0.01) / 365;
+                let itmOI = 0, atmOI_h = 0, otmOI = 0;
+                oi.strikes.forEach(s => {
+                    const cd = calcDelta(uPrice, s.strike, s.volSettle, t_h, true);
+                    const pd = Math.abs(calcDelta(uPrice, s.strike, s.volSettle, t_h, false));
+                    itmOI    += (cd > 0.70 ? s.call : 0) + (pd > 0.70 ? s.put : 0);
+                    atmOI_h  += (cd >= 0.30 && cd <= 0.70 ? s.call : 0) + (pd >= 0.30 && pd <= 0.70 ? s.put : 0);
+                    otmOI    += (cd < 0.30 ? s.call : 0) + (pd < 0.30 ? s.put : 0);
+                });
+                const totalHedgeOI = (itmOI + atmOI_h + otmOI) || 1;
+                const itmPct  = itmOI  / totalHedgeOI * 100;
+                const atmPct  = atmOI_h / totalHedgeOI * 100;
+                const otmPct  = otmOI  / totalHedgeOI * 100;
+                const hedgeEl = document.getElementById('sumHedgePct');
+                hedgeEl.textContent = itmPct.toFixed(0) + '% ITM';
+                hedgeEl.style.color = itmPct > 40 ? 'var(--orange)' : itmPct > 20 ? 'var(--text-primary)' : 'var(--cyan)';
+                document.getElementById('hedgeBarITM').style.flex = itmPct.toString();
+                document.getElementById('hedgeBarATM').style.flex = atmPct.toString();
+                document.getElementById('hedgeBarOTM').style.flex = otmPct.toString();
+                const hedgeLabel = itmPct > 40 ? 'Heavy Hedge' : itmPct > 20 ? 'Moderate Hedge' : 'Spec-Driven';
+                document.getElementById('sumHedgeDetail').textContent = `${hedgeLabel} | OTM ${otmPct.toFixed(0)}%`;
             }
         }
 
@@ -2251,13 +2300,17 @@
                 volC.innerHTML = `<div class="placeholder-msg"><div class="icon">🔒</div><div class="title">No Data Yet</div><div class="desc">Configure the scraper to populate ${CONFIG.contracts[state.activeTab].label} contract Intraday Volume.</div></div>`;
 
                 // Clear summary
-                ['sumVolSettle', 'sumExpRange', 'sumMaxOI', 'sumTotalCall', 'sumTotalPut', 'sumPCRatio', 'sumMaxPain', 'sumNetGEX'].forEach(id => {
+                ['sumVolSettle', 'sumExpRange', 'sumMaxOI', 'sumTotalCall', 'sumTotalPut', 'sumPCRatio', 'sumMaxPain', 'sumNetGEX', 'sumHedgePct'].forEach(id => {
                     document.getElementById(id).textContent = '—';
                 });
                 document.getElementById('sumExpRangePrices').textContent = '';
                 document.getElementById('sumMaxOIDetail').textContent = '';
                 document.getElementById('sumMaxPainDetail').textContent = '';
                 document.getElementById('sumNetGEXDetail').textContent = '';
+                document.getElementById('sumHedgeDetail').textContent = '';
+                document.getElementById('hedgeBarITM').style.flex = '0';
+                document.getElementById('hedgeBarATM').style.flex = '1';
+                document.getElementById('hedgeBarOTM').style.flex = '0';
                 return;
             }
             renderPanel('oiContainer', tabData.oi, CONFIG.oiHotThreshold);
