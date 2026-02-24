@@ -77,34 +77,51 @@ function calcMaxPain(strikes) {
 }
 
 // GEX: Net Gamma Exposure (positive = dealers long gamma = stabilizing)
+// Flip = spot price where totalGEX(S) crosses zero (regime change Long↔Short gamma)
 function calcNetGEX(strikes, F, dte) {
     if (!strikes || strikes.length === 0 || dte <= 0) return { netGEX: 0, flipStrike: null };
     const t = dte / 365;
     const contractMultiplier = 100; // Gold options = 100 oz
-    let netGEX = 0;
-    let gexByStrike = [];
-    for (const s of strikes) {
-        const g = calcGamma(F, s.strike, s.volSettle, t);
-        const callGEX = g * s.call * contractMultiplier * F * F * 0.01;
-        const putGEX = g * s.put * contractMultiplier * F * F * 0.01;
-        // Dealers are typically short calls (long gamma) and short puts (short gamma)
-        // Net GEX = Call GEX - Put GEX
-        const strikeGEX = callGEX - putGEX;
-        netGEX += strikeGEX;
-        gexByStrike.push({ strike: s.strike, gex: strikeGEX });
-    }
-    // Find GEX flip point (where cumulative crosses zero)
-    let flipStrike = null;
-    gexByStrike.sort((a, b) => a.strike - b.strike);
-    let cumGEX = 0;
-    for (let i = 0; i < gexByStrike.length; i++) {
-        const prev = cumGEX;
-        cumGEX += gexByStrike[i].gex;
-        if (prev <= 0 && cumGEX > 0 && i > 0) {
-            flipStrike = gexByStrike[i].strike;
-            break;
+
+    // Helper: compute total net GEX at a hypothetical spot price S
+    function totalGEXAtSpot(S) {
+        let gex = 0;
+        for (const s of strikes) {
+            const g = calcGamma(S, s.strike, s.volSettle, t);
+            const callGEX = g * s.call * contractMultiplier * S * S * 0.01;
+            const putGEX = g * s.put * contractMultiplier * S * S * 0.01;
+            gex += callGEX - putGEX; // Call GEX - Put GEX
         }
+        return gex;
     }
+
+    // Net GEX at current spot
+    const netGEX = totalGEXAtSpot(F);
+
+    // Find GEX flip: scan spot grid and find zero-crossing nearest to current price
+    const sortedStrikes = [...strikes].map(s => s.strike).sort((a, b) => a - b);
+    const scanLow = sortedStrikes[0] - 300;
+    const scanHigh = sortedStrikes[sortedStrikes.length - 1] + 300;
+    const step = 1;
+    let crossings = [];
+    let prevGEX = totalGEXAtSpot(scanLow);
+    for (let S = scanLow + step; S <= scanHigh; S += step) {
+        const curGEX = totalGEXAtSpot(S);
+        if ((prevGEX <= 0 && curGEX > 0) || (prevGEX >= 0 && curGEX < 0)) {
+            // Linear interpolation for precise crossing
+            const crossS = S - step + step * Math.abs(prevGEX) / (Math.abs(prevGEX) + Math.abs(curGEX));
+            crossings.push(Math.round(crossS));
+        }
+        prevGEX = curGEX;
+    }
+
+    // Pick crossing nearest to current spot
+    let flipStrike = null;
+    if (crossings.length > 0) {
+        crossings.sort((a, b) => Math.abs(a - F) - Math.abs(b - F));
+        flipStrike = crossings[0];
+    }
+
     return { netGEX, flipStrike };
 }
 
@@ -119,8 +136,11 @@ function calcVanna(F, K, sigma, t) {
     return -phi * d2 / sigma;
 }
 
-// Net Vanna Exposure: aggregate vanna × OI across all strikes
-// Positive = vol spike causes selling, Negative = vol spike causes buying
+// Net Vanna Exposure: aggregate dealer vanna × OI across all strikes
+// Dealers are short BOTH calls and puts → exposure = -Vanna × OI for both sides
+// Result: hedgeFlow = -netVanna × dSigma
+//   netVanna < 0 → IV↑ causes dealers to BUY (bullish)
+//   netVanna > 0 → IV↑ causes dealers to SELL (bearish)
 function calcNetVannaExposure(strikes, F, dte) {
     if (!strikes || strikes.length === 0 || dte <= 0) return 0;
     const t = dte / 365;
@@ -128,13 +148,13 @@ function calcNetVannaExposure(strikes, F, dte) {
     let netVanna = 0;
     for (const s of strikes) {
         const v = calcVanna(F, s.strike, s.volSettle, t);
-        // Dealers short calls → call vanna exposure is negative
-        // Dealers short puts → put vanna exposure is positive
+        // Dealers short calls → call vanna exposure = -v × callOI
+        // Dealers short puts  → put vanna exposure  = -v × putOI  (same sign convention)
         const callVannaExp = -v * s.call * contractMultiplier * F * 0.01;
-        const putVannaExp = v * s.put * contractMultiplier * F * 0.01;
+        const putVannaExp = -v * s.put * contractMultiplier * F * 0.01;
         netVanna += callVannaExp + putVannaExp;
     }
-    return netVanna; // Negative = vol spike → dealers sell → bearish cascade
+    return netVanna;
 }
 
 // ========== BREAKDOWN RISK SCORE (0-100) ==========
@@ -270,16 +290,33 @@ function calcBreakdownRisk(oiStrikes, intradayStrikes, uPrice, dte, gexFlipStrik
         if (totalGammaWeight > 0) {
             const gammaCenter = gammaWeightedSum / totalGammaWeight;
             gammaMean = gammaCenter;
-            // Find range containing 80% of gamma
-            gammaByStrike.sort((a, b) => b.gamma - a.gamma);
-            let cum = 0;
-            let gammaHigh = -Infinity, gammaLow = Infinity;
-            for (const gs of gammaByStrike) {
-                cum += gs.gamma;
-                gammaHigh = Math.max(gammaHigh, gs.strike);
-                gammaLow = Math.min(gammaLow, gs.strike);
-                if (cum / totalGammaWeight >= 0.80) break;
+            // Find CONTIGUOUS range containing >= 80% of gamma mass
+            // Sort by strike, then use sliding window to find smallest contiguous interval
+            gammaByStrike.sort((a, b) => a.strike - b.strike);
+            const target = totalGammaWeight * 0.80;
+            let bestLow = gammaByStrike[0].strike;
+            let bestHigh = gammaByStrike[gammaByStrike.length - 1].strike;
+            let bestWidth = bestHigh - bestLow;
+            let left = 0;
+            let windowSum = 0;
+            for (let right = 0; right < gammaByStrike.length; right++) {
+                windowSum += gammaByStrike[right].gamma;
+                // Shrink from left while still >= target
+                while (left < right && (windowSum - gammaByStrike[left].gamma) >= target) {
+                    windowSum -= gammaByStrike[left].gamma;
+                    left++;
+                }
+                if (windowSum >= target) {
+                    const w = gammaByStrike[right].strike - gammaByStrike[left].strike;
+                    if (w < bestWidth) {
+                        bestWidth = w;
+                        bestLow = gammaByStrike[left].strike;
+                        bestHigh = gammaByStrike[right].strike;
+                    }
+                }
             }
+            const gammaHigh = bestHigh;
+            const gammaLow = bestLow;
             gammaZoneHigh = gammaHigh;
             gammaZoneLow = gammaLow;
 
@@ -929,14 +966,14 @@ function renderAnalysisTab() {
         bColor = '#ff1744';
         bDesc = up ? 'ราคาออกนอก Gamma Zone → ห้ามสวนทาง Follow ขึ้น' : 'ราคาออกนอก Gamma Zone → ห้ามสวนทาง Follow ลง';
     } else if (d.priceAboveCallWall) {
-        const vannaConfirm = d.vannaExp > 0;
+        const vannaConfirm = d.vannaExp < 0; // negative = dealers BUY = confirms upside
         bText = vannaConfirm ? '🚀 BREAKOUT + Vanna' : '🚀 BREAKOUT';
         bColor = 'var(--green)';
         bDesc = `ราคาทะลุ Call Wall $${d.structCallWall.strike} ไปแล้ว +${d.callWallBreakoutDist.toFixed(0)} pts`;
         if (vannaConfirm) bDesc += ` — Vanna ยืนยัน: Dealers ต้อง Buy ดันราคาต่อ`;
         else bDesc += ` — Vanna ยังไม่ confirm ระวัง pullback`;
     } else if (d.priceBelowPutWall) {
-        const vannaConfirm = d.vannaExp < 0;
+        const vannaConfirm = d.vannaExp > 0; // positive = dealers SELL = confirms downside
         bText = vannaConfirm ? '💧 CASCADE + Vanna' : '💧 CASCADE';
         bColor = 'var(--red)';
         bDesc = `ราคาหลุด Put Wall $${d.structPutWall.strike} ไปแล้ว -${d.putWallBreakdownDist.toFixed(0)} pts`;
@@ -1075,7 +1112,7 @@ function renderAnalysisTab() {
             : `<b style="color:#ff1744">ห้าม Buy!</b> ราคานอก Gamma Zone — Follow ลงอย่างเดียว | SL เหนือ Low ล่าสุด`;
     } else if (d.priceAboveCallWall) {
         // === CONFIRMED BREAKOUT ABOVE CALL WALL ===
-        const vannaConfirm = d.vannaExp > 0;
+        const vannaConfirm = d.vannaExp < 0; // negative = dealers BUY = confirms upside
         const swStr = `<span style="color:var(--call-color);font-weight:700">$${d.structCallWall.strike}</span>`;
         const nextR = d.maxCall.strike !== d.structCallWall.strike
             ? `<span style="color:var(--call-color);font-weight:700">$${d.maxCall.strike}</span>` : '';
@@ -1087,7 +1124,7 @@ function renderAnalysisTab() {
         actionHtml += `<div style="font-size:12px;color:var(--text-muted);margin-top:6px">🔥 Wall ถูกทะลุแล้ว — Call Wall เดิมกลายเป็น Support | ห้าม Short สวนทาง!</div>`;
     } else if (d.priceBelowPutWall) {
         // === CONFIRMED BREAKDOWN BELOW PUT WALL ===
-        const vannaConfirm = d.vannaExp < 0;
+        const vannaConfirm = d.vannaExp > 0; // positive = dealers SELL = confirms downside
         const swStr = `<span style="color:var(--put-color);font-weight:700">$${d.structPutWall.strike}</span>`;
         const nextS = d.maxPut.strike !== d.structPutWall.strike
             ? `<span style="color:var(--put-color);font-weight:700">$${d.maxPut.strike}</span>` : '';
@@ -1116,8 +1153,9 @@ function renderAnalysisTab() {
     }
 
     // ── INSTITUTIONAL INTEL ──
-    const vannaColor = d.vannaExp < 0 ? 'var(--red)' : 'var(--green)';
-    const vannaText = d.vannaExp < 0
+    // New sign convention: positive = dealers SELL (bearish), negative = dealers BUY (bullish)
+    const vannaColor = d.vannaExp > 0 ? 'var(--red)' : 'var(--green)';
+    const vannaText = d.vannaExp > 0
         ? `IV↑ → Dealers <span style="color:var(--red);font-weight:700">SELL</span> $${Math.abs(d.vannaExp/1e6).toFixed(1)}M = กดลง`
         : `IV↑ → Dealers <span style="color:var(--green);font-weight:700">BUY</span> $${Math.abs(d.vannaExp/1e6).toFixed(1)}M = ดันขึ้น`;
 
