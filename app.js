@@ -847,6 +847,15 @@ function renderAnalysisTab() {
             ? putsBelow.reduce((p, c) => c.put > p.put ? c : p)
             : data.strikes.reduce((p, c) => c.put > p.put ? c : p);
 
+        // Structural walls: highest OI across ALL strikes (for breakout detection)
+        // maxCall/maxPut only look above/below price — structural walls are the TRUE walls
+        const structCallWall = data.strikes.reduce((p, c) => c.call > p.call ? c : p);
+        const structPutWall = data.strikes.reduce((p, c) => c.put > p.put ? c : p);
+        const priceAboveCallWall = uPrice > structCallWall.strike;
+        const priceBelowPutWall = uPrice < structPutWall.strike;
+        const callWallBreakoutDist = uPrice - structCallWall.strike;
+        const putWallBreakdownDist = structPutWall.strike - uPrice;
+
         if (Math.abs(uPrice - maxCall.strike) < 30 && tc > tp) biasScore += 1;
         else if (Math.abs(uPrice - maxPut.strike) < 30 && tp > tc) biasScore -= 1;
 
@@ -892,6 +901,8 @@ function renderAnalysisTab() {
         tfData[tf.key] = {
             uPrice, pcr, biasScore, biasLabel,
             maxCall, maxPut, mpStrike, mpDist, priceAboveMP, priceBelowMP,
+            structCallWall, structPutWall, priceAboveCallWall, priceBelowPutWall,
+            callWallBreakoutDist, putWallBreakdownDist,
             gexResult, gexVal, isLongGamma,
             distToCallWall, distToPutWall, nearCallWall, nearPutWall,
             risk, vannaExp, hedgeLabel, itmPct, dte: data.dte
@@ -917,6 +928,20 @@ function renderAnalysisTab() {
         bText = up ? '⛔ BREAKOUT' : '⛔ CASCADE';
         bColor = '#ff1744';
         bDesc = up ? 'ราคาออกนอก Gamma Zone → ห้ามสวนทาง Follow ขึ้น' : 'ราคาออกนอก Gamma Zone → ห้ามสวนทาง Follow ลง';
+    } else if (d.priceAboveCallWall) {
+        const vannaConfirm = d.vannaExp > 0;
+        bText = vannaConfirm ? '🚀 BREAKOUT + Vanna' : '🚀 BREAKOUT';
+        bColor = 'var(--green)';
+        bDesc = `ราคาทะลุ Call Wall $${d.structCallWall.strike} ไปแล้ว +${d.callWallBreakoutDist.toFixed(0)} pts`;
+        if (vannaConfirm) bDesc += ` — Vanna ยืนยัน: Dealers ต้อง Buy ดันราคาต่อ`;
+        else bDesc += ` — Vanna ยังไม่ confirm ระวัง pullback`;
+    } else if (d.priceBelowPutWall) {
+        const vannaConfirm = d.vannaExp < 0;
+        bText = vannaConfirm ? '💧 CASCADE + Vanna' : '💧 CASCADE';
+        bColor = 'var(--red)';
+        bDesc = `ราคาหลุด Put Wall $${d.structPutWall.strike} ไปแล้ว -${d.putWallBreakdownDist.toFixed(0)} pts`;
+        if (vannaConfirm) bDesc += ` — Vanna ยืนยัน: Dealers ต้อง Sell กดราคาต่อ`;
+        else bDesc += ` — Vanna ยังไม่ confirm ระวัง bounce`;
     } else if (d.nearCallWall && d.gexVal >= 0) {
         bText = '⚡ ชน Resistance'; bColor = '#ffd54f';
         bDesc = `ใกล้ Call Wall $${d.maxCall.strike} → ทะลุ=Squeeze / ย่อ=Short`;
@@ -942,7 +967,15 @@ function renderAnalysisTab() {
 
     // ── KEY LEVELS ──
     const levels = [];
-    levels.push({ price: d.maxPut.strike, label: 'Put Wall (Support)', color: 'var(--put-color)', icon: '🟢', dist: d.maxPut.strike - d.uPrice, action: 'ซื้อ/Long ถ้าราคาลงมาถึง' });
+    // Put Wall — show as broken if price is below it
+    if (d.priceBelowPutWall) {
+        levels.push({ price: d.structPutWall.strike, label: '💔 Broken Put Wall', color: 'var(--orange)', icon: '💔', dist: d.structPutWall.strike - d.uPrice, action: 'ราคาหลุดแล้ว → กลายเป็น Resistance (SL zone)' });
+        if (d.maxPut.strike !== d.structPutWall.strike) {
+            levels.push({ price: d.maxPut.strike, label: 'Next Put Wall', color: 'var(--put-color)', icon: '🟢', dist: d.maxPut.strike - d.uPrice, action: 'Support ถัดไป (TP target)' });
+        }
+    } else {
+        levels.push({ price: d.maxPut.strike, label: 'Put Wall (Support)', color: 'var(--put-color)', icon: '🟢', dist: d.maxPut.strike - d.uPrice, action: 'ซื้อ/Long ถ้าราคาลงมาถึง' });
+    }
     if (d.risk.gammaMean) levels.push({ price: +d.risk.gammaMean.toFixed(0), label: 'Gamma Mean', color: 'var(--cyan)', icon: '🔵', dist: d.risk.gammaMean - d.uPrice, action: 'จุดสมดุล — TP ชั้นดี' });
     if (d.mpStrike) levels.push({ price: d.mpStrike, label: 'Max Pain', color: 'var(--pink)', icon: '🟣', dist: d.mpStrike - d.uPrice, action: 'จุดดึงดูดราคา (Expiry Magnet)' });
     if (d.gexResult.flipStrike) {
@@ -950,7 +983,15 @@ function renderAnalysisTab() {
         const fw = Math.abs(fd) < 60 ? ' ⚠️' : '';
         levels.push({ price: d.gexResult.flipStrike, label: 'GEX Flip' + fw, color: 'var(--accent)', icon: '⚡', dist: fd, action: 'ข้ามนี้ = เปลี่ยน regime (Long↔Short γ)' });
     }
-    levels.push({ price: d.maxCall.strike, label: 'Call Wall (Resistance)', color: 'var(--call-color)', icon: '🔴', dist: d.maxCall.strike - d.uPrice, action: 'ขาย/Short ถ้าราคาขึ้นไปถึง' });
+    // Call Wall — show as broken if price is above it
+    if (d.priceAboveCallWall) {
+        levels.push({ price: d.structCallWall.strike, label: '💔 Broken Call Wall', color: 'var(--orange)', icon: '💔', dist: d.structCallWall.strike - d.uPrice, action: 'ราคาทะลุแล้ว → กลายเป็น Support (SL zone)' });
+        if (d.maxCall.strike !== d.structCallWall.strike) {
+            levels.push({ price: d.maxCall.strike, label: 'Next Call Wall', color: 'var(--call-color)', icon: '🔴', dist: d.maxCall.strike - d.uPrice, action: 'Resistance ถัดไป (TP target)' });
+        }
+    } else {
+        levels.push({ price: d.maxCall.strike, label: 'Call Wall (Resistance)', color: 'var(--call-color)', icon: '🔴', dist: d.maxCall.strike - d.uPrice, action: 'ขาย/Short ถ้าราคาขึ้นไปถึง' });
+    }
     levels.sort((a, b) => Math.abs(a.dist) - Math.abs(b.dist));
 
     const levelsHtml = levels.map(l => {
@@ -1032,6 +1073,30 @@ function renderAnalysisTab() {
         actionHtml = isUp
             ? `<b style="color:#ff1744">ห้าม Short!</b> ราคานอก Gamma Zone — Follow ขึ้นอย่างเดียว | SL ใต้ High ล่าสุด`
             : `<b style="color:#ff1744">ห้าม Buy!</b> ราคานอก Gamma Zone — Follow ลงอย่างเดียว | SL เหนือ Low ล่าสุด`;
+    } else if (d.priceAboveCallWall) {
+        // === CONFIRMED BREAKOUT ABOVE CALL WALL ===
+        const vannaConfirm = d.vannaExp > 0;
+        const swStr = `<span style="color:var(--call-color);font-weight:700">$${d.structCallWall.strike}</span>`;
+        const nextR = d.maxCall.strike !== d.structCallWall.strike
+            ? `<span style="color:var(--call-color);font-weight:700">$${d.maxCall.strike}</span>` : '';
+        actionHtml = `<b style="color:var(--green)">Buy / Follow Long!</b> ราคาทะลุ Call Wall ${swStr} ไปแล้ว +${d.callWallBreakoutDist.toFixed(0)} pts`;
+        if (vannaConfirm) actionHtml += `<br>✅ Vanna ยืนยัน — Dealers ต้อง Buy = ดัน squeeze ต่อ`;
+        else actionHtml += `<br>⚠️ Vanna ยังไม่ยืนยัน — ถ้า IV ลดราคาอาจ pullback กลับ`;
+        actionHtml += `<br>SL ใต้ Call Wall เดิม ${swStr}`;
+        if (nextR) actionHtml += ` | TP ที่ Resistance ถัดไป ${nextR}`;
+        actionHtml += `<div style="font-size:12px;color:var(--text-muted);margin-top:6px">🔥 Wall ถูกทะลุแล้ว — Call Wall เดิมกลายเป็น Support | ห้าม Short สวนทาง!</div>`;
+    } else if (d.priceBelowPutWall) {
+        // === CONFIRMED BREAKDOWN BELOW PUT WALL ===
+        const vannaConfirm = d.vannaExp < 0;
+        const swStr = `<span style="color:var(--put-color);font-weight:700">$${d.structPutWall.strike}</span>`;
+        const nextS = d.maxPut.strike !== d.structPutWall.strike
+            ? `<span style="color:var(--put-color);font-weight:700">$${d.maxPut.strike}</span>` : '';
+        actionHtml = `<b style="color:var(--red)">Sell / Follow Short!</b> ราคาหลุด Put Wall ${swStr} ไปแล้ว -${d.putWallBreakdownDist.toFixed(0)} pts`;
+        if (vannaConfirm) actionHtml += `<br>✅ Vanna ยืนยัน — Dealers ต้อง Sell = กดลงต่อ`;
+        else actionHtml += `<br>⚠️ Vanna ยังไม่ยืนยัน — ถ้า IV ลดราคาอาจ bounce กลับ`;
+        actionHtml += `<br>SL เหนือ Put Wall เดิม ${swStr}`;
+        if (nextS) actionHtml += ` | TP ที่ Support ถัดไป ${nextS}`;
+        actionHtml += `<div style="font-size:12px;color:var(--text-muted);margin-top:6px">🔥 Wall ถูกทะลุแล้ว — Put Wall เดิมกลายเป็น Resistance | ห้าม Buy สวนทาง!</div>`;
     } else if (d.isLongGamma) {
         if (d.priceAboveMP) {
             actionHtml = `<b>Sell</b> ที่ Call Wall ${rStr} (+${d.distToCallWall.toFixed(0)}) → TP ${tpTarget} (${tpLabel})`;
@@ -1042,7 +1107,7 @@ function renderAnalysisTab() {
         } else {
             actionHtml = `Sideway — <b>Buy</b> ${sStr} / <b>Sell</b> ${rStr} เทรดกรอบ`;
         }
-        actionHtml += `<div style="font-size:12px;color:var(--text-muted);margin-top:6px">❌ ห้ามไล่ซื้อ breakout (Long γ = fake breakout สูง)</div>`;
+        actionHtml += `<div style="font-size:12px;color:var(--text-muted);margin-top:6px">❌ ห้ามไล่ซื้อ breakout ใน Wall (Long γ = fake breakout สูง เมื่อราคายังไม่ทะลุ Wall)</div>`;
     } else {
         const dir = d.priceBelowMP ? 'ลง' : d.priceAboveMP ? 'ขึ้น' : '';
         actionHtml = `Breakout > ${rStr} → <b style="color:var(--green)">Long</b> | Breakdown < ${sStr} → <b style="color:var(--red)">Short</b>`;
