@@ -102,7 +102,7 @@ function calcNetGEX(strikes, F, dte) {
     const sortedStrikes = [...strikes].map(s => s.strike).sort((a, b) => a - b);
     const scanLow = sortedStrikes[0] - 300;
     const scanHigh = sortedStrikes[sortedStrikes.length - 1] + 300;
-    const step = 1;
+    const step = 5; // $5 grid — fine enough for gold, with interpolation for sub-dollar precision
     let crossings = [];
     let prevGEX = totalGEXAtSpot(scanLow);
     for (let S = scanLow + step; S <= scanHigh; S += step) {
@@ -123,6 +123,35 @@ function calcNetGEX(strikes, F, dte) {
     }
 
     return { netGEX, flipStrike };
+}
+
+// Charm: ∂Delta/∂T (time-decay of delta) — Black-76 with r=0
+// Shows how dealer delta positions drift as time passes, independent of price/vol
+function calcCharm(F, K, sigma, t) {
+    if (sigma <= 0 || t <= 0) return 0;
+    const sqrtT = Math.sqrt(t);
+    const d1 = (Math.log(F / K) + 0.5 * sigma * sigma * t) / (sigma * sqrtT);
+    const d2 = d1 - sigma * sqrtT;
+    const phi = 0.3989423 * Math.exp(-d1 * d1 / 2);
+    // Charm = ∂N(d1)/∂T = -φ(d1)·d2/(2T) for Black-76 at r=0
+    return -phi * d2 / (2 * t);
+}
+
+// Net Charm Exposure: daily delta change in dealer book from time decay alone
+// As 1 day passes (T shrinks by 1/365), dealer delta shifts by this amount
+//   Positive = dealer delta increasing → must SELL futures → bearish pressure
+//   Negative = dealer delta decreasing → must BUY futures → bullish support
+function calcNetCharmExposure(strikes, F, dte) {
+    if (!strikes || strikes.length === 0 || dte <= 0) return 0;
+    const t = dte / 365;
+    const contractMultiplier = 100;
+    let netCharm = 0;
+    for (const s of strikes) {
+        const c = calcCharm(F, s.strike, s.volSettle, t);
+        // Dealer is short both → delta change per day = charm × (callOI + putOI) × mult × F × 0.01 / 365
+        netCharm += c * (s.call + s.put) * contractMultiplier * F * 0.01 / 365;
+    }
+    return netCharm;
 }
 
 // Vanna: ∂Delta/∂σ — measures how delta changes when IV changes
@@ -915,6 +944,7 @@ function renderAnalysisTab() {
         const er1DayForRisk = atm2.volSettle > 0 ? uPrice * atm2.volSettle * Math.sqrt(1 / 365) : 50;
         const risk = calcBreakdownRisk(data.strikes, sourceStrikes2, uPrice, data.dte, gexResult.flipStrike, er1DayForRisk);
         const vannaExp = calcNetVannaExposure(data.strikes, uPrice, data.dte);
+        const charmExp = calcNetCharmExposure(data.strikes, uPrice, data.dte);
 
         const t_h = Math.max(data.dte, 0.01) / 365;
         let itmOI = 0, atmOI = 0, otmOI = 0;
@@ -942,7 +972,7 @@ function renderAnalysisTab() {
             callWallBreakoutDist, putWallBreakdownDist,
             gexResult, gexVal, isLongGamma,
             distToCallWall, distToPutWall, nearCallWall, nearPutWall,
-            risk, vannaExp, hedgeLabel, itmPct, dte: data.dte
+            risk, vannaExp, charmExp, hedgeLabel, itmPct, dte: data.dte
         };
     }
 
@@ -1153,11 +1183,17 @@ function renderAnalysisTab() {
     }
 
     // ── INSTITUTIONAL INTEL ──
-    // New sign convention: positive = dealers SELL (bearish), negative = dealers BUY (bullish)
+    // Vanna: positive = dealers SELL (bearish), negative = dealers BUY (bullish)
     const vannaColor = d.vannaExp > 0 ? 'var(--red)' : 'var(--green)';
     const vannaText = d.vannaExp > 0
         ? `IV↑ → Dealers <span style="color:var(--red);font-weight:700">SELL</span> $${Math.abs(d.vannaExp/1e6).toFixed(1)}M = กดลง`
         : `IV↑ → Dealers <span style="color:var(--green);font-weight:700">BUY</span> $${Math.abs(d.vannaExp/1e6).toFixed(1)}M = ดันขึ้น`;
+
+    // Charm: positive = dealers SELL (bearish), negative = dealers BUY (bullish)
+    const charmColor = d.charmExp > 0 ? 'var(--red)' : 'var(--green)';
+    const charmText = d.charmExp > 0
+        ? `เวลาผ่าน → Dealers <span style="color:var(--red);font-weight:700">SELL</span> $${Math.abs(d.charmExp/1e6).toFixed(2)}M/day = กดลง`
+        : `เวลาผ่าน → Dealers <span style="color:var(--green);font-weight:700">BUY</span> $${Math.abs(d.charmExp/1e6).toFixed(2)}M/day = ดันขึ้น`;
 
     const hedgeIcon = d.hedgeLabel === 'Heavy Hedge' ? '🛡️' : d.hedgeLabel === 'Moderate Hedge' ? '🛡️' : '🎰';
     const hedgeText = d.hedgeLabel === 'Heavy Hedge' ? `สถาบัน Hedge หนัก (ITM ${d.itmPct.toFixed(0)}%) — มั่นใจสูง ป้อง downside`
@@ -1217,6 +1253,7 @@ function renderAnalysisTab() {
             <div style="font-size:12px;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px">🏦 Institutional Intel</div>
             <div style="font-size:14px;color:var(--text-secondary);padding:5px 0;line-height:1.6">${hedgeIcon} ${hedgeText}</div>
             <div style="font-size:14px;color:var(--text-secondary);padding:5px 0;line-height:1.6">⚡ Vanna: ${vannaText}</div>
+            <div style="font-size:14px;color:var(--text-secondary);padding:5px 0;line-height:1.6">⏱️ Charm: ${charmText}</div>
         </div>
 
         <!-- ACTION -->
