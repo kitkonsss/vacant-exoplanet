@@ -154,6 +154,34 @@ function calcNetCharmExposure(strikes, F, dte) {
     return netCharm;
 }
 
+// Vomma: ∂Vega/∂σ — how sensitive is Vega to vol changes (vol-of-vol)
+// High Vomma in wings = vol spike amplifies dealer's short-vega → forced buying → cascade
+function calcVomma(F, K, sigma, t) {
+    if (sigma <= 0 || t <= 0) return 0;
+    const sqrtT = Math.sqrt(t);
+    const d1 = (Math.log(F / K) + 0.5 * sigma * sigma * t) / (sigma * sqrtT);
+    const d2 = d1 - sigma * sqrtT;
+    const phi = 0.3989423 * Math.exp(-d1 * d1 / 2);
+    // Vomma = Vega × d1 × d2 / σ
+    return phi * sqrtT * d1 * d2 / sigma;
+}
+
+// Net Vomma Exposure: aggregate vol-acceleration risk in dealer book
+// Dealers are short options → short vega. Vomma measures how MUCH more short-vega
+// they become per 1% vol increase → large magnitude = vol spike cascades
+function calcNetVommaExposure(strikes, F, dte) {
+    if (!strikes || strikes.length === 0 || dte <= 0) return 0;
+    const t = dte / 365;
+    const contractMultiplier = 100;
+    let netVomma = 0;
+    for (const s of strikes) {
+        const vm = calcVomma(F, s.strike, s.volSettle, t);
+        // Dealers short → exposure = -Vomma × OI (the more negative, the more cascade risk)
+        netVomma += -vm * (s.call + s.put) * contractMultiplier * F * 0.01;
+    }
+    return netVomma; // Large negative = high vol cascade risk
+}
+
 // Vanna: ∂Delta/∂σ — measures how delta changes when IV changes
 // When vol spikes + positive net vanna → dealers must sell → cascade
 function calcVanna(F, K, sigma, t) {
@@ -945,6 +973,7 @@ function renderAnalysisTab() {
         const risk = calcBreakdownRisk(data.strikes, sourceStrikes2, uPrice, data.dte, gexResult.flipStrike, er1DayForRisk);
         const vannaExp = calcNetVannaExposure(data.strikes, uPrice, data.dte);
         const charmExp = calcNetCharmExposure(data.strikes, uPrice, data.dte);
+        const vommaExp = calcNetVommaExposure(data.strikes, uPrice, data.dte);
 
         const t_h = Math.max(data.dte, 0.01) / 365;
         let itmOI = 0, atmOI = 0, otmOI = 0;
@@ -972,7 +1001,7 @@ function renderAnalysisTab() {
             callWallBreakoutDist, putWallBreakdownDist,
             gexResult, gexVal, isLongGamma,
             distToCallWall, distToPutWall, nearCallWall, nearPutWall,
-            risk, vannaExp, charmExp, hedgeLabel, itmPct, dte: data.dte
+            risk, vannaExp, charmExp, vommaExp, hedgeLabel, itmPct, dte: data.dte
         };
     }
 
@@ -1195,6 +1224,40 @@ function renderAnalysisTab() {
         ? `เวลาผ่าน → Dealers <span style="color:var(--red);font-weight:700">SELL</span> $${Math.abs(d.charmExp/1e6).toFixed(2)}M/day = กดลง`
         : `เวลาผ่าน → Dealers <span style="color:var(--green);font-weight:700">BUY</span> $${Math.abs(d.charmExp/1e6).toFixed(2)}M/day = ดันขึ้น`;
 
+    // Vomma: cascade risk level
+    const vommaMag = Math.abs(d.vommaExp / 1e6);
+    const vommaLevel = vommaMag > 50 ? 'สูง' : vommaMag > 10 ? 'ปานกลาง' : 'ต่ำ';
+    const vommaLevelColor = vommaMag > 50 ? 'var(--red)' : vommaMag > 10 ? 'var(--orange)' : 'var(--green)';
+    const vommaDesc = vommaMag > 50 ? 'Vol พุ่ง → Cascade รุนแรง (Dealers ยิ่ง short Vega)'
+        : vommaMag > 10 ? 'Vol พุ่ง → อาจ Cascade ได้'
+        : 'Vol พุ่ง → ไม่น่า Cascade';
+    const vommaText = `<span style="color:${vommaLevelColor};font-weight:700">${vommaLevel}</span> — ${vommaDesc}`;
+
+    // Dealer Flow Summary: resolves Vanna vs Charm conflicts
+    const vannaDir = d.vannaExp > 0 ? 'sell' : d.vannaExp < 0 ? 'buy' : 'neutral';
+    const charmDir = d.charmExp > 0 ? 'sell' : d.charmExp < 0 ? 'buy' : 'neutral';
+    let flowSummaryHtml;
+    if (vannaDir === charmDir && vannaDir !== 'neutral') {
+        const isBull = vannaDir === 'buy';
+        const clr = isBull ? 'var(--green)' : 'var(--red)';
+        const arrow = isBull ? '↑' : '↓';
+        flowSummaryHtml = `<span style="color:${clr};font-weight:700">✅ Vanna + Charm สอดคล้อง ${arrow}</span> ทุก Scenario → Dealers ${isBull ? 'BUY ดันขึ้น' : 'SELL กดลง'}`;
+    } else if (vannaDir !== 'neutral' && charmDir !== 'neutral' && vannaDir !== charmDir) {
+        const charmBull = charmDir === 'buy';
+        const vannaBull = vannaDir === 'buy';
+        const charmClr = charmBull ? 'var(--green)' : 'var(--red)';
+        const vannaClr = vannaBull ? 'var(--green)' : 'var(--red)';
+        // DTE-based dominance hint
+        const dteTip = d.dte < 7
+            ? `<span style="color:var(--orange);font-weight:700">DTE < 7 → Charm แรงกว่า</span> (Theta Decay เร่ง)`
+            : d.dte > 30
+            ? `<span style="color:var(--cyan);font-weight:700">DTE > 30 → Vanna แรงกว่า</span> (Vol Move สำคัญกว่า)`
+            : `DTE ปานกลาง → ดูว่า IV จะขยับหรือไม่`;
+        flowSummaryHtml = `⚔️ ขัดแย้ง: ตลาดเงียบ → <span style="color:${charmClr};font-weight:700">Charm ${charmBull ? 'ดันขึ้น' : 'กดลง'}</span> | IV พุ่ง → <span style="color:${vannaClr};font-weight:700">Vanna ${vannaBull ? 'ดันขึ้น' : 'กดลง'}</span><br><span style="font-size:12px">${dteTip}</span>`;
+    } else {
+        flowSummaryHtml = `<span style="color:var(--text-secondary)">🔹 แรงกดดันจาก Dealer Hedging ต่ำ</span>`;
+    }
+
     const hedgeIcon = d.hedgeLabel === 'Heavy Hedge' ? '🛡️' : d.hedgeLabel === 'Moderate Hedge' ? '🛡️' : '🎰';
     const hedgeText = d.hedgeLabel === 'Heavy Hedge' ? `สถาบัน Hedge หนัก (ITM ${d.itmPct.toFixed(0)}%) — มั่นใจสูง ป้อง downside`
         : d.hedgeLabel === 'Moderate Hedge' ? `สถาบัน Hedge ปานกลาง (ITM ${d.itmPct.toFixed(0)}%)`
@@ -1251,9 +1314,14 @@ function renderAnalysisTab() {
         <!-- INSTITUTIONAL INTEL -->
         <div style="padding:16px 22px;background:var(--bg-panel);border:1px solid var(--border);border-radius:14px;margin-bottom:16px">
             <div style="font-size:12px;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px">🏦 Institutional Intel</div>
+            <div style="padding:8px 12px;background:rgba(255,255,255,.03);border-radius:8px;border:1px solid rgba(255,255,255,.06);margin-bottom:8px">
+                <div style="font-size:11px;color:var(--text-muted);font-weight:700;margin-bottom:4px">🔮 DEALER FLOW SUMMARY</div>
+                <div style="font-size:14px;color:var(--text-primary);line-height:1.7">${flowSummaryHtml}</div>
+            </div>
             <div style="font-size:14px;color:var(--text-secondary);padding:5px 0;line-height:1.6">${hedgeIcon} ${hedgeText}</div>
             <div style="font-size:14px;color:var(--text-secondary);padding:5px 0;line-height:1.6">⚡ Vanna: ${vannaText}</div>
             <div style="font-size:14px;color:var(--text-secondary);padding:5px 0;line-height:1.6">⏱️ Charm: ${charmText}</div>
+            <div style="font-size:14px;color:var(--text-secondary);padding:5px 0;line-height:1.6">🌊 Vomma: ${vommaText}</div>
         </div>
 
         <!-- ACTION -->
