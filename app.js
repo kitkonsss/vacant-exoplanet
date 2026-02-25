@@ -214,6 +214,87 @@ function calcNetVannaExposure(strikes, F, dte) {
     return netVanna;
 }
 
+// ========== MULTI-WALL DETECTION (Quant-Grade) ==========
+// Finds ALL significant OI walls, clusters nearby strikes, and classifies by tier
+// Returns array sorted by distance from price (nearest first)
+function findSignificantWalls(strikes, uPrice, side, proximityRange = 100) {
+    const oiKey = side === 'call' ? 'call' : 'put';
+    // Filter to correct side of price
+    const filtered = side === 'call'
+        ? strikes.filter(s => s.strike > uPrice && s[oiKey] > 0)
+        : strikes.filter(s => s.strike < uPrice && s[oiKey] > 0);
+
+    if (filtered.length === 0) return [];
+
+    // Step 1: Find max OI for threshold calculations
+    const maxOI = Math.max(...filtered.map(s => s[oiKey]));
+    const avgOI = filtered.reduce((sum, s) => sum + s[oiKey], 0) / filtered.length;
+
+    // Step 2: Filter to significant strikes (≥15% of max OI or ≥ 2× average)
+    const significantThreshold = Math.max(maxOI * 0.15, avgOI * 2);
+    const significant = filtered.filter(s => s[oiKey] >= significantThreshold);
+
+    if (significant.length === 0) {
+        // Fallback: take the top strike by OI
+        const top = filtered.reduce((p, c) => c[oiKey] > p[oiKey] ? c : p);
+        const dist = side === 'call' ? top.strike - uPrice : uPrice - top.strike;
+        return [{ strike: top.strike, oi: top[oiKey], tier: 'primary', dist, clusterOI: top[oiKey], clusterStrikes: [top.strike], isNearby: dist <= proximityRange }];
+    }
+
+    // Step 3: Cluster adjacent strikes within $15 into wall zones
+    const sorted = [...significant].sort((a, b) => a.strike - b.strike);
+    const clusters = [];
+    let cluster = { strikes: [sorted[0]], totalOI: sorted[0][oiKey] };
+
+    for (let i = 1; i < sorted.length; i++) {
+        if (sorted[i].strike - sorted[i - 1].strike <= 15) {
+            cluster.strikes.push(sorted[i]);
+            cluster.totalOI += sorted[i][oiKey];
+        } else {
+            clusters.push(cluster);
+            cluster = { strikes: [sorted[i]], totalOI: sorted[i][oiKey] };
+        }
+    }
+    clusters.push(cluster);
+
+    // Step 4: For each cluster, pick the representative strike (highest OI in cluster)
+    const walls = clusters.map(cl => {
+        const rep = cl.strikes.reduce((p, c) => c[oiKey] > p[oiKey] ? c : p);
+        const dist = side === 'call' ? rep.strike - uPrice : uPrice - rep.strike;
+        return {
+            strike: rep.strike,
+            oi: rep[oiKey],
+            tier: 'tertiary', // will be upgraded below
+            dist,
+            clusterOI: cl.totalOI,
+            clusterStrikes: cl.strikes.map(s => s.strike),
+            clusterCount: cl.strikes.length,
+            isNearby: dist <= proximityRange
+        };
+    });
+
+    // Step 5: Classify tiers
+    const maxClusterOI = Math.max(...walls.map(w => w.clusterOI));
+    for (const w of walls) {
+        if (w.clusterOI === maxClusterOI) w.tier = 'primary';
+        else if (w.clusterOI >= maxClusterOI * 0.30) w.tier = 'secondary';
+        // else stays 'tertiary'
+    }
+
+    // Step 6: Sort by distance from price (nearest first)
+    walls.sort((a, b) => a.dist - b.dist);
+
+    return walls;
+}
+
+// Convenience: get nearest and primary walls from wall array
+function getWallSummary(walls) {
+    if (walls.length === 0) return { nearest: null, primary: null, walls: [] };
+    const nearest = walls[0]; // already sorted by distance
+    const primary = walls.find(w => w.tier === 'primary') || walls[0];
+    return { nearest, primary, walls };
+}
+
 // ========== BREAKDOWN RISK SCORE (0-100) ==========
 function calcBreakdownRisk(oiStrikes, intradayStrikes, uPrice, dte, gexFlipStrike, er1Day) {
     const components = {
@@ -702,14 +783,14 @@ function updateSummary(intraday, oi) {
         oi.strikes.forEach(s => {
             const cd = calcDelta(uPrice, s.strike, s.volSettle, t_h, true);
             const pd = Math.abs(calcDelta(uPrice, s.strike, s.volSettle, t_h, false));
-            itmOI    += (cd > 0.70 ? s.call : 0) + (pd > 0.70 ? s.put : 0);
-            atmOI_h  += (cd >= 0.30 && cd <= 0.70 ? s.call : 0) + (pd >= 0.30 && pd <= 0.70 ? s.put : 0);
-            otmOI    += (cd < 0.30 ? s.call : 0) + (pd < 0.30 ? s.put : 0);
+            itmOI += (cd > 0.70 ? s.call : 0) + (pd > 0.70 ? s.put : 0);
+            atmOI_h += (cd >= 0.30 && cd <= 0.70 ? s.call : 0) + (pd >= 0.30 && pd <= 0.70 ? s.put : 0);
+            otmOI += (cd < 0.30 ? s.call : 0) + (pd < 0.30 ? s.put : 0);
         });
         const totalHedgeOI = (itmOI + atmOI_h + otmOI) || 1;
-        const itmPct  = itmOI  / totalHedgeOI * 100;
-        const atmPct  = atmOI_h / totalHedgeOI * 100;
-        const otmPct  = otmOI  / totalHedgeOI * 100;
+        const itmPct = itmOI / totalHedgeOI * 100;
+        const atmPct = atmOI_h / totalHedgeOI * 100;
+        const otmPct = otmOI / totalHedgeOI * 100;
         const hedgeEl = document.getElementById('sumHedgePct');
         hedgeEl.textContent = itmPct.toFixed(0) + '% ITM';
         hedgeEl.style.color = itmPct > 40 ? 'var(--orange)' : itmPct > 20 ? 'var(--text-primary)' : 'var(--cyan)';
@@ -768,8 +849,49 @@ async function switchTab(tabKey) {
 
 let chartInstance = null;
 let candleSeries = null;
-let callLine = null;
-let putLine = null;
+let wallLines = []; // multi-wall lines
+
+function plotWallsOnChart() {
+    if (!candleSeries) return;
+
+    // Clear existing lines
+    for (const line of wallLines) {
+        try { candleSeries.removePriceLine(line); } catch (e) { }
+    }
+    wallLines = [];
+
+    const tData = state.data['current'];
+    if (!tData || !tData.oi || !tData.oi.strikes) return;
+
+    let uPrice = 0;
+    if (state.data.current?.oi?.underlying) uPrice = state.data.current.oi.underlying;
+    else if (state.data.monthly?.oi?.underlying) uPrice = state.data.monthly.oi.underlying;
+    if (uPrice === 0) return;
+
+    const callWalls = findSignificantWalls(tData.oi.strikes, uPrice, 'call');
+    const putWalls = findSignificantWalls(tData.oi.strikes, uPrice, 'put');
+
+    const lineStyles = [LightweightCharts.LineStyle.Solid, LightweightCharts.LineStyle.Dashed, LightweightCharts.LineStyle.Dotted];
+    const lineWidths = [2, 1, 1];
+
+    callWalls.slice(0, 3).forEach((w, i) => {
+        wallLines.push(candleSeries.createPriceLine({
+            price: w.strike, color: i === 0 ? '#26a69a' : '#26a69a88',
+            lineWidth: lineWidths[i], lineStyle: lineStyles[i],
+            axisLabelVisible: i < 2,
+            title: i === 0 ? `Call Wall ${w.oi.toLocaleString()}` : `C ${w.oi.toLocaleString()}`,
+        }));
+    });
+
+    putWalls.slice(0, 3).forEach((w, i) => {
+        wallLines.push(candleSeries.createPriceLine({
+            price: w.strike, color: i === 0 ? '#ef5350' : '#ef535088',
+            lineWidth: lineWidths[i], lineStyle: lineStyles[i],
+            axisLabelVisible: i < 2,
+            title: i === 0 ? `Put Wall ${w.oi.toLocaleString()}` : `P ${w.oi.toLocaleString()}`,
+        }));
+    });
+}
 
 async function initLightweightChart() {
     const container = document.getElementById('lwc_chart');
@@ -854,50 +976,6 @@ async function initLightweightChart() {
     });
 }
 
-function plotWallsOnChart() {
-    if (!candleSeries) return;
-
-    // Clear existing lines
-    if (callLine) candleSeries.removePriceLine(callLine);
-    if (putLine) candleSeries.removePriceLine(putLine);
-    callLine = null;
-    putLine = null;
-
-    const tData = state.data['current']; // use current DTE for walls
-    if (!tData || !tData.oi || !tData.oi.strikes) return;
-
-    let maxCallVal = 0;
-    let maxCallStrike = 0;
-    let maxPutVal = 0;
-    let maxPutStrike = 0;
-
-    tData.oi.strikes.forEach(s => {
-        if (s.call > maxCallVal) { maxCallVal = s.call; maxCallStrike = s.strike; }
-        if (s.put > maxPutVal) { maxPutVal = s.put; maxPutStrike = s.strike; }
-    });
-
-    if (maxCallStrike > 0) {
-        callLine = candleSeries.createPriceLine({
-            price: maxCallStrike,
-            color: '#26a69a',
-            lineWidth: 2,
-            lineStyle: LightweightCharts.LineStyle.Dashed,
-            axisLabelVisible: true,
-            title: 'Max Call (Resist)',
-        });
-    }
-
-    if (maxPutStrike > 0) {
-        putLine = candleSeries.createPriceLine({
-            price: maxPutStrike,
-            color: '#ef5350',
-            lineWidth: 2,
-            lineStyle: LightweightCharts.LineStyle.Dashed,
-            axisLabelVisible: true,
-            title: 'Max Put (Support)',
-        });
-    }
-}
 
 function renderAnalysisTab() {
     const container = document.getElementById('analysisGrid');
@@ -932,17 +1010,31 @@ function renderAnalysisTab() {
         if (pcr > 1.2) biasScore = -1;
         else if (pcr < 0.8) biasScore = 1;
 
+        // ── Multi-Wall Detection ──
+        const sourceStrikes2 = intraday?.strikes?.length > 0 ? intraday.strikes : null;
+        const atm2 = data.strikes.reduce((p, c) => Math.abs(c.strike - uPrice) < Math.abs(p.strike - uPrice) ? c : p);
+        const er1Day = atm2.volSettle > 0 ? uPrice * atm2.volSettle * Math.sqrt(1 / 365) : 50;
+
+        const callWalls = findSignificantWalls(data.strikes, uPrice, 'call', er1Day * 2);
+        const putWalls = findSignificantWalls(data.strikes, uPrice, 'put', er1Day * 2);
+        const callSummary = getWallSummary(callWalls);
+        const putSummary = getWallSummary(putWalls);
+
+        // Backward-compat: maxCall/maxPut = primary wall (or fallback to old logic)
         const callsAbove = data.strikes.filter(s => s.strike >= uPrice && s.call > 0);
         const putsBelow = data.strikes.filter(s => s.strike <= uPrice && s.put > 0);
-        let maxCall = callsAbove.length > 0
-            ? callsAbove.reduce((p, c) => c.call > p.call ? c : p)
-            : data.strikes.reduce((p, c) => c.call > p.call ? c : p);
-        let maxPut = putsBelow.length > 0
-            ? putsBelow.reduce((p, c) => c.put > p.put ? c : p)
-            : data.strikes.reduce((p, c) => c.put > p.put ? c : p);
+        let maxCall = callSummary.primary
+            ? { strike: callSummary.primary.strike, call: callSummary.primary.oi }
+            : (callsAbove.length > 0 ? callsAbove.reduce((p, c) => c.call > p.call ? c : p) : data.strikes.reduce((p, c) => c.call > p.call ? c : p));
+        let maxPut = putSummary.primary
+            ? { strike: putSummary.primary.strike, put: putSummary.primary.oi }
+            : (putsBelow.length > 0 ? putsBelow.reduce((p, c) => c.put > p.put ? c : p) : data.strikes.reduce((p, c) => c.put > p.put ? c : p));
+
+        // Nearest walls (for day-trade proximity)
+        const nearestCall = callSummary.nearest;
+        const nearestPut = putSummary.nearest;
 
         // Structural walls: highest OI across ALL strikes (for breakout detection)
-        // maxCall/maxPut only look above/below price — structural walls are the TRUE walls
         const structCallWall = data.strikes.reduce((p, c) => c.call > p.call ? c : p);
         const structPutWall = data.strikes.reduce((p, c) => c.put > p.put ? c : p);
         const priceAboveCallWall = uPrice > structCallWall.strike;
@@ -950,8 +1042,8 @@ function renderAnalysisTab() {
         const callWallBreakoutDist = uPrice - structCallWall.strike;
         const putWallBreakdownDist = structPutWall.strike - uPrice;
 
-        if (Math.abs(uPrice - maxCall.strike) < 30 && tc > tp) biasScore += 1;
-        else if (Math.abs(uPrice - maxPut.strike) < 30 && tp > tc) biasScore -= 1;
+        if (nearestCall && nearestCall.dist < 30 && tc > tp) biasScore += 1;
+        else if (nearestPut && nearestPut.dist < 30 && tp > tc) biasScore -= 1;
 
         const mpStrike = calcMaxPain(data.strikes);
         const mpDist = mpStrike !== null ? (uPrice - mpStrike) : 0;
@@ -962,15 +1054,17 @@ function renderAnalysisTab() {
         const gexVal = gexResult.netGEX;
         const isLongGamma = gexVal >= 0;
 
-        const distToCallWall = maxCall.strike - uPrice;
-        const distToPutWall = uPrice - maxPut.strike;
-        const nearCallWall = distToCallWall < 40;
-        const nearPutWall = distToPutWall < 40;
+        // Use NEAREST wall for proximity detection (dynamic threshold = 1-day ER)
+        const distToNearestCall = nearestCall ? nearestCall.dist : (maxCall.strike - uPrice);
+        const distToNearestPut = nearestPut ? nearestPut.dist : (uPrice - maxPut.strike);
+        const proximityThreshold = Math.max(er1Day * 0.8, 20); // dynamic, min 20
+        const nearCallWall = distToNearestCall < proximityThreshold;
+        const nearPutWall = distToNearestPut < proximityThreshold;
 
-        const sourceStrikes2 = intraday?.strikes?.length > 0 ? intraday.strikes : null;
-        const atm2 = data.strikes.reduce((p, c) => Math.abs(c.strike - uPrice) < Math.abs(p.strike - uPrice) ? c : p);
-        const er1DayForRisk = atm2.volSettle > 0 ? uPrice * atm2.volSettle * Math.sqrt(1 / 365) : 50;
-        const risk = calcBreakdownRisk(data.strikes, sourceStrikes2, uPrice, data.dte, gexResult.flipStrike, er1DayForRisk);
+        // Tradeable range between nearest walls
+        const tradeableRange = (nearestCall ? nearestCall.dist : 999) + (nearestPut ? nearestPut.dist : 999);
+
+        const risk = calcBreakdownRisk(data.strikes, sourceStrikes2, uPrice, data.dte, gexResult.flipStrike, er1Day);
         const vannaExp = calcNetVannaExposure(data.strikes, uPrice, data.dte);
         const charmExp = calcNetCharmExposure(data.strikes, uPrice, data.dte);
         const vommaExp = calcNetVommaExposure(data.strikes, uPrice, data.dte);
@@ -1000,7 +1094,10 @@ function renderAnalysisTab() {
             structCallWall, structPutWall, priceAboveCallWall, priceBelowPutWall,
             callWallBreakoutDist, putWallBreakdownDist,
             gexResult, gexVal, isLongGamma,
-            distToCallWall, distToPutWall, nearCallWall, nearPutWall,
+            distToCallWall: maxCall.strike - uPrice, distToPutWall: uPrice - maxPut.strike,
+            nearCallWall, nearPutWall,
+            nearestCall, nearestPut, callWalls, putWalls, callSummary, putSummary,
+            tradeableRange, er1Day,
             risk, vannaExp, charmExp, vommaExp, hedgeLabel, itmPct, dte: data.dte
         };
     }
@@ -1014,8 +1111,8 @@ function renderAnalysisTab() {
     }
 
     const isFallback = state.data.current?.oi?.underlyingIsFallback
-                    || state.data.monthly?.oi?.underlyingIsFallback
-                    || state.data.friday?.oi?.underlyingIsFallback;
+        || state.data.monthly?.oi?.underlyingIsFallback
+        || state.data.friday?.oi?.underlyingIsFallback;
 
     // ── STATUS BADGE ──
     let bText, bColor, bDesc;
@@ -1039,11 +1136,13 @@ function renderAnalysisTab() {
         if (vannaConfirm) bDesc += ` — Vanna ยืนยัน: Dealers ต้อง Sell กดราคาต่อ`;
         else bDesc += ` — Vanna ยังไม่ confirm ระวัง bounce`;
     } else if (d.nearCallWall && d.gexVal >= 0) {
+        const ncs = d.nearestCall ? d.nearestCall.strike : d.maxCall.strike;
         bText = '⚡ ชน Resistance'; bColor = '#ffd54f';
-        bDesc = `ใกล้ Call Wall $${d.maxCall.strike} → ทะลุ=Squeeze / ย่อ=Short`;
+        bDesc = `ใกล้ Call Wall $${ncs} (${d.nearestCall ? d.nearestCall.oi.toLocaleString() + ' OI' : ''}) → ทะลุ=Squeeze / ย่อ=Short`;
     } else if (d.nearPutWall && d.gexVal >= 0) {
+        const nps = d.nearestPut ? d.nearestPut.strike : d.maxPut.strike;
         bText = '⚡ ชน Support'; bColor = '#ffd54f';
-        bDesc = `ใกล้ Put Wall $${d.maxPut.strike} → หลุด=Cascade / เด้ง=Long`;
+        bDesc = `ใกล้ Put Wall $${nps} (${d.nearestPut ? d.nearestPut.oi.toLocaleString() + ' OI' : ''}) → หลุด=Cascade / เด้ง=Long`;
     } else if (d.nearCallWall && d.gexVal < 0) {
         bText = '🚀 Squeeze Risk'; bColor = 'var(--orange)';
         bDesc = `Short γ + ใกล้ Call Wall → ทะลุ = Squeeze รุนแรง`;
@@ -1061,44 +1160,60 @@ function renderAnalysisTab() {
         bDesc = 'Short γ → ราคาวิ่งรุนแรงเมื่อหลุดแนว ติดตามทิศทาง';
     }
 
-    // ── KEY LEVELS ──
+    // ── KEY LEVELS (Multi-Wall) ──
     const levels = [];
-    // Put Wall — show as broken if price is below it
+    const tierIcon = t => t === 'primary' ? '🔴' : t === 'secondary' ? '🟡' : '⚪';
+    const tierLabel = t => t === 'primary' ? 'Primary' : t === 'secondary' ? 'Secondary' : 'Minor';
+
+    // Put Walls — all significant walls below price
     if (d.priceBelowPutWall) {
-        levels.push({ price: d.structPutWall.strike, label: '💔 Broken Put Wall', color: 'var(--orange)', icon: '💔', dist: d.structPutWall.strike - d.uPrice, action: 'ราคาหลุดแล้ว → กลายเป็น Resistance (SL zone)' });
-        if (d.maxPut.strike !== d.structPutWall.strike) {
-            levels.push({ price: d.maxPut.strike, label: 'Next Put Wall', color: 'var(--put-color)', icon: '🟢', dist: d.maxPut.strike - d.uPrice, action: 'Support ถัดไป (TP target)' });
-        }
-    } else {
-        levels.push({ price: d.maxPut.strike, label: 'Put Wall (Support)', color: 'var(--put-color)', icon: '🟢', dist: d.maxPut.strike - d.uPrice, action: 'ซื้อ/Long ถ้าราคาลงมาถึง' });
+        levels.push({ price: d.structPutWall.strike, label: '💔 Broken Put Wall', color: 'var(--orange)', icon: '💔', dist: d.structPutWall.strike - d.uPrice, oi: 0, tier: '', action: 'ราคาหลุดแล้ว → กลายเป็น Resistance (SL zone)' });
     }
-    if (d.risk.gammaMean) levels.push({ price: +d.risk.gammaMean.toFixed(0), label: 'Gamma Mean', color: 'var(--cyan)', icon: '🔵', dist: d.risk.gammaMean - d.uPrice, action: 'จุดสมดุล — TP ชั้นดี' });
-    if (d.mpStrike) levels.push({ price: d.mpStrike, label: 'Max Pain', color: 'var(--pink)', icon: '🟣', dist: d.mpStrike - d.uPrice, action: 'จุดดึงดูดราคา (Expiry Magnet)' });
+    for (const w of d.putWalls) {
+        const tierBadge = tierLabel(w.tier);
+        const clusterInfo = w.clusterCount > 1 ? ` [${w.clusterCount} strikes, ${w.clusterOI.toLocaleString()} total]` : '';
+        levels.push({
+            price: w.strike, label: `Put Wall (${tierBadge})`, color: 'var(--put-color)',
+            icon: tierIcon(w.tier), dist: -(w.dist), oi: w.oi, tier: w.tier,
+            action: `Support ${w.isNearby ? '📍 ใกล้!' : ''} OI: ${w.oi.toLocaleString()}${clusterInfo}`
+        });
+    }
+
+    // Structural levels
+    if (d.risk.gammaMean) levels.push({ price: +d.risk.gammaMean.toFixed(0), label: 'Gamma Mean', color: 'var(--cyan)', icon: '🔵', dist: d.risk.gammaMean - d.uPrice, oi: 0, tier: '', action: 'จุดสมดุล — TP ชั้นดี' });
+    if (d.mpStrike) levels.push({ price: d.mpStrike, label: 'Max Pain', color: 'var(--pink)', icon: '🟣', dist: d.mpStrike - d.uPrice, oi: 0, tier: '', action: 'จุดดึงดูดราคา (Expiry Magnet)' });
     if (d.gexResult.flipStrike) {
         const fd = d.gexResult.flipStrike - d.uPrice;
         const fw = Math.abs(fd) < 60 ? ' ⚠️' : '';
-        levels.push({ price: d.gexResult.flipStrike, label: 'GEX Flip' + fw, color: 'var(--accent)', icon: '⚡', dist: fd, action: 'ข้ามนี้ = เปลี่ยน regime (Long↔Short γ)' });
+        levels.push({ price: d.gexResult.flipStrike, label: 'GEX Flip' + fw, color: 'var(--accent)', icon: '⚡', dist: fd, oi: 0, tier: '', action: 'ข้ามนี้ = เปลี่ยน regime (Long↔Short γ)' });
     }
-    // Call Wall — show as broken if price is above it
+
+    // Call Walls — all significant walls above price
     if (d.priceAboveCallWall) {
-        levels.push({ price: d.structCallWall.strike, label: '💔 Broken Call Wall', color: 'var(--orange)', icon: '💔', dist: d.structCallWall.strike - d.uPrice, action: 'ราคาทะลุแล้ว → กลายเป็น Support (SL zone)' });
-        if (d.maxCall.strike !== d.structCallWall.strike) {
-            levels.push({ price: d.maxCall.strike, label: 'Next Call Wall', color: 'var(--call-color)', icon: '🔴', dist: d.maxCall.strike - d.uPrice, action: 'Resistance ถัดไป (TP target)' });
-        }
-    } else {
-        levels.push({ price: d.maxCall.strike, label: 'Call Wall (Resistance)', color: 'var(--call-color)', icon: '🔴', dist: d.maxCall.strike - d.uPrice, action: 'ขาย/Short ถ้าราคาขึ้นไปถึง' });
+        levels.push({ price: d.structCallWall.strike, label: '💔 Broken Call Wall', color: 'var(--orange)', icon: '💔', dist: d.structCallWall.strike - d.uPrice, oi: 0, tier: '', action: 'ราคาทะลุแล้ว → กลายเป็น Support (SL zone)' });
+    }
+    for (const w of d.callWalls) {
+        const tierBadge = tierLabel(w.tier);
+        const clusterInfo = w.clusterCount > 1 ? ` [${w.clusterCount} strikes, ${w.clusterOI.toLocaleString()} total]` : '';
+        levels.push({
+            price: w.strike, label: `Call Wall (${tierBadge})`, color: 'var(--call-color)',
+            icon: tierIcon(w.tier), dist: w.dist, oi: w.oi, tier: w.tier,
+            action: `Resistance ${w.isNearby ? '📍 ใกล้!' : ''} OI: ${w.oi.toLocaleString()}${clusterInfo}`
+        });
     }
     levels.sort((a, b) => Math.abs(a.dist) - Math.abs(b.dist));
 
     const levelsHtml = levels.map(l => {
         const ds = l.dist >= 0 ? `+${l.dist.toFixed(0)}` : l.dist.toFixed(0);
-        const dc = Math.abs(l.dist) < 40 ? 'var(--orange)' : 'var(--text-muted)';
-        return `<div style="display:flex;align-items:center;gap:12px;padding:9px 0;border-bottom:1px solid rgba(255,255,255,.05)">
-            <span style="font-size:15px;width:22px;text-align:center">${l.icon}</span>
-            <span style="font-size:14px;font-weight:700;color:${l.color};min-width:150px">${l.label}</span>
-            <span style="font-size:16px;font-weight:800;color:var(--text-primary);min-width:70px">$${l.price}</span>
-            <span style="font-size:13px;font-weight:700;color:${dc};min-width:50px">(${ds})</span>
-            <span style="font-size:12px;color:var(--text-secondary);flex:1">${l.action}</span>
+        const isNear = Math.abs(l.dist) < (d.er1Day || 40);
+        const dc = isNear ? 'var(--orange)' : 'var(--text-muted)';
+        const bgHighlight = isNear ? 'background:rgba(255,152,0,.06);border-radius:6px;padding:9px 8px;margin:0 -8px;' : 'padding:9px 0;';
+        return `<div style="display:flex;align-items:center;gap:10px;${bgHighlight}border-bottom:1px solid rgba(255,255,255,.05)">
+            <span style="font-size:14px;width:20px;text-align:center">${l.icon}</span>
+            <span style="font-size:13px;font-weight:700;color:${l.color};min-width:130px">${l.label}</span>
+            <span style="font-size:15px;font-weight:800;color:var(--text-primary);min-width:60px">$${l.price}</span>
+            <span style="font-size:12px;font-weight:700;color:${dc};min-width:45px">(${ds})</span>
+            <span style="font-size:11px;color:var(--text-secondary);flex:1">${l.action}</span>
         </div>`;
     }).join('');
 
@@ -1119,26 +1234,41 @@ function renderAnalysisTab() {
         </div>`;
     }
 
-    // ── VISUAL RANGE BAR ──
-    const barLow = d.maxPut.strike;
-    const barHigh = d.maxCall.strike;
+    // ── VISUAL RANGE BAR (Multi-Wall) ──
+    const barLow = d.putSummary.primary ? d.putSummary.primary.strike : d.maxPut.strike;
+    const barHigh = d.callSummary.primary ? d.callSummary.primary.strike : d.maxCall.strike;
     const barRange = barHigh - barLow || 1;
     const pricePct = Math.max(2, Math.min(98, ((d.uPrice - barLow) / barRange) * 100));
     const markers = [];
-    if (d.risk.gammaMean) markers.push({ pct: Math.max(0, Math.min(100, ((d.risk.gammaMean - barLow) / barRange) * 100)), color: 'var(--cyan)', label: 'GM' });
-    if (d.mpStrike) markers.push({ pct: Math.max(0, Math.min(100, ((d.mpStrike - barLow) / barRange) * 100)), color: 'var(--pink)', label: 'MP' });
-    if (d.gexResult.flipStrike) markers.push({ pct: Math.max(0, Math.min(100, ((d.gexResult.flipStrike - barLow) / barRange) * 100)), color: 'var(--accent)', label: 'Flip' });
+
+    // Wall markers (multi-wall)
+    for (const w of d.putWalls) {
+        const pct = Math.max(0, Math.min(100, ((w.strike - barLow) / barRange) * 100));
+        const h = w.tier === 'primary' ? 18 : w.tier === 'secondary' ? 13 : 8;
+        markers.push({ pct, color: 'var(--put-color)', label: '', height: h, opacity: w.tier === 'tertiary' ? 0.5 : 1 });
+    }
+    for (const w of d.callWalls) {
+        const pct = Math.max(0, Math.min(100, ((w.strike - barLow) / barRange) * 100));
+        const h = w.tier === 'primary' ? 18 : w.tier === 'secondary' ? 13 : 8;
+        markers.push({ pct, color: 'var(--call-color)', label: '', height: h, opacity: w.tier === 'tertiary' ? 0.5 : 1 });
+    }
+
+    // Structural markers
+    if (d.risk.gammaMean) markers.push({ pct: Math.max(0, Math.min(100, ((d.risk.gammaMean - barLow) / barRange) * 100)), color: 'var(--cyan)', label: 'GM', height: 16, opacity: 1 });
+    if (d.mpStrike) markers.push({ pct: Math.max(0, Math.min(100, ((d.mpStrike - barLow) / barRange) * 100)), color: 'var(--pink)', label: 'MP', height: 16, opacity: 1 });
+    if (d.gexResult.flipStrike) markers.push({ pct: Math.max(0, Math.min(100, ((d.gexResult.flipStrike - barLow) / barRange) * 100)), color: 'var(--accent)', label: 'Flip', height: 16, opacity: 1 });
 
     const mkHtml = markers.map(m => `
-        <div style="position:absolute;left:${m.pct}%;top:-2px;transform:translateX(-50%)">
-            <div style="width:2px;height:16px;background:${m.color};margin:0 auto;border-radius:1px"></div>
-            <div style="font-size:9px;color:${m.color};font-weight:700;text-align:center;margin-top:2px;white-space:nowrap">${m.label}</div>
+        <div style="position:absolute;left:${m.pct}%;top:-2px;transform:translateX(-50%);opacity:${m.opacity}">
+            <div style="width:${m.label ? 2 : 3}px;height:${m.height}px;background:${m.color};margin:0 auto;border-radius:1px"></div>
+            ${m.label ? `<div style="font-size:9px;color:${m.color};font-weight:700;text-align:center;margin-top:2px;white-space:nowrap">${m.label}</div>` : ''}
         </div>`).join('');
 
     const rangeBarHtml = `
     <div style="padding:8px 0;margin:6px 0 10px">
         <div style="display:flex;justify-content:space-between;font-size:11px;margin-bottom:6px">
             <span style="color:var(--put-color);font-weight:700">$${barLow} Support</span>
+            <span style="font-size:10px;color:var(--text-muted)">${d.putWalls.length}P + ${d.callWalls.length}C walls</span>
             <span style="color:var(--call-color);font-weight:700">Resistance $${barHigh}</span>
         </div>
         <div style="position:relative;height:12px;background:rgba(255,255,255,.07);border-radius:6px;overflow:visible">
@@ -1151,17 +1281,27 @@ function renderAnalysisTab() {
         </div>
     </div>`;
 
-    // ── ACTION LINE ──
-    const sStr = `<span style="color:var(--put-color);font-weight:700">$${d.maxPut.strike}</span>`;
-    const rStr = `<span style="color:var(--call-color);font-weight:700">$${d.maxCall.strike}</span>`;
-    const mpStr = d.mpStrike ? `<span style="color:var(--pink);font-weight:700">$${d.mpStrike}</span>` : '';
-    const gmStr = d.risk.gammaMean ? `<span style="color:var(--cyan);font-weight:700">$${d.risk.gammaMean.toFixed(0)}</span>` : '';
+    // ── ACTION LINE (Day-Trade Calibrated, Multi-Wall) ──
+    // Helper: format wall strike colored
+    const fmtC = (strike) => `<span style="color:var(--call-color);font-weight:700">$${strike}</span>`;
+    const fmtP = (strike) => `<span style="color:var(--put-color);font-weight:700">$${strike}</span>`;
+    const fmtPink = (strike) => `<span style="color:var(--pink);font-weight:700">$${strike}</span>`;
+    const fmtCyan = (strike) => `<span style="color:var(--cyan);font-weight:700">$${strike}</span>`;
 
-    let tpTarget = mpStr, tpLabel = 'Max Pain';
-    if (d.risk.gammaMean && d.mpStrike) {
-        if (d.priceAboveMP && d.risk.gammaMean < d.uPrice && d.risk.gammaMean > d.mpStrike) { tpTarget = gmStr; tpLabel = 'Gamma Mean'; }
-        else if (d.priceBelowMP && d.risk.gammaMean > d.uPrice && d.risk.gammaMean < d.mpStrike) { tpTarget = gmStr; tpLabel = 'Gamma Mean'; }
-    }
+    // Use nearest walls for primary references, fallback to max
+    const nrStr = d.nearestCall ? fmtC(d.nearestCall.strike) : fmtC(d.maxCall.strike);
+    const nsStr = d.nearestPut ? fmtP(d.nearestPut.strike) : fmtP(d.maxPut.strike);
+    const nrDist = d.nearestCall ? d.nearestCall.dist : d.distToCallWall;
+    const nsDist = d.nearestPut ? d.nearestPut.dist : d.distToPutWall;
+    const mpStr = d.mpStrike ? fmtPink(d.mpStrike) : '';
+    const gmStr = d.risk.gammaMean ? fmtCyan(d.risk.gammaMean.toFixed(0)) : '';
+
+    // Build wall chain: "→ $5250 (234) → $5300 (1,139)"
+    const callChain = d.callWalls.slice(1, 3).map(w => `→ ${fmtC(w.strike)} (${w.oi.toLocaleString()})`).join(' ');
+    const putChain = d.putWalls.slice(1, 3).map(w => `→ ${fmtP(w.strike)} (${w.oi.toLocaleString()})`).join(' ');
+
+    // Tradeable range info
+    const trStr = d.tradeableRange < 999 ? `<span style="font-size:12px;color:var(--text-muted)">📊 Tradeable Range: ${d.tradeableRange.toFixed(0)} pts</span>` : '';
 
     let actionHtml;
     if (d.risk.noMansLand) {
@@ -1170,44 +1310,54 @@ function renderAnalysisTab() {
             ? `<b style="color:#ff1744">ห้าม Short!</b> ราคานอก Gamma Zone — Follow ขึ้นอย่างเดียว | SL ใต้ High ล่าสุด`
             : `<b style="color:#ff1744">ห้าม Buy!</b> ราคานอก Gamma Zone — Follow ลงอย่างเดียว | SL เหนือ Low ล่าสุด`;
     } else if (d.priceAboveCallWall) {
-        // === CONFIRMED BREAKOUT ABOVE CALL WALL ===
-        const vannaConfirm = d.vannaExp < 0; // negative = dealers BUY = confirms upside
-        const swStr = `<span style="color:var(--call-color);font-weight:700">$${d.structCallWall.strike}</span>`;
-        const nextR = d.maxCall.strike !== d.structCallWall.strike
-            ? `<span style="color:var(--call-color);font-weight:700">$${d.maxCall.strike}</span>` : '';
+        const vannaConfirm = d.vannaExp < 0;
+        const swStr = fmtC(d.structCallWall.strike);
         actionHtml = `<b style="color:var(--green)">Buy / Follow Long!</b> ราคาทะลุ Call Wall ${swStr} ไปแล้ว +${d.callWallBreakoutDist.toFixed(0)} pts`;
         if (vannaConfirm) actionHtml += `<br>✅ Vanna ยืนยัน — Dealers ต้อง Buy = ดัน squeeze ต่อ`;
         else actionHtml += `<br>⚠️ Vanna ยังไม่ยืนยัน — ถ้า IV ลดราคาอาจ pullback กลับ`;
         actionHtml += `<br>SL ใต้ Call Wall เดิม ${swStr}`;
-        if (nextR) actionHtml += ` | TP ที่ Resistance ถัดไป ${nextR}`;
+        if (d.callWalls.length > 0) actionHtml += ` | TP ที่ ${fmtC(d.callWalls[0].strike)} ${callChain}`;
         actionHtml += `<div style="font-size:12px;color:var(--text-muted);margin-top:6px">🔥 Wall ถูกทะลุแล้ว — Call Wall เดิมกลายเป็น Support | ห้าม Short สวนทาง!</div>`;
     } else if (d.priceBelowPutWall) {
-        // === CONFIRMED BREAKDOWN BELOW PUT WALL ===
-        const vannaConfirm = d.vannaExp > 0; // positive = dealers SELL = confirms downside
-        const swStr = `<span style="color:var(--put-color);font-weight:700">$${d.structPutWall.strike}</span>`;
-        const nextS = d.maxPut.strike !== d.structPutWall.strike
-            ? `<span style="color:var(--put-color);font-weight:700">$${d.maxPut.strike}</span>` : '';
+        const vannaConfirm = d.vannaExp > 0;
+        const swStr = fmtP(d.structPutWall.strike);
         actionHtml = `<b style="color:var(--red)">Sell / Follow Short!</b> ราคาหลุด Put Wall ${swStr} ไปแล้ว -${d.putWallBreakdownDist.toFixed(0)} pts`;
         if (vannaConfirm) actionHtml += `<br>✅ Vanna ยืนยัน — Dealers ต้อง Sell = กดลงต่อ`;
         else actionHtml += `<br>⚠️ Vanna ยังไม่ยืนยัน — ถ้า IV ลดราคาอาจ bounce กลับ`;
         actionHtml += `<br>SL เหนือ Put Wall เดิม ${swStr}`;
-        if (nextS) actionHtml += ` | TP ที่ Support ถัดไป ${nextS}`;
+        if (d.putWalls.length > 0) actionHtml += ` | TP ที่ ${fmtP(d.putWalls[0].strike)} ${putChain}`;
         actionHtml += `<div style="font-size:12px;color:var(--text-muted);margin-top:6px">🔥 Wall ถูกทะลุแล้ว — Put Wall เดิมกลายเป็น Resistance | ห้าม Buy สวนทาง!</div>`;
     } else if (d.isLongGamma) {
-        if (d.priceAboveMP) {
-            actionHtml = `<b>Sell</b> ที่ Call Wall ${rStr} (+${d.distToCallWall.toFixed(0)}) → TP ${tpTarget} (${tpLabel})`;
-            if (d.maxPut.strike !== d.mpStrike) actionHtml += `<br><b>Buy</b> รับ Put Wall ${sStr} (-${d.distToPutWall.toFixed(0)}) ถ้าย่อ`;
-        } else if (d.priceBelowMP) {
-            actionHtml = `<b>Buy</b> ที่ Put Wall ${sStr} (-${d.distToPutWall.toFixed(0)}) → TP ${tpTarget} (${tpLabel})`;
-            if (d.maxCall.strike !== d.mpStrike) actionHtml += `<br><b>Sell</b> รับ Call Wall ${rStr} (+${d.distToCallWall.toFixed(0)}) ถ้าเด้ง`;
-        } else {
-            actionHtml = `Sideway — <b>Buy</b> ${sStr} / <b>Sell</b> ${rStr} เทรดกรอบ`;
-        }
+        // Day-trade setups using nearest walls
+        const slBuffer = 15; // $15 SL buffer past wall
+        actionHtml = `<div style="display:flex;gap:16px;flex-wrap:wrap">`;
+        // Short setup at nearest resistance
+        actionHtml += `<div style="flex:1;min-width:200px;padding:10px 14px;background:rgba(239,83,80,.06);border-radius:8px;border:1px solid rgba(239,83,80,.15)">`;
+        actionHtml += `<div style="font-size:11px;color:var(--text-muted);font-weight:700;margin-bottom:4px">🎯 SHORT SETUP</div>`;
+        actionHtml += `<div style="font-size:13px;color:var(--text-primary);line-height:1.8">`;
+        actionHtml += `Entry → ${nrStr} (+${nrDist.toFixed(0)} pts)<br>`;
+        actionHtml += `SL: $${(d.nearestCall ? d.nearestCall.strike + slBuffer : d.maxCall.strike + slBuffer).toFixed(0)}<br>`;
+        actionHtml += `TP₁: ${mpStr || gmStr || nsStr}`;
+        if (d.nearestPut) actionHtml += ` | TP₂: ${nsStr}`;
+        actionHtml += `</div></div>`;
+        // Long setup at nearest support
+        actionHtml += `<div style="flex:1;min-width:200px;padding:10px 14px;background:rgba(38,166,154,.06);border-radius:8px;border:1px solid rgba(38,166,154,.15)">`;
+        actionHtml += `<div style="font-size:11px;color:var(--text-muted);font-weight:700;margin-bottom:4px">🎯 LONG SETUP</div>`;
+        actionHtml += `<div style="font-size:13px;color:var(--text-primary);line-height:1.8">`;
+        actionHtml += `Entry → ${nsStr} (-${nsDist.toFixed(0)} pts)<br>`;
+        actionHtml += `SL: $${(d.nearestPut ? d.nearestPut.strike - slBuffer : d.maxPut.strike - slBuffer).toFixed(0)}<br>`;
+        actionHtml += `TP₁: ${mpStr || gmStr || nrStr}`;
+        if (d.nearestCall) actionHtml += ` | TP₂: ${nrStr}`;
+        actionHtml += `</div></div></div>`;
+        if (trStr) actionHtml += `<div style="margin-top:8px">${trStr}</div>`;
         actionHtml += `<div style="font-size:12px;color:var(--text-muted);margin-top:6px">❌ ห้ามไล่ซื้อ breakout ใน Wall (Long γ = fake breakout สูง เมื่อราคายังไม่ทะลุ Wall)</div>`;
     } else {
+        // Short gamma: trend following with nearest walls
         const dir = d.priceBelowMP ? 'ลง' : d.priceAboveMP ? 'ขึ้น' : '';
-        actionHtml = `Breakout > ${rStr} → <b style="color:var(--green)">Long</b> | Breakdown < ${sStr} → <b style="color:var(--red)">Short</b>`;
+        actionHtml = `Breakout > ${nrStr} → <b style="color:var(--green)">Long</b> ${callChain ? `(next: ${callChain})` : ''}`;
+        actionHtml += `<br>Breakdown < ${nsStr} → <b style="color:var(--red)">Short</b> ${putChain ? `(next: ${putChain})` : ''}`;
         if (dir) actionHtml += ` <span style="font-size:10px;opacity:.8">(bias ${dir})</span>`;
+        if (trStr) actionHtml += `<br>${trStr}`;
         actionHtml += `<div style="font-size:12px;color:var(--text-muted);margin-top:6px">❌ ห้าม Fade สวนทาง (Short γ = วิ่งต่อไม่หยุด)</div>`;
     }
 
@@ -1215,14 +1365,14 @@ function renderAnalysisTab() {
     // Vanna: positive = dealers SELL (bearish), negative = dealers BUY (bullish)
     const vannaColor = d.vannaExp > 0 ? 'var(--red)' : 'var(--green)';
     const vannaText = d.vannaExp > 0
-        ? `IV↑ → Dealers <span style="color:var(--red);font-weight:700">SELL</span> $${Math.abs(d.vannaExp/1e6).toFixed(1)}M = กดลง`
-        : `IV↑ → Dealers <span style="color:var(--green);font-weight:700">BUY</span> $${Math.abs(d.vannaExp/1e6).toFixed(1)}M = ดันขึ้น`;
+        ? `IV↑ → Dealers <span style="color:var(--red);font-weight:700">SELL</span> $${Math.abs(d.vannaExp / 1e6).toFixed(1)}M = กดลง`
+        : `IV↑ → Dealers <span style="color:var(--green);font-weight:700">BUY</span> $${Math.abs(d.vannaExp / 1e6).toFixed(1)}M = ดันขึ้น`;
 
     // Charm: positive = dealers SELL (bearish), negative = dealers BUY (bullish)
     const charmColor = d.charmExp > 0 ? 'var(--red)' : 'var(--green)';
     const charmText = d.charmExp > 0
-        ? `เวลาผ่าน → Dealers <span style="color:var(--red);font-weight:700">SELL</span> $${Math.abs(d.charmExp/1e6).toFixed(2)}M/day = กดลง`
-        : `เวลาผ่าน → Dealers <span style="color:var(--green);font-weight:700">BUY</span> $${Math.abs(d.charmExp/1e6).toFixed(2)}M/day = ดันขึ้น`;
+        ? `เวลาผ่าน → Dealers <span style="color:var(--red);font-weight:700">SELL</span> $${Math.abs(d.charmExp / 1e6).toFixed(2)}M/day = กดลง`
+        : `เวลาผ่าน → Dealers <span style="color:var(--green);font-weight:700">BUY</span> $${Math.abs(d.charmExp / 1e6).toFixed(2)}M/day = ดันขึ้น`;
 
     // Vomma: cascade risk level
     const vommaMag = Math.abs(d.vommaExp / 1e6);
@@ -1230,7 +1380,7 @@ function renderAnalysisTab() {
     const vommaLevelColor = vommaMag > 50 ? 'var(--red)' : vommaMag > 10 ? 'var(--orange)' : 'var(--green)';
     const vommaDesc = vommaMag > 50 ? 'Vol พุ่ง → Cascade รุนแรง (Dealers ยิ่ง short Vega)'
         : vommaMag > 10 ? 'Vol พุ่ง → อาจ Cascade ได้'
-        : 'Vol พุ่ง → ไม่น่า Cascade';
+            : 'Vol พุ่ง → ไม่น่า Cascade';
     const vommaText = `<span style="color:${vommaLevelColor};font-weight:700">${vommaLevel}</span> — ${vommaDesc}`;
 
     // Dealer Flow Summary: resolves Vanna vs Charm conflicts
@@ -1251,8 +1401,8 @@ function renderAnalysisTab() {
         const dteTip = d.dte < 7
             ? `<span style="color:var(--orange);font-weight:700">DTE < 7 → Charm แรงกว่า</span> (Theta Decay เร่ง)`
             : d.dte > 30
-            ? `<span style="color:var(--cyan);font-weight:700">DTE > 30 → Vanna แรงกว่า</span> (Vol Move สำคัญกว่า)`
-            : `DTE ปานกลาง → ดูว่า IV จะขยับหรือไม่`;
+                ? `<span style="color:var(--cyan);font-weight:700">DTE > 30 → Vanna แรงกว่า</span> (Vol Move สำคัญกว่า)`
+                : `DTE ปานกลาง → ดูว่า IV จะขยับหรือไม่`;
         flowSummaryHtml = `⚔️ ขัดแย้ง: ตลาดเงียบ → <span style="color:${charmClr};font-weight:700">Charm ${charmBull ? 'ดันขึ้น' : 'กดลง'}</span> | IV พุ่ง → <span style="color:${vannaClr};font-weight:700">Vanna ${vannaBull ? 'ดันขึ้น' : 'กดลง'}</span><br><span style="font-size:12px">${dteTip}</span>`;
     } else {
         flowSummaryHtml = `<span style="color:var(--text-secondary)">🔹 แรงกดดันจาก Dealer Hedging ต่ำ</span>`;
@@ -1261,7 +1411,7 @@ function renderAnalysisTab() {
     const hedgeIcon = d.hedgeLabel === 'Heavy Hedge' ? '🛡️' : d.hedgeLabel === 'Moderate Hedge' ? '🛡️' : '🎰';
     const hedgeText = d.hedgeLabel === 'Heavy Hedge' ? `สถาบัน Hedge หนัก (ITM ${d.itmPct.toFixed(0)}%) — มั่นใจสูง ป้อง downside`
         : d.hedgeLabel === 'Moderate Hedge' ? `สถาบัน Hedge ปานกลาง (ITM ${d.itmPct.toFixed(0)}%)`
-        : `Spec-Driven — ขาเก็งกำไรนำ (ITM ${d.itmPct.toFixed(0)}%)`;
+            : `Spec-Driven — ขาเก็งกำไรนำ (ITM ${d.itmPct.toFixed(0)}%)`;
 
     // ── MULTI-TIMEFRAME CONTEXT ──
     const tfHints = [];
@@ -1285,14 +1435,13 @@ function renderAnalysisTab() {
             <span style="font-size:13px;color:var(--orange);font-weight:700">ราคา Futures ไม่พบในข้อมูล — ค่าทุกอย่างใช้ค่าประมาณ → รัน Scraper ใหม่</span>
         </div>` : '';
 
-    // ── RENDER SINGLE PANEL ──
+    // ── RENDER GRID LAYOUT ──
     header.innerHTML = '';
     container.innerHTML = `
-    <div style="max-width:760px;margin:0 auto">
         ${fallbackHtml}
 
-        <!-- HERO -->
-        <div style="padding:20px 24px;background:linear-gradient(135deg,rgba(255,255,255,.04),transparent);border:1px solid ${bColor}40;border-radius:14px;margin-bottom:16px">
+        <!-- HERO — full width -->
+        <div style="padding:20px 24px;background:linear-gradient(135deg,rgba(255,255,255,.04),transparent);border:1px solid ${bColor}40;border-radius:14px">
             <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:8px">
                 <div style="display:inline-flex;padding:6px 16px;border-radius:20px;font-size:15px;font-weight:900;letter-spacing:.5px;background:${bColor}1a;border:1px solid ${bColor}55;color:${bColor}">${bText}</div>
                 <div style="font-size:26px;font-weight:900;color:#ffffff">$${d.uPrice.toFixed(1)}</div>
@@ -1303,38 +1452,43 @@ function renderAnalysisTab() {
             <div style="font-size:13px">${regimeLabel}</div>
         </div>
 
-        <!-- KEY LEVELS -->
-        <div style="padding:18px 22px;background:var(--bg-panel);border:1px solid var(--border);border-radius:14px;margin-bottom:16px">
-            <div style="font-size:12px;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px">📍 Key Levels <span style="font-weight:400;text-transform:none;letter-spacing:0">(เรียงจากใกล้ราคา)</span></div>
-            ${rangeBarHtml}
-            ${levelsHtml}
-            ${breakoutHtml}
-        </div>
+        <!-- 2-COLUMN ROW: Key Levels + Institutional Intel -->
+        <div class="setup-grid-row">
 
-        <!-- INSTITUTIONAL INTEL -->
-        <div style="padding:16px 22px;background:var(--bg-panel);border:1px solid var(--border);border-radius:14px;margin-bottom:16px">
-            <div style="font-size:12px;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px">🏦 Institutional Intel</div>
-            <div style="padding:8px 12px;background:rgba(255,255,255,.03);border-radius:8px;border:1px solid rgba(255,255,255,.06);margin-bottom:8px">
-                <div style="font-size:11px;color:var(--text-muted);font-weight:700;margin-bottom:4px">🔮 DEALER FLOW SUMMARY</div>
-                <div style="font-size:14px;color:var(--text-primary);line-height:1.7">${flowSummaryHtml}</div>
+            <!-- KEY LEVELS -->
+            <div style="padding:18px 22px;background:var(--bg-panel);border:1px solid var(--border);border-radius:14px;display:flex;flex-direction:column">
+                <div style="font-size:12px;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px">📍 Key Levels <span style="font-weight:400;text-transform:none;letter-spacing:0">(เรียงจากใกล้ราคา)</span></div>
+                ${rangeBarHtml}
+                ${levelsHtml}
+                ${breakoutHtml}
             </div>
-            <div style="font-size:14px;color:var(--text-secondary);padding:5px 0;line-height:1.6">${hedgeIcon} ${hedgeText}</div>
-            <div style="font-size:14px;color:var(--text-secondary);padding:5px 0;line-height:1.6">⚡ Vanna: ${vannaText}</div>
-            <div style="font-size:14px;color:var(--text-secondary);padding:5px 0;line-height:1.6">⏱️ Charm: ${charmText}</div>
-            <div style="font-size:14px;color:var(--text-secondary);padding:5px 0;line-height:1.6">🌊 Vomma: ${vommaText}</div>
+
+            <!-- INSTITUTIONAL INTEL -->
+            <div style="padding:16px 22px;background:var(--bg-panel);border:1px solid var(--border);border-radius:14px;display:flex;flex-direction:column">
+                <div style="font-size:12px;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px">🏦 Institutional Intel</div>
+                <div style="padding:8px 12px;background:rgba(255,255,255,.03);border-radius:8px;border:1px solid rgba(255,255,255,.06);margin-bottom:8px">
+                    <div style="font-size:11px;color:var(--text-muted);font-weight:700;margin-bottom:4px">🔮 DEALER FLOW SUMMARY</div>
+                    <div style="font-size:14px;color:var(--text-primary);line-height:1.7">${flowSummaryHtml}</div>
+                </div>
+                <div style="font-size:14px;color:var(--text-secondary);padding:5px 0;line-height:1.6">${hedgeIcon} ${hedgeText}</div>
+                <div style="font-size:14px;color:var(--text-secondary);padding:5px 0;line-height:1.6">⚡ Vanna: ${vannaText}</div>
+                <div style="font-size:14px;color:var(--text-secondary);padding:5px 0;line-height:1.6">⏱️ Charm: ${charmText}</div>
+                <div style="font-size:14px;color:var(--text-secondary);padding:5px 0;line-height:1.6">🌊 Vomma: ${vommaText}</div>
+            </div>
+
         </div>
 
-        <!-- ACTION -->
-        <div style="padding:18px 22px;background:rgba(0,0,0,.3);border:1px solid ${bColor}30;border-left:4px solid ${bColor};border-radius:14px;margin-bottom:16px">
+        <!-- ACTION — full width -->
+        <div style="padding:18px 22px;background:rgba(0,0,0,.3);border:1px solid ${bColor}30;border-left:4px solid ${bColor};border-radius:14px">
             <div style="font-size:12px;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px">📋 What to Do</div>
             <div style="font-size:15px;color:var(--text-primary);line-height:1.9;font-weight:600">${actionHtml}</div>
         </div>
 
-        <!-- MULTI-TIMEFRAME -->
+        <!-- MULTI-TIMEFRAME — full width -->
         <div style="padding:10px 22px;font-size:13px;color:var(--text-secondary);display:flex;gap:16px;flex-wrap:wrap;justify-content:center">
             ${tfHints.join(' <span style="opacity:.3">|</span> ')}
         </div>
-    </div>`;
+    `;
 }
 
 function renderActiveTab() {
