@@ -346,7 +346,7 @@ def get_expiration_contracts(driver):
         var links = document.querySelectorAll('a[id*="lbExpiration"]');
         var result = [];
         links.forEach(function(a) {
-            var txt = a.textContent.replace(/\s+/g,' ').trim();
+            var txt = a.textContent.replace(/\s+/g,' ').trim().split(' ')[0];
             result.push({id: a.id.slice(-40), txt: txt, vis: a.offsetParent !== null});
         });
         return result;
@@ -364,7 +364,7 @@ def get_expiration_contracts(driver):
         document.querySelectorAll('a[id*="lbExpiration"]').forEach(function(a) {
             var id = a.id || '';
             // Get just the first line of text (popup links have lots of whitespace)
-            var txt = a.textContent.replace(/\s+/g,' ').trim();
+            var txt = a.textContent.replace(/\s+/g,' ').trim().split(' ')[0];
             if (contractPattern.test(txt) && txt.length < 15) {
                 var title = a.title || '';
                 var dte = null;
@@ -402,7 +402,7 @@ def get_expiration_contracts(driver):
             var contractPattern = /^(OG|G[0-9])/;
             document.querySelectorAll('a[id*="lbExpiration"]').forEach(function(a) {
                 var id = a.id || '';
-                var txt = a.textContent.replace(/\s+/g,' ').trim();
+                var txt = a.textContent.replace(/\s+/g,' ').trim().split(' ')[0];
                 if (contractPattern.test(txt) && txt.length < 15) {
                     var title = a.title || '';
                     var dte = null;
