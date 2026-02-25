@@ -337,59 +337,60 @@ def get_expiration_contracts(driver):
     """
     wait_ready(driver)
 
-    print('[EXPIRY] Opening expiration selector popup to get all contracts...')
-    # Try to open selector popup
-    for sel in ['[id*="hlExpiration"]', '[id*="Expiration"]']:
-        try:
-            el = driver.find_element(By.CSS_SELECTOR, sel)
-            if el.tag_name == 'a' and el.is_displayed():
-                driver.execute_script('arguments[0].click();', el)
-                time.sleep(2)
-                print(f'[EXPIRY] Clicked dropdown: {sel}')
-                break
-        except:
-            continue
-
-    # Step 1: Debug - dump ALL links matching contract pattern (regardless of id)
-    debug_all = driver.execute_script("""
-        var result = [];
-        var contractPattern = /^(OG|G[0-9])/;
-        document.querySelectorAll('a').forEach(function(a) {
-            var txt = a.textContent.trim();
-            if (contractPattern.test(txt) && txt.length < 15) {
-                result.push({text: txt, id: (a.id || '(none)'), title: (a.title || ''), visible: a.offsetParent !== null});
-            }
-        });
-        return result;
-    """)
-    if debug_all:
-        print(f'[DEBUG] ALL contract-pattern links found ({len(debug_all)}):')
-        for d in debug_all[:30]:
-            print(f'  {d["text"]:10s} id={d["id"][:50]:50s} vis={d["visible"]}  title={d["title"][:60]}')
-    else:
-        print('[DEBUG] No contract-pattern links found at all!')
-
-    # Step 2: Collect contracts - broadened filter to catch daily contracts too
-    contracts = driver.execute_script("""
-        var result = [];
-        var contractPattern = /^(OG|G[0-9])/;
-        document.querySelectorAll('a').forEach(function(a) {
-            var id = a.id || '';
-            var txt = a.textContent.trim();
-            var idLower = id.toLowerCase();
-            var hasExpirationId = idLower.indexOf('expiration') >= 0;
-            if (hasExpirationId && contractPattern.test(txt) && txt.length < 15) {
-                var title = a.title || '';
-                var dte = null;
-                var match = title.match(/([\d.]+)\s*DTE/i);
-                if (match) dte = parseFloat(match[1]);
-                if (!result.find(c => c.text === txt)) {
-                    result.push({text: txt, id: id, title: title, dte: dte});
+    # Scan ALL links matching contract pattern FIRST (before any clicks)
+    # The popup grid may already be open after login — clicking dropdown could TOGGLE it closed!
+    def scan_contracts():
+        return driver.execute_script("""
+            var result = [];
+            var contractPattern = /^(OG|G[0-9])/;
+            document.querySelectorAll('a').forEach(function(a) {
+                var id = a.id || '';
+                var txt = a.textContent.trim();
+                var idLower = id.toLowerCase();
+                var hasExpirationId = idLower.indexOf('expiration') >= 0;
+                if (hasExpirationId && contractPattern.test(txt) && txt.length < 15) {
+                    var title = a.title || '';
+                    var dte = null;
+                    var match = title.match(/([\d.]+)\s*DTE/i);
+                    if (match) dte = parseFloat(match[1]);
+                    if (!result.find(c => c.text === txt)) {
+                        result.push({text: txt, id: id, title: title, dte: dte});
+                    }
                 }
-            }
-        });
-        return result;
-    """)
+            });
+            return result;
+        """)
+
+    # Attempt 1: scan without clicking (popup may already be open)
+    contracts = scan_contracts()
+    daily_found = any(c['text'].startswith('G') and not c['text'].startswith('OG') for c in (contracts or []))
+    print(f'[EXPIRY] Pre-click scan: {len(contracts or [])} contracts, daily={daily_found}')
+
+    if not daily_found:
+        # Attempt 2: toggle popup open and scan again
+        print('[EXPIRY] No daily contracts found — toggling popup...')
+        for sel in ['[id*="hlExpiration"]', '[id*="Expiration"]']:
+            try:
+                el = driver.find_element(By.CSS_SELECTOR, sel)
+                if el.tag_name == 'a' and el.is_displayed():
+                    driver.execute_script('arguments[0].click();', el)
+                    time.sleep(2)
+                    print(f'[EXPIRY] Clicked dropdown: {sel}')
+                    break
+            except:
+                continue
+        contracts2 = scan_contracts()
+        daily_found2 = any(c['text'].startswith('G') and not c['text'].startswith('OG') for c in (contracts2 or []))
+        print(f'[EXPIRY] Post-click scan: {len(contracts2 or [])} contracts, daily={daily_found2}')
+        # Use whichever scan found more contracts (especially daily ones)
+        if len(contracts2 or []) > len(contracts or []) or (daily_found2 and not daily_found):
+            contracts = contracts2
+
+    # Log what we found
+    for c in (contracts or [])[:20]:
+        dte_str = f'{c["dte"]:.1f} DTE' if c.get('dte') is not None else 'no DTE'
+        ctype = 'Daily' if (c['text'].startswith('G') and not c['text'].startswith('OG')) else ('Friday' if c['text'][:2] == 'OG' and len(c['text']) >= 4 and c['text'][2].isdigit() else 'Monthly')
+        print(f'  {c["text"]:8s} ({dte_str}) [{ctype}] id=...{c["id"][-25:]}')
 
     if contracts and len(contracts) > 0:
         print(f'[EXPIRY] Found {len(contracts)} contracts in popup/page:')
