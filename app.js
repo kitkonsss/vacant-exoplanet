@@ -1097,7 +1097,7 @@ function renderAnalysisTab() {
             distToCallWall: maxCall.strike - uPrice, distToPutWall: uPrice - maxPut.strike,
             nearCallWall, nearPutWall,
             nearestCall, nearestPut, callWalls, putWalls, callSummary, putSummary,
-            tradeableRange, er1Day,
+            tradeableRange, er1Day, sourceStrikes2,
             risk, vannaExp, charmExp, vommaExp, hedgeLabel, itmPct, dte: data.dte
         };
     }
@@ -1187,7 +1187,7 @@ function renderAnalysisTab() {
     for (const w of d.putWalls) {
         const tierBadge = tierLabel(w.tier);
         const clusterInfo = w.clusterCount > 1 ? ` [${w.clusterCount} strikes, ${w.clusterOI.toLocaleString()} total]` : '';
-        const migrationTag = checkWallMigration(w.strike, 'put', w.oi, sourceStrikes2);
+        const migrationTag = checkWallMigration(w.strike, 'put', w.oi, d.sourceStrikes2);
         levels.push({
             price: w.strike, label: `Put Wall ${migrationTag}`, color: 'var(--put-color)',
             icon: tierIcon(w.tier), dist: -(w.dist), oi: w.oi, tier: w.tier,
@@ -1211,7 +1211,7 @@ function renderAnalysisTab() {
     for (const w of d.callWalls) {
         const tierBadge = tierLabel(w.tier);
         const clusterInfo = w.clusterCount > 1 ? ` [${w.clusterCount} strikes, ${w.clusterOI.toLocaleString()} total]` : '';
-        const migrationTag = checkWallMigration(w.strike, 'call', w.oi, sourceStrikes2);
+        const migrationTag = checkWallMigration(w.strike, 'call', w.oi, d.sourceStrikes2);
         levels.push({
             price: w.strike, label: `Call Wall ${migrationTag}`, color: 'var(--call-color)',
             icon: tierIcon(w.tier), dist: w.dist, oi: w.oi, tier: w.tier,
