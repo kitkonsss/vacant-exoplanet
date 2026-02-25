@@ -924,8 +924,8 @@ def scrape_contract(driver, contract, prefix):
     contract_text = contract_text.replace('\n', ' ').strip()
 
     # 1. Intraday Volume (Default view usually)
-    print(f'[SCRAPE] Default view = Intraday Volume — scraping immediately...')
-    path = scrape_view(driver, 'intraday', prefix, header_prefix=contract_text, skip_switch=True)
+    print(f'[SCRAPE] Explicitly switching to Intraday Volume...')
+    path = scrape_view(driver, 'intraday', prefix, header_prefix=contract_text, skip_switch=False)
     if path:
         results['intraday'] = path
 
