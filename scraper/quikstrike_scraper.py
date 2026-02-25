@@ -350,19 +350,39 @@ def get_expiration_contracts(driver):
         except:
             continue
 
-    # Read from the popup grid first
+    # Step 1: Debug - dump ALL links matching contract pattern (regardless of id)
+    debug_all = driver.execute_script("""
+        var result = [];
+        var contractPattern = /^(OG|G[0-9])/;
+        document.querySelectorAll('a').forEach(function(a) {
+            var txt = a.textContent.trim();
+            if (contractPattern.test(txt) && txt.length < 15) {
+                result.push({text: txt, id: (a.id || '(none)'), title: (a.title || ''), visible: a.offsetParent !== null});
+            }
+        });
+        return result;
+    """)
+    if debug_all:
+        print(f'[DEBUG] ALL contract-pattern links found ({len(debug_all)}):')
+        for d in debug_all[:30]:
+            print(f'  {d["text"]:10s} id={d["id"][:50]:50s} vis={d["visible"]}  title={d["title"][:60]}')
+    else:
+        print('[DEBUG] No contract-pattern links found at all!')
+
+    # Step 2: Collect contracts - broadened filter to catch daily contracts too
     contracts = driver.execute_script("""
         var result = [];
-        var contractPattern = /^(OG|G[0-9])/; // OG (Monthly/Friday) OR G+Digit (Daily)
+        var contractPattern = /^(OG|G[0-9])/;
         document.querySelectorAll('a').forEach(function(a) {
             var id = a.id || '';
             var txt = a.textContent.trim();
-            if (id.indexOf('lbExpiration') >= 0 && contractPattern.test(txt) && txt.length < 15) {
+            var idLower = id.toLowerCase();
+            var hasExpirationId = idLower.indexOf('expiration') >= 0;
+            if (hasExpirationId && contractPattern.test(txt) && txt.length < 15) {
                 var title = a.title || '';
                 var dte = null;
-                var match = title.match(/([\\d.]+)\\s*DTE/i);
+                var match = title.match(/([\d.]+)\s*DTE/i);
                 if (match) dte = parseFloat(match[1]);
-                // avoid duplicates
                 if (!result.find(c => c.text === txt)) {
                     result.push({text: txt, id: id, title: title, dte: dte});
                 }
