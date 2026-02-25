@@ -1165,6 +1165,21 @@ function renderAnalysisTab() {
     const tierIcon = t => t === 'primary' ? '🔴' : t === 'secondary' ? '🟡' : '⚪';
     const tierLabel = t => t === 'primary' ? 'Primary' : t === 'secondary' ? 'Secondary' : 'Minor';
 
+    // Wall Migration / Intraday Flow logic wrapper
+    // Compares Intraday Vol vs OI to gauge if a wall is reinforced or stale
+    const checkWallMigration = (strike, side, oi, intradayStrikesData) => {
+        if (!intradayStrikesData || intradayStrikesData.length === 0) return '';
+        const intraStrike = intradayStrikesData.find(s => s.strike === strike);
+        if (!intraStrike) return '';
+        const intraVol = side === 'put' ? intraStrike.put : intraStrike.call;
+        if (oi > 0) {
+            const volPace = intraVol / oi;
+            if (volPace > 0.15) return ' <span style="color:var(--green);font-size:10px;background:rgba(38,166,154,.15);padding:1px 4px;border-radius:3px;margin-left:4px" title="Volume/OI > 15%">⚡ แรงหนุนเพิ่ม (Reinforced)</span>';
+            if (volPace < 0.02) return ' <span style="color:var(--text-muted);font-size:10px;background:rgba(255,255,255,.05);padding:1px 4px;border-radius:3px;margin-left:4px" title="Volume/OI < 2%">⏳ เก่า/แห้ง (Stale)</span>';
+        }
+        return '';
+    };
+
     // Put Walls — all significant walls below price
     if (d.priceBelowPutWall) {
         levels.push({ price: d.structPutWall.strike, label: '💔 Broken Put Wall', color: 'var(--orange)', icon: '💔', dist: d.structPutWall.strike - d.uPrice, oi: 0, tier: '', action: 'ราคาหลุดแล้ว → กลายเป็น Resistance (SL zone)' });
@@ -1172,8 +1187,9 @@ function renderAnalysisTab() {
     for (const w of d.putWalls) {
         const tierBadge = tierLabel(w.tier);
         const clusterInfo = w.clusterCount > 1 ? ` [${w.clusterCount} strikes, ${w.clusterOI.toLocaleString()} total]` : '';
+        const migrationTag = checkWallMigration(w.strike, 'put', w.oi, sourceStrikes2);
         levels.push({
-            price: w.strike, label: `Put Wall (${tierBadge})`, color: 'var(--put-color)',
+            price: w.strike, label: `Put Wall ${migrationTag}`, color: 'var(--put-color)',
             icon: tierIcon(w.tier), dist: -(w.dist), oi: w.oi, tier: w.tier,
             action: `Support ${w.isNearby ? '📍 ใกล้!' : ''} OI: ${w.oi.toLocaleString()}${clusterInfo}`
         });
@@ -1195,8 +1211,9 @@ function renderAnalysisTab() {
     for (const w of d.callWalls) {
         const tierBadge = tierLabel(w.tier);
         const clusterInfo = w.clusterCount > 1 ? ` [${w.clusterCount} strikes, ${w.clusterOI.toLocaleString()} total]` : '';
+        const migrationTag = checkWallMigration(w.strike, 'call', w.oi, sourceStrikes2);
         levels.push({
-            price: w.strike, label: `Call Wall (${tierBadge})`, color: 'var(--call-color)',
+            price: w.strike, label: `Call Wall ${migrationTag}`, color: 'var(--call-color)',
             icon: tierIcon(w.tier), dist: w.dist, oi: w.oi, tier: w.tier,
             action: `Resistance ${w.isNearby ? '📍 ใกล้!' : ''} OI: ${w.oi.toLocaleString()}${clusterInfo}`
         });
@@ -1362,17 +1379,32 @@ function renderAnalysisTab() {
     }
 
     // ── INSTITUTIONAL INTEL ──
+    const adv = 200000; // Estimated Daily Gold Futures Volume (Contracts)
+
     // Vanna: positive = dealers SELL (bearish), negative = dealers BUY (bullish)
+    // 1 Option = 1 Futures contract equivalent (100 oz)
+    const vannaContracts = Math.abs(d.vannaExp / (d.uPrice * 100));
+    const vannaPctAdv = (vannaContracts / adv * 100).toFixed(1);
     const vannaColor = d.vannaExp > 0 ? 'var(--red)' : 'var(--green)';
     const vannaText = d.vannaExp > 0
-        ? `IV↑ → Dealers <span style="color:var(--red);font-weight:700">SELL</span> $${Math.abs(d.vannaExp / 1e6).toFixed(1)}M = กดลง`
-        : `IV↑ → Dealers <span style="color:var(--green);font-weight:700">BUY</span> $${Math.abs(d.vannaExp / 1e6).toFixed(1)}M = ดันขึ้น`;
+        ? `IV +1% → Dealers <span style="color:var(--red);font-weight:700">SELL</span> ~${Math.round(vannaContracts).toLocaleString()} สัญญา (${vannaPctAdv}% ADV) = กดลง`
+        : `IV +1% → Dealers <span style="color:var(--green);font-weight:700">BUY</span> ~${Math.round(vannaContracts).toLocaleString()} สัญญา (${vannaPctAdv}% ADV) = ดันขึ้น`;
 
     // Charm: positive = dealers SELL (bearish), negative = dealers BUY (bullish)
+    const charmContracts = Math.abs(d.charmExp / (d.uPrice * 100));
+    const charmPctAdv = (charmContracts / adv * 100).toFixed(1);
     const charmColor = d.charmExp > 0 ? 'var(--red)' : 'var(--green)';
     const charmText = d.charmExp > 0
-        ? `เวลาผ่าน → Dealers <span style="color:var(--red);font-weight:700">SELL</span> $${Math.abs(d.charmExp / 1e6).toFixed(2)}M/day = กดลง`
-        : `เวลาผ่าน → Dealers <span style="color:var(--green);font-weight:700">BUY</span> $${Math.abs(d.charmExp / 1e6).toFixed(2)}M/day = ดันขึ้น`;
+        ? `Theta/Day → Dealers <span style="color:var(--red);font-weight:700">SELL</span> ~${Math.round(charmContracts).toLocaleString()} สัญญา (${charmPctAdv}% ADV) = กดลง`
+        : `Theta/Day → Dealers <span style="color:var(--green);font-weight:700">BUY</span> ~${Math.round(charmContracts).toLocaleString()} สัญญา (${charmPctAdv}% ADV) = ดันขึ้น`;
+
+    // Net GEX & Liquidity-Adjusted Gamma
+    const gexContracts = Math.abs(d.gexVal / (d.uPrice * 100)); // GEX per $1 move
+    const gexPctAdv = (gexContracts / adv * 100).toFixed(1);
+    const gexSqueezeRisk = gexPctAdv > 5 ? '<span style="color:var(--orange);font-weight:700;background:rgba(255,152,0,0.1);padding:2px 6px;border-radius:4px;font-size:11px;margin-left:6px">⚠️ High Slippage Risk</span>' : '';
+    const gexText = d.isLongGamma
+        ? `+1 USD → Dealers <span style="color:var(--red);font-weight:700">SELL</span> ~${Math.round(gexContracts).toLocaleString()} สัญญา (${gexPctAdv}% ADV) = ต้านสมดุล`
+        : `+1 USD → Dealers <span style="color:var(--green);font-weight:700">BUY</span> ~${Math.round(gexContracts).toLocaleString()} สัญญา (${gexPctAdv}% ADV) ${gexSqueezeRisk} = วิ่งตามน้ำ`;
 
     // Vomma: cascade risk level
     const vommaMag = Math.abs(d.vommaExp / 1e6);
@@ -1386,7 +1418,28 @@ function renderAnalysisTab() {
     // Dealer Flow Summary: resolves Vanna vs Charm conflicts
     const vannaDir = d.vannaExp > 0 ? 'sell' : d.vannaExp < 0 ? 'buy' : 'neutral';
     const charmDir = d.charmExp > 0 ? 'sell' : d.charmExp < 0 ? 'buy' : 'neutral';
-    let flowSummaryHtml;
+    let flowSummaryHtml = '';
+
+    // Expected Flow Matrix Table
+    const flowMatrixHtml = `
+    <div style="margin-top:10px;border-top:1px solid rgba(255,255,255,0.05);padding-top:10px;">
+        <div style="font-size:11px;color:var(--text-muted);font-weight:700;margin-bottom:6px">🔮 24H FORWARD EXPECTED FLOW (Contracts)</div>
+        <div style="display:flex;flex-direction:column;gap:4px;font-size:13px;">
+            <div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid rgba(255,255,255,0.03)">
+                <span style="color:var(--text-secondary)">1. ตลาดซึม (IV ตก, เวลาเดิน)</span>
+                <span>${charmDir === 'buy' ? '<span style="color:var(--green)">Buy</span>' : charmDir === 'sell' ? '<span style="color:var(--red)">Sell</span>' : '-'} ~${Math.round(charmContracts).toLocaleString()}</span>
+            </div>
+            <div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid rgba(255,255,255,0.03)">
+                <span style="color:var(--text-secondary)">2. ตลาดตกใจ (IV พุ่ง +10%)</span>
+                <span>${vannaDir === 'buy' ? '<span style="color:var(--green)">Buy</span>' : vannaDir === 'sell' ? '<span style="color:var(--red)">Sell</span>' : '-'} ~${Math.round(vannaContracts * 10).toLocaleString()}</span>
+            </div>
+            <div style="display:flex;justify-content:space-between;padding:4px 0;">
+                <span style="color:var(--text-secondary)">3. ราคาวิ่งแรง (+$20 USD)</span>
+                <span>${d.isLongGamma ? '<span style="color:var(--red)">Sell (ต้าน)</span>' : '<span style="color:var(--green)">Buy (ตามน้ำ)</span>'} ~${Math.round(gexContracts * 20).toLocaleString()}</span>
+            </div>
+        </div>
+    </div>`;
+
     if (vannaDir === charmDir && vannaDir !== 'neutral') {
         const isBull = vannaDir === 'buy';
         const clr = isBull ? 'var(--green)' : 'var(--red)';
@@ -1408,13 +1461,45 @@ function renderAnalysisTab() {
         flowSummaryHtml = `<span style="color:var(--text-secondary)">🔹 แรงกดดันจาก Dealer Hedging ต่ำ</span>`;
     }
 
+    flowSummaryHtml += flowMatrixHtml;
+
     const hedgeIcon = d.hedgeLabel === 'Heavy Hedge' ? '🛡️' : d.hedgeLabel === 'Moderate Hedge' ? '🛡️' : '🎰';
     const hedgeText = d.hedgeLabel === 'Heavy Hedge' ? `สถาบัน Hedge หนัก (ITM ${d.itmPct.toFixed(0)}%) — มั่นใจสูง ป้อง downside`
         : d.hedgeLabel === 'Moderate Hedge' ? `สถาบัน Hedge ปานกลาง (ITM ${d.itmPct.toFixed(0)}%)`
             : `Spec-Driven — ขาเก็งกำไรนำ (ITM ${d.itmPct.toFixed(0)}%)`;
 
-    // ── MULTI-TIMEFRAME CONTEXT ──
+    // ── MULTI-TIMEFRAME CONTEXT & VOLATILITY TERM STRUCTURE ──
     const tfHints = [];
+    let termStructureHtml = '';
+
+    // Volatility Term Structure Logic
+    const dailyVol = tfData['current']?.er1Day > 0 ? (tfData['current'].er1Day / tfData['current'].uPrice) * Math.sqrt(365) * 100 : 0;
+    const weeklyVol = tfData['friday']?.er1Day > 0 ? (tfData['friday'].er1Day / tfData['friday'].uPrice) * Math.sqrt(365) * 100 : 0;
+    const monthlyVol = tfData['monthly']?.er1Day > 0 ? (tfData['monthly'].er1Day / tfData['monthly'].uPrice) * Math.sqrt(365) * 100 : 0;
+
+    if (dailyVol > 0 && monthlyVol > 0) {
+        const volRatio = dailyVol / monthlyVol;
+        let tsState = '';
+        let tsColor = '';
+        let tsDesc = '';
+
+        if (volRatio > 1.1) {
+            tsState = 'BACKWARDATION (Panic)';
+            tsColor = 'var(--red)';
+            tsDesc = 'Short-term IV พุ่งสูงกว่า Long-term → ตลาดตกใจ/มีข่าวแรง (Setup ดัก Reversion)';
+        } else if (volRatio < 0.9) {
+            tsState = 'CONTANGO (Complacent)';
+            tsColor = 'var(--cyan)';
+            tsDesc = 'Short-term IV ต่ำกว่า Long-term → ตลาดชะล่าใจ (Setup ดัก Long Vol/Gamma)';
+        } else {
+            tsState = 'FLAT (Normal)';
+            tsColor = 'var(--text-secondary)';
+            tsDesc = 'โครงสร้าง Volatility ปกติ ไม่มี Edge พิเศษจาก Time Structure';
+        }
+
+        termStructureHtml = `<div style="font-size:14px;color:var(--text-secondary);padding:6px 0;line-height:1.6;border-bottom:1px solid rgba(255,255,255,.03)">⏳ <b>Vol Term Structure:</b> <span style="color:${tsColor};font-weight:700">${tsState}</span><br><span style="font-size:12px;opacity:0.8">${tsDesc} (Daily: ${dailyVol.toFixed(1)}% vs Monthly: ${monthlyVol.toFixed(1)}%)</span></div>`;
+    }
+
     for (const key of ['current', 'friday', 'monthly']) {
         const r = tfData[key];
         if (!r) continue;
@@ -1466,14 +1551,16 @@ function renderAnalysisTab() {
             <!-- INSTITUTIONAL INTEL -->
             <div style="padding:16px 22px;background:var(--bg-panel);border:1px solid var(--border);border-radius:14px;display:flex;flex-direction:column">
                 <div style="font-size:12px;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px">🏦 Institutional Intel</div>
-                <div style="padding:8px 12px;background:rgba(255,255,255,.03);border-radius:8px;border:1px solid rgba(255,255,255,.06);margin-bottom:8px">
-                    <div style="font-size:11px;color:var(--text-muted);font-weight:700;margin-bottom:4px">🔮 DEALER FLOW SUMMARY</div>
+                <div style="padding:10px 14px;background:rgba(255,255,255,.03);border-radius:10px;border:1px solid rgba(255,255,255,.06);margin-bottom:12px">
+                    <div style="font-size:11px;color:var(--text-muted);font-weight:700;margin-bottom:6px">📊 DEALER FLOW SUMMARY</div>
                     <div style="font-size:14px;color:var(--text-primary);line-height:1.7">${flowSummaryHtml}</div>
                 </div>
-                <div style="font-size:14px;color:var(--text-secondary);padding:5px 0;line-height:1.6">${hedgeIcon} ${hedgeText}</div>
-                <div style="font-size:14px;color:var(--text-secondary);padding:5px 0;line-height:1.6">⚡ Vanna: ${vannaText}</div>
-                <div style="font-size:14px;color:var(--text-secondary);padding:5px 0;line-height:1.6">⏱️ Charm: ${charmText}</div>
-                <div style="font-size:14px;color:var(--text-secondary);padding:5px 0;line-height:1.6">🌊 Vomma: ${vommaText}</div>
+                <div style="font-size:14px;color:var(--text-secondary);padding:6px 0;line-height:1.6;border-bottom:1px solid rgba(255,255,255,.03)">${hedgeIcon} ${hedgeText}</div>
+                ${termStructureHtml}
+                <div style="font-size:14px;color:var(--text-secondary);padding:6px 0;line-height:1.6;border-bottom:1px solid rgba(255,255,255,.03)">🌊 <b>GEX (Gamma):</b> ${gexText}</div>
+                <div style="font-size:14px;color:var(--text-secondary);padding:6px 0;line-height:1.6;border-bottom:1px solid rgba(255,255,255,.03)">⚡ <b>Vanna:</b> ${vannaText}</div>
+                <div style="font-size:14px;color:var(--text-secondary);padding:6px 0;line-height:1.6;border-bottom:1px solid rgba(255,255,255,.03)">⏱️ <b>Charm:</b> ${charmText}</div>
+                <div style="font-size:14px;color:var(--text-secondary);padding:6px 0;line-height:1.6">🌪️ <b>Vomma:</b> ${vommaText}</div>
             </div>
 
         </div>
