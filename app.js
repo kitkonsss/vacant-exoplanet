@@ -513,9 +513,12 @@ function parseVol2VolData(text) {
     const typeMatch = header.match(/- (.+)$/);
 
     let contract = '';
+    const symMatch = header.match(/Option Symbol:\s*(\S+)/);
     const cMatch1 = header.match(/Contract:\s+(\S+)/);
     const cMatch2 = header.match(/\)\s+(\S+)\s+\(/);
-    if (cMatch1) contract = cMatch1[1];
+
+    if (symMatch) contract = symMatch[1];
+    else if (cMatch1) contract = cMatch1[1];
     else if (cMatch2) contract = cMatch2[1];
 
     const dte = dteMatch ? parseFloat(dteMatch[1]) : 0;
@@ -1269,27 +1272,43 @@ function renderAnalysisTab() {
     for (const w of d.putWalls) {
         const pct = Math.max(0, Math.min(100, ((w.strike - barLow) / barRange) * 100));
         const h = w.tier === 'primary' ? 18 : w.tier === 'secondary' ? 13 : 8;
-        markers.push({ pct, color: 'var(--put-color)', label: '', height: h, opacity: w.tier === 'tertiary' ? 0.5 : 1 });
+        markers.push({ pct, color: 'var(--put-color)', label: w.strike.toString(), height: h, opacity: w.tier === 'tertiary' ? 0.5 : 1 });
     }
     for (const w of d.callWalls) {
         const pct = Math.max(0, Math.min(100, ((w.strike - barLow) / barRange) * 100));
         const h = w.tier === 'primary' ? 18 : w.tier === 'secondary' ? 13 : 8;
-        markers.push({ pct, color: 'var(--call-color)', label: '', height: h, opacity: w.tier === 'tertiary' ? 0.5 : 1 });
+        markers.push({ pct, color: 'var(--call-color)', label: w.strike.toString(), height: h, opacity: w.tier === 'tertiary' ? 0.5 : 1 });
     }
 
     // Structural markers
-    if (d.risk.gammaMean) markers.push({ pct: Math.max(0, Math.min(100, ((d.risk.gammaMean - barLow) / barRange) * 100)), color: 'var(--cyan)', label: 'GM', height: 16, opacity: 1 });
-    if (d.mpStrike) markers.push({ pct: Math.max(0, Math.min(100, ((d.mpStrike - barLow) / barRange) * 100)), color: 'var(--pink)', label: 'MP', height: 16, opacity: 1 });
-    if (d.gexResult.flipStrike) markers.push({ pct: Math.max(0, Math.min(100, ((d.gexResult.flipStrike - barLow) / barRange) * 100)), color: 'var(--accent)', label: 'Flip', height: 16, opacity: 1 });
+    if (d.risk.gammaMean) markers.push({ pct: Math.max(0, Math.min(100, ((d.risk.gammaMean - barLow) / barRange) * 100)), color: 'var(--cyan)', label: 'GM ' + d.risk.gammaMean.toFixed(0), height: 16, opacity: 1 });
+    if (d.mpStrike) markers.push({ pct: Math.max(0, Math.min(100, ((d.mpStrike - barLow) / barRange) * 100)), color: 'var(--pink)', label: 'MP ' + d.mpStrike, height: 16, opacity: 1 });
+    if (d.gexResult.flipStrike) markers.push({ pct: Math.max(0, Math.min(100, ((d.gexResult.flipStrike - barLow) / barRange) * 100)), color: 'var(--accent)', label: 'Flip ' + d.gexResult.flipStrike, height: 16, opacity: 1 });
 
-    const mkHtml = markers.map(m => `
+    // Prevent overlap by staggering labels vertically
+    markers.sort((a, b) => a.pct - b.pct);
+    let lastPcts = [-999, -999, -999];
+    for (let i = 0; i < markers.length; i++) {
+        let assignedLevel = 0;
+        if (markers[i].pct - lastPcts[0] > 6) assignedLevel = 0;
+        else if (markers[i].pct - lastPcts[1] > 6) assignedLevel = 1;
+        else assignedLevel = 2; // Maximum 3 staggering levels
+
+        markers[i].level = assignedLevel;
+        lastPcts[assignedLevel] = markers[i].pct;
+    }
+
+    const mkHtml = markers.map(m => {
+        const mt = 2 + (m.level || 0) * 11; // Stagger down by 11px each level
+        return `
         <div style="position:absolute;left:${m.pct}%;top:-2px;transform:translateX(-50%);opacity:${m.opacity}">
             <div style="width:${m.label ? 2 : 3}px;height:${m.height}px;background:${m.color};margin:0 auto;border-radius:1px"></div>
-            ${m.label ? `<div style="font-size:9px;color:${m.color};font-weight:700;text-align:center;margin-top:2px;white-space:nowrap">${m.label}</div>` : ''}
-        </div>`).join('');
+            ${m.label ? `<div style="position:absolute;top:100%;left:50%;transform:translateX(-50%);font-size:9px;color:${m.color};font-weight:700;text-align:center;margin-top:${mt}px;white-space:nowrap">${m.label}</div>` : ''}
+        </div>`;
+    }).join('');
 
     const rangeBarHtml = `
-    <div style="padding:8px 0;margin:6px 0 10px">
+    <div style="padding:16px 0 28px 0;margin:6px 0 10px">
         <div style="display:flex;justify-content:space-between;font-size:11px;margin-bottom:6px">
             <span style="color:var(--put-color);font-weight:700">$${barLow} Support</span>
             <span style="font-size:10px;color:var(--text-muted)">${d.putWalls.length}P + ${d.callWalls.length}C walls</span>
@@ -1298,9 +1317,9 @@ function renderAnalysisTab() {
         <div style="position:relative;height:12px;background:rgba(255,255,255,.07);border-radius:6px;overflow:visible">
             <div style="position:absolute;left:0;top:0;height:100%;width:${pricePct}%;background:linear-gradient(to right,var(--put-color)22,var(--cyan)33,transparent);border-radius:6px 0 0 6px"></div>
             ${mkHtml}
-            <div style="position:absolute;left:${pricePct}%;top:-6px;transform:translateX(-50%);z-index:2">
-                <div style="width:0;height:0;border-left:6px solid transparent;border-right:6px solid transparent;border-top:7px solid white;margin:0 auto"></div>
-                <div style="font-size:10px;color:white;font-weight:800;text-align:center;margin-top:1px">$${d.uPrice.toFixed(0)}</div>
+            <div style="position:absolute;left:${pricePct}%;bottom:100%;transform:translateX(-50%);z-index:2;margin-bottom:3px">
+                <div style="font-size:10px;color:white;font-weight:800;text-align:center;margin-bottom:2px">$${d.uPrice.toFixed(0)}</div>
+                <div style="width:0;height:0;border-left:5px solid transparent;border-right:5px solid transparent;border-top:6px solid white;margin:0 auto"></div>
             </div>
         </div>
     </div>`;
@@ -1718,6 +1737,10 @@ function renderActiveTab() {
     if (state.activeTab === 'chart') return;
     if (state.activeTab === 'analysis') {
         renderAnalysisTab();
+        // Fallback to update header cleanly on load using Current data (since it's representative)
+        if (state.data.current) {
+            updateSummary(state.data.current.intraday, state.data.current.oi);
+        }
         return;
     }
 
