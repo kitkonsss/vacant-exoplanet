@@ -1121,7 +1121,14 @@ function renderAnalysisTab() {
         bText = up ? '⛔ BREAKOUT' : '⛔ CASCADE';
         bColor = '#ff1744';
         bDesc = up ? 'ราคาออกนอก Gamma Zone → ห้ามสวนทาง Follow ขึ้น' : 'ราคาออกนอก Gamma Zone → ห้ามสวนทาง Follow ลง';
+    } else if (d.priceAboveCallWall && d.isLongGamma) {
+        // DAMPENING ZONE: Above Call Wall + Long Gamma = Dealer sells strength, buys weakness = Sideways
+        bText = '🔄 DAMPENING ZONE';
+        bColor = 'var(--cyan)';
+        bDesc = `ราคาเหนือ Call Wall $${d.structCallWall.strike} (+${d.callWallBreakoutDist.toFixed(0)} pts) + Long γ → Dealer กด Sideways`;
+        bDesc += ` — Squeeze ไม่เกิด เพราะ Dealer ขายเมื่อขึ้น ซื้อเมื่อลง (Mean-Revert)`;
     } else if (d.priceAboveCallWall) {
+        // Short Gamma + Above Call Wall = genuine breakout
         const vannaConfirm = d.vannaExp < 0; // negative = dealers BUY = confirms upside
         bText = vannaConfirm ? '🚀 BREAKOUT + Vanna' : '🚀 BREAKOUT';
         bColor = 'var(--green)';
@@ -1336,7 +1343,20 @@ function renderAnalysisTab() {
         actionHtml = isUp
             ? `<b style="color:#ff1744">ห้าม Short!</b> ราคานอก Gamma Zone — Follow ขึ้นอย่างเดียว | SL ใต้ High ล่าสุด`
             : `<b style="color:#ff1744">ห้าม Buy!</b> ราคานอก Gamma Zone — Follow ลงอย่างเดียว | SL เหนือ Low ล่าสุด`;
+    } else if (d.priceAboveCallWall && d.isLongGamma) {
+        // DAMPENING ZONE: Long Gamma + Above Call Wall = mean-reversion, not squeeze
+        const swStr = fmtC(d.structCallWall.strike);
+        const gmTarget = d.risk.gammaMean ? fmtCyan(d.risk.gammaMean.toFixed(0)) : (d.mpStrike ? fmtPink(d.mpStrike) : swStr);
+        actionHtml = `<div style="padding:16px 18px;background:rgba(0,188,212,.06);border-radius:10px;border:1px solid rgba(0,188,212,.2)">`;
+        actionHtml += `<div style="font-size:13px;font-weight:800;color:var(--cyan);margin-bottom:8px">🔄 DAMPENING ZONE — Long γ กด Sideways</div>`;
+        actionHtml += `<div style="font-size:13px;color:var(--text-primary);line-height:2">`;
+        actionHtml += `ราคาเหนือ Call Wall ${swStr} (+${d.callWallBreakoutDist.toFixed(0)} pts) แต่ Long Gamma<br>`;
+        actionHtml += `<span style="color:var(--cyan);font-weight:700">→ Dealer ขายเมื่อราคาขึ้น / ซื้อเมื่อราคาลง = Squeeze ไม่เกิด</span><br>`;
+        actionHtml += `<span style="color:var(--red)">❌ ห้าม Chase Long!</span> ราคาไม่มี momentum ขึ้นต่อ<br>`;
+        actionHtml += `<span style="color:var(--green)">✅ Strategy:</span> Mean-Reversion — Short ใกล้ Peak TP ${gmTarget} | หรือรอ OI เปลี่ยน`;
+        actionHtml += `</div></div>`;
     } else if (d.priceAboveCallWall) {
+        // Short Gamma + Above Call Wall = genuine breakout
         const vannaConfirm = d.vannaExp < 0;
         const swStr = fmtC(d.structCallWall.strike);
         actionHtml = `<b style="color:var(--green)">Buy / Follow Long!</b> ราคาทะลุ Call Wall ${swStr} ไปแล้ว +${d.callWallBreakoutDist.toFixed(0)} pts`;
@@ -1466,8 +1486,9 @@ function renderAnalysisTab() {
     let patienceHtml = '';
     const isChoppy = d.tradeableRange < 999 && d.tradeableRange < erRef * 1.5 && d.isLongGamma;
     const isFarFromAllWalls = !nearCallZone && !nearPutZone;
+    const isDampeningZone = d.priceAboveCallWall && d.isLongGamma; // Above Call Wall + Long γ = no momentum
 
-    if (isChoppy || (noEdgeZone && d.isLongGamma)) {
+    if (isChoppy || (noEdgeZone && d.isLongGamma) || isDampeningZone) {
         const triggerCall = d.nearestCall ? `$${d.nearestCall.strike}` : `$${d.maxCall.strike}`;
         const triggerPut = d.nearestPut ? `$${d.nearestPut.strike}` : `$${d.maxPut.strike}`;
         const rangeLabel = d.tradeableRange < 999 ? `${d.tradeableRange.toFixed(0)}` : '—';
