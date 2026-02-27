@@ -1526,39 +1526,158 @@ function renderAnalysisTab() {
     } else {
         // Short gamma: trend following with nearest walls
         const dir = d.priceBelowMP ? 'ลง' : d.priceAboveMP ? 'ขึ้น' : '';
-        actionHtml = `Breakout > ${nrStr} → <b style="color:var(--green)">Long</b> ${callChain ? `(next: ${callChain})` : ''}`;
-        actionHtml += `<br>Breakdown < ${nsStr} → <b style="color:var(--red)">Short</b> ${putChain ? `(next: ${putChain})` : ''}`;
-        if (dir) actionHtml += ` <span style="font-size:10px;opacity:.8">(bias ${dir})</span>`;
-        if (trStr) actionHtml += `<br>${trStr}`;
-        actionHtml += `<div style="font-size:12px;color:var(--text-muted);margin-top:6px">❌ ห้าม Fade สวนทาง (Short γ = วิ่งต่อไม่หยุด)</div>`;
+        const nrStrikeShort = d.nearestCall ? d.nearestCall.strike : d.maxCall.strike;
+        const nsStrikeShort = d.nearestPut ? d.nearestPut.strike : d.maxPut.strike;
+        const slBufShort = Math.max(10, Math.round(erRef * 0.4));
+        const biasUp = d.biasScore > 0 || d.priceBelowMP;
+        const biasDown = d.biasScore < 0 || d.priceAboveMP;
+
+        // Is price stuck between walls with tight range? (Sideway trap)
+        const shortGammaSideway = d.tradeableRange < 999 && d.tradeableRange < erRef * 2;
+        const shortGammaFarFromWalls = callProx > 0.5 && putProx > 0.5;
+
+        actionHtml = `<div style="display:flex;flex-direction:column;gap:12px">`;
+
+        // ── Current Status Assessment ──
+        if (shortGammaSideway || shortGammaFarFromWalls) {
+            // WAITING MODE: price is between walls, no trigger yet
+            actionHtml += `<div style="padding:16px 18px;background:linear-gradient(135deg,rgba(255,87,34,.08),rgba(255,152,0,.04));border-radius:12px;border:1px solid rgba(255,87,34,.3);border-left:4px solid #ff5722">`;
+            actionHtml += `<div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">`;
+            actionHtml += `<span style="font-size:18px">⏸️</span>`;
+            actionHtml += `<span style="font-size:14px;font-weight:900;color:#ff5722;letter-spacing:.5px">WAITING MODE — ยังไม่ถึงเวลาเข้า!</span>`;
+            actionHtml += `</div>`;
+            actionHtml += `<div style="font-size:13px;color:var(--text-primary);line-height:2">`;
+            actionHtml += `<span style="color:var(--red);font-weight:800">🚫 ตอนนี้ราคาอยู่กลาง Range ระหว่าง Wall → ห้ามเทรด!</span><br>`;
+            actionHtml += `Short γ ไม่ได้แปลว่าต้องเข้าทุกวินาที — ต้อง <span style="color:white;font-weight:700">รอราคาทะลุ Wall ก่อน</span><br>`;
+            actionHtml += `📍 ราคาปัจจุบัน: <span style="font-weight:700">$${d.uPrice.toFixed(0)}</span> | Resistance: ${nrStr} (+${nrDist.toFixed(0)}) | Support: ${nsStr} (-${nsDist.toFixed(0)})`;
+            if (shortGammaSideway) {
+                actionHtml += `<br><span style="color:var(--orange);font-weight:700">⚠️ Range แค่ ${d.tradeableRange.toFixed(0)} pts vs ER ${erRef.toFixed(0)} pts → Range แคบเสี่ยง Shakeout!</span>`;
+            }
+            actionHtml += `</div>`;
+            actionHtml += `<div style="font-size:12px;color:var(--text-muted);margin-top:10px;padding-top:8px;border-top:1px solid rgba(255,255,255,.06)">`;
+            actionHtml += `💡 <b>Sideway ใน Short γ อันตรายกว่า Long γ</b> — ราคาวิ่งไว ไม่มี Dealer ต้าน → Stop โดนง่าย ทั้ง 2 ทาง`;
+            actionHtml += `</div></div>`;
+        }
+
+        // ── Breakout / Breakdown Trigger Setup ──
+        actionHtml += `<div style="display:flex;gap:12px;flex-wrap:wrap">`;
+
+        // LONG setup (Breakout)
+        actionHtml += `<div style="flex:1;min-width:220px;padding:14px 16px;background:rgba(38,166,154,.06);border-radius:12px;border:1px solid rgba(38,166,154,.2)">`;
+        actionHtml += `<div style="font-size:12px;color:var(--green);font-weight:800;margin-bottom:8px">🚀 BREAKOUT LONG</div>`;
+        actionHtml += `<div style="font-size:13px;color:var(--text-primary);line-height:2">`;
+        actionHtml += `<span style="color:var(--text-muted);font-size:11px">❶ Trigger:</span> ราคาทะลุ + <b>ปิดแท่งเหนือ</b> ${nrStr}<br>`;
+        actionHtml += `<span style="color:var(--text-muted);font-size:11px">❷ Confirm:</span> Volume แท่ง Breakout > ค่าเฉลี่ย<br>`;
+        actionHtml += `<span style="color:var(--text-muted);font-size:11px">❸ Entry:</span> Buy ที่ Retest ${nrStr} เป็น Support<br>`;
+        actionHtml += `<span style="color:var(--text-muted);font-size:11px">❹ SL:</span> <span style="color:var(--red)">$${(nrStrikeShort - slBufShort).toFixed(0)}</span> (ใต้ Wall ${slBufShort} pts)<br>`;
+        actionHtml += `<span style="color:var(--text-muted);font-size:11px">❺ TP:</span> `;
+        if (d.callWalls.length > 1) actionHtml += `${fmtC(d.callWalls[1].strike)} ${callChain}`;
+        else actionHtml += `ER target $${(nrStrikeShort + erRef).toFixed(0)}`;
+        actionHtml += `</div>`;
+        actionHtml += `<div style="font-size:11px;margin-top:8px;padding:6px 8px;background:rgba(38,166,154,.1);border-radius:6px;color:var(--green);font-weight:600">`;
+        actionHtml += `✅ Short γ = Dealer ซื้อตามราคา → Breakout จริงวิ่งไกล TP กว้างได้`;
+        actionHtml += `</div></div>`;
+
+        // SHORT setup (Breakdown)
+        actionHtml += `<div style="flex:1;min-width:220px;padding:14px 16px;background:rgba(239,83,80,.06);border-radius:12px;border:1px solid rgba(239,83,80,.2)">`;
+        actionHtml += `<div style="font-size:12px;color:var(--red);font-weight:800;margin-bottom:8px">💧 BREAKDOWN SHORT</div>`;
+        actionHtml += `<div style="font-size:13px;color:var(--text-primary);line-height:2">`;
+        actionHtml += `<span style="color:var(--text-muted);font-size:11px">❶ Trigger:</span> ราคาหลุด + <b>ปิดแท่งใต้</b> ${nsStr}<br>`;
+        actionHtml += `<span style="color:var(--text-muted);font-size:11px">❷ Confirm:</span> Volume แท่ง Breakdown > ค่าเฉลี่ย<br>`;
+        actionHtml += `<span style="color:var(--text-muted);font-size:11px">❸ Entry:</span> Sell ที่ Retest ${nsStr} เป็น Resistance<br>`;
+        actionHtml += `<span style="color:var(--text-muted);font-size:11px">❹ SL:</span> <span style="color:var(--red)">$${(nsStrikeShort + slBufShort).toFixed(0)}</span> (เหนือ Wall ${slBufShort} pts)<br>`;
+        actionHtml += `<span style="color:var(--text-muted);font-size:11px">❺ TP:</span> `;
+        if (d.putWalls.length > 1) actionHtml += `${fmtP(d.putWalls[1].strike)} ${putChain}`;
+        else actionHtml += `ER target $${(nsStrikeShort - erRef).toFixed(0)}`;
+        actionHtml += `</div>`;
+        actionHtml += `<div style="font-size:11px;margin-top:8px;padding:6px 8px;background:rgba(239,83,80,.1);border-radius:6px;color:var(--red);font-weight:600">`;
+        actionHtml += `✅ Short γ = Dealer ขายตามราคา → Breakdown จริงลงแรง TP กว้างได้`;
+        actionHtml += `</div></div></div>`;
+
+        // ── Bias Hint ──
+        if (biasUp || biasDown) {
+            const bClr = biasUp ? 'var(--green)' : 'var(--red)';
+            const bDir = biasUp ? 'ขึ้น (Bullish)' : 'ลง (Bearish)';
+            const bSetup = biasUp ? 'Breakout Long มีโอกาสสูงกว่า' : 'Breakdown Short มีโอกาสสูงกว่า';
+            actionHtml += `<div style="font-size:12px;color:var(--text-secondary);padding:6px 12px;background:rgba(255,255,255,.03);border-radius:8px;border-left:3px solid ${bClr}">`;
+            actionHtml += `📊 Bias: <span style="color:${bClr};font-weight:700">${bDir}</span> → ${bSetup}`;
+            actionHtml += `</div>`;
+        }
+
+        if (trStr) actionHtml += `<div style="margin-top:4px">${trStr}</div>`;
+
+        // ── Anti-Sideway Rules ──
+        actionHtml += `<div style="padding:12px 16px;background:rgba(255,23,68,.06);border-radius:10px;border:1px solid rgba(255,23,68,.2)">`;
+        actionHtml += `<div style="font-size:12px;font-weight:800;color:#ff1744;margin-bottom:6px">🚫 ห้ามทำ (Sideway Killer Rules)</div>`;
+        actionHtml += `<div style="font-size:13px;color:var(--text-primary);line-height:2">`;
+        actionHtml += `❌ ห้าม Fade สวนทาง — Short γ = วิ่งต่อไม่หยุด<br>`;
+        actionHtml += `❌ ห้ามเข้าก่อนทะลุ Wall — ราคาระหว่าง Wall ยังไม่มี Setup<br>`;
+        actionHtml += `❌ ห้ามเดาทิศ — ถ้าแท่งไม่ปิดเหนือ/ใต้ Wall = ยังไม่ Breakout<br>`;
+        actionHtml += `❌ ห้ามเข้าซ้ำหลังโดน SL — รอ Setup ใหม่เท่านั้น ห้าม Revenge Trade`;
+        actionHtml += `</div></div>`;
+
+        actionHtml += `</div>`; // close flex column
     }
 
-    // ── PATIENCE GUARD (Anti-Shakeout) ──
+    // ── PATIENCE GUARD (Anti-Shakeout) — triggers for BOTH Long γ and Short γ ──
     let patienceHtml = '';
-    const isChoppy = d.tradeableRange < 999 && d.tradeableRange < erRef * 1.5 && d.isLongGamma;
+    const isChoppyLong = d.tradeableRange < 999 && d.tradeableRange < erRef * 1.5 && d.isLongGamma;
+    const isChoppyShort = d.tradeableRange < 999 && d.tradeableRange < erRef * 2 && !d.isLongGamma;
     const isFarFromAllWalls = !nearCallZone && !nearPutZone;
-    const isDampeningZone = d.priceAboveCallWall && d.isLongGamma; // Above Call Wall + Long γ = no momentum
+    const isDampeningZone = d.priceAboveCallWall && d.isLongGamma;
+    const isShortGammaSideway = !d.isLongGamma && (callProx > 0.5 && putProx > 0.5);
 
-    if (isChoppy || (noEdgeZone && d.isLongGamma) || isDampeningZone) {
+    if (isChoppyLong || isChoppyShort || (noEdgeZone && d.isLongGamma) || isDampeningZone || isShortGammaSideway) {
         const triggerCall = d.nearestCall ? `$${d.nearestCall.strike}` : `$${d.maxCall.strike}`;
         const triggerPut = d.nearestPut ? `$${d.nearestPut.strike}` : `$${d.maxPut.strike}`;
         const rangeLabel = d.tradeableRange < 999 ? `${d.tradeableRange.toFixed(0)}` : '—';
         const erLabel = erRef.toFixed(0);
-        const sizeAdvice = isChoppy ? 'Range แคบกว่า 1.5× ER → ลดขนาด 50% หรืองดเทรด' : '';
+        const gammaLabel = d.isLongGamma ? 'Long γ' : 'Short γ';
+        const dangerExplain = d.isLongGamma
+            ? 'Dealer ต้านทั้ง 2 ทิศ → ราคาเด้งไปมาในกรอบ → โดน Stop ทั้งขึ้นทั้งลง'
+            : 'Dealer วิ่งตามราคา → Spike ขึ้นลงรุนแรงไร้ทิศทาง → Stop โดนง่าย R:R ไม่ดี';
+
+        // Calculate how many consecutive losses from sideway (educational)
+        const maxLossesInRange = d.tradeableRange > 0 ? Math.floor(erRef / (d.tradeableRange * 0.3)) : 0;
 
         patienceHtml = `
-        <div style="padding:14px 18px;background:linear-gradient(135deg,rgba(255,152,0,.08),rgba(255,87,34,.05));border-radius:12px;border:1px solid rgba(255,152,0,.3);border-left:4px solid var(--orange)">
-            <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
-                <span style="font-size:18px">🧘</span>
-                <span style="font-size:13px;font-weight:900;color:var(--orange);letter-spacing:.5px">PATIENCE GUARD — ห้ามเข้าตอน SIDEWAY</span>
+        <div style="padding:16px 20px;background:linear-gradient(135deg,rgba(255,23,68,.08),rgba(255,87,34,.04));border-radius:12px;border:1px solid rgba(255,23,68,.3);border-left:4px solid #ff1744">
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
+                <span style="font-size:20px">🛑</span>
+                <span style="font-size:14px;font-weight:900;color:#ff1744;letter-spacing:.5px">PATIENCE GUARD — ห้ามเข้าตอน SIDEWAY</span>
             </div>
-            <div style="font-size:13px;color:var(--text-primary);line-height:2">
-                <span style="color:var(--red);font-weight:700">⛔ Long γ + ราคากลาง Range = โดน Shakeout แน่นอน</span><br>
-                ✅ เข้าเฉพาะเมื่อ: ราคาแตะ Wall (${triggerPut} / ${triggerCall}) หรือ ทะลุ Wall ชัดเจน<br>
-                📏 Range: ${rangeLabel} pts vs ER: ${erLabel} pts ${isChoppy ? `<span style="color:var(--red);font-weight:700">— Range < 1.5× ER → ลดขนาด 50%!</span>` : ''}
+            <div style="font-size:14px;color:var(--text-primary);line-height:2.2">
+                <span style="color:var(--red);font-weight:800;font-size:15px">🚫 ${gammaLabel} + ราคากลาง Range = ห้ามเทรด!</span><br>
+                <span style="color:var(--text-secondary)">${dangerExplain}</span>
             </div>
-            <div style="font-size:11px;color:var(--text-muted);margin-top:8px;padding-top:8px;border-top:1px solid rgba(255,255,255,.05)">
-                💡 ขาดทุนรัวๆ จาก Sideway เสียหายมากกว่าพลาดโอกาส — รอจนมีเงื่อนไขครบก่อนเข้า
+
+            <div style="margin:12px 0;padding:12px 16px;background:rgba(0,0,0,.25);border-radius:10px;border:1px dashed rgba(255,255,255,.1)">
+                <div style="font-size:11px;color:var(--text-muted);font-weight:700;margin-bottom:8px">📋 CHECKLIST ก่อนเข้า (ต้องผ่าน <u>ทุกข้อ</u>)</div>
+                <div style="font-size:13px;color:var(--text-primary);line-height:2.2">
+                    <span style="color:var(--orange)">☐</span> ราคาแตะ Wall (${triggerPut} หรือ ${triggerCall}) → ถ้ายังไม่แตะ = <span style="color:var(--red);font-weight:700">ห้ามเข้า</span><br>
+                    <span style="color:var(--orange)">☐</span> แท่งเทียนปิดเหนือ/ใต้ Wall → ถ้าแค่ wick = <span style="color:var(--red);font-weight:700">ยังไม่ทะลุ</span><br>
+                    <span style="color:var(--orange)">☐</span> Volume แท่ง Breakout สูงกว่าค่าเฉลี่ย → ถ้า Volume เบา = <span style="color:var(--red);font-weight:700">Fake Breakout</span><br>
+                    <span style="color:var(--orange)">☐</span> ไม่โดน SL มาก่อนในวันนี้ → ถ้าโดนแล้ว 2 ครั้ง = <span style="color:var(--red);font-weight:700">หยุดเทรดวันนี้</span>
+                </div>
+            </div>
+
+            <div style="display:flex;gap:12px;flex-wrap:wrap;margin-top:8px">
+                <div style="flex:1;min-width:180px;padding:10px 14px;background:rgba(255,255,255,.03);border-radius:8px;border:1px solid rgba(255,255,255,.06)">
+                    <div style="font-size:11px;color:var(--text-muted);margin-bottom:4px">📏 Range vs ER</div>
+                    <div style="font-size:15px;font-weight:800;color:${(d.tradeableRange < erRef * 1.5) ? 'var(--red)' : 'var(--text-primary)'}">${rangeLabel} pts <span style="font-size:12px;color:var(--text-muted);font-weight:400">vs ER ${erLabel} pts</span></div>
+                    <div style="font-size:11px;color:var(--text-secondary);margin-top:2px">${d.tradeableRange < erRef * 1.5 ? '⚠️ Range < 1.5× ER → ห้ามเทรดเลย!' : d.tradeableRange < erRef * 2 ? '⚠️ Range < 2× ER → ลดขนาด 50%' : 'Range พอเทรดได้'}</div>
+                </div>
+                <div style="flex:1;min-width:180px;padding:10px 14px;background:rgba(255,255,255,.03);border-radius:8px;border:1px solid rgba(255,255,255,.06)">
+                    <div style="font-size:11px;color:var(--text-muted);margin-bottom:4px">💀 ความเสียหายถ้าฝืน</div>
+                    <div style="font-size:15px;font-weight:800;color:var(--red)">${maxLossesInRange > 0 ? `โดน SL ~${maxLossesInRange}+ ครั้ง` : 'ขาดทุนรัวๆ'}</div>
+                    <div style="font-size:11px;color:var(--text-secondary);margin-top:2px">ก่อนราคาจะทะลุ Wall จริง</div>
+                </div>
+            </div>
+
+            <div style="font-size:11px;color:var(--text-muted);margin-top:12px;padding-top:10px;border-top:1px solid rgba(255,255,255,.06);line-height:1.8">
+                💡 <b>กฎเหล็ก:</b> ขาดทุนรัวๆ จาก Sideway ทำพอร์ตแตกเร็วกว่าพลาด Breakout 10 ครั้ง<br>
+                🎯 <b>วิธีแก้:</b> เปิดหน้า Dashboard ทิ้งไว้ — รอจนราคาแตะ Wall + ผ่าน Checklist → ค่อยเข้า<br>
+                🔔 <b>เทคนิค:</b> ตั้ง Alert ที่ ${triggerPut} และ ${triggerCall} → ปิดจอไปทำอย่างอื่น → กลับมาเฉพาะตอน Alert ดัง
             </div>
         </div>`;
     }
