@@ -1444,12 +1444,27 @@ function renderAnalysisTab() {
         labelsRow.push({ strike: w.strike, color: 'var(--call-color)', label: `$${w.strike}`, sub: w.tier === 'primary' ? oiK : '', primary: w.tier === 'primary' });
     }
     labelsRow.sort((a, b) => a.strike - b.strike);
-    // Anti-overlap: stagger labels that are too close together
-    const MIN_PCT_GAP = 6; // minimum % gap before staggering
+    // Anti-overlap: multi-row greedy placement
+    // Each label has an estimated width in % units (~5% for short labels)
+    const MIN_PCT_GAP = 5;
+    const ROWS = [0, 18, 36]; // 3 possible vertical offsets
+    const rowLastPct = [[-999], [-999], [-999]]; // track last placed pct per row
     const labelPcts = labelsRow.map(l => ({ ...l, pct: toPct(l.strike), offsetY: 0 }));
-    for (let i = 1; i < labelPcts.length; i++) {
-        if (Math.abs(labelPcts[i].pct - labelPcts[i - 1].pct) < MIN_PCT_GAP) {
-            labelPcts[i].offsetY = labelPcts[i - 1].offsetY === 0 ? 18 : 0;
+    for (const lbl of labelPcts) {
+        let placed = false;
+        for (let r = 0; r < ROWS.length; r++) {
+            const lastPct = rowLastPct[r][rowLastPct[r].length - 1];
+            if (lbl.pct - lastPct >= MIN_PCT_GAP) {
+                lbl.offsetY = ROWS[r];
+                rowLastPct[r].push(lbl.pct);
+                placed = true;
+                break;
+            }
+        }
+        if (!placed) {
+            // Force into least-congested row
+            lbl.offsetY = ROWS[2];
+            rowLastPct[2].push(lbl.pct);
         }
     }
     const labelsRowHtml = labelPcts.map(l => {
@@ -1504,7 +1519,7 @@ function renderAnalysisTab() {
         </div>
 
         <!-- Labels row (below bar, clean horizontal) -->
-        <div style="position:relative;height:38px;margin-top:4px">
+        <div style="position:relative;height:56px;margin-top:4px">
             ${labelsRowHtml}
         </div>
 
