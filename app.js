@@ -1,39 +1,90 @@
 // ========== CONFIG ==========
-const PAGETH_BASE = 'https://raw.githubusercontent.com/pageth/Vol2VolData/main';
 const MY_BASE = 'https://raw.githubusercontent.com/kitkonsss/vacant-exoplanet/main';
 
-const CONFIG = {
-    contracts: {
-        current: {
-            label: 'Current',
-            intradayUrl: MY_BASE + '/data/current_IntradayData.txt',
-            oiUrl: MY_BASE + '/data/current_OIData.txt',
+// ── ASSET PROFILES — ค่าเฉพาะแต่ละสินทรัพย์อยู่ที่เดียว ──
+const ASSET_PROFILES = {
+    gc: {
+        id: 'gc',
+        label: 'Gold (GC)',
+        shortLabel: 'GC',
+        yahooSymbol: 'GC=F',
+        contractMultiplier: 100,       // Gold options = 100 oz
+        visibleStrikeRange: 350,       // ±350 from price
+        gexScanStep: 5,                // $5 grid for GEX flip scan
+        defaultADV: 200000,
+        oiHotThreshold: 100,
+        volHotThreshold: 80,
+        proximityRange: 100,           // for wall detection clustering
+        dataFolder: 'data',
+        contracts: {
+            current: {
+                label: 'Current',
+                intradayUrl: MY_BASE + '/data/current_IntradayData.txt',
+                oiUrl: MY_BASE + '/data/current_OIData.txt',
+            },
+            friday: {
+                label: 'Friday',
+                intradayUrl: MY_BASE + '/data/friday_IntradayData.txt',
+                oiUrl: MY_BASE + '/data/friday_OIData.txt',
+            },
+            monthly: {
+                label: 'Monthly',
+                intradayUrl: MY_BASE + '/data/monthly_IntradayData.txt',
+                oiUrl: MY_BASE + '/data/monthly_OIData.txt',
+            },
+            analysis: { label: 'Trade Setup' },
+            chart: { label: 'Live Chart' },
         },
-        friday: {
-            label: 'Friday',
-            intradayUrl: MY_BASE + '/data/friday_IntradayData.txt',
-            oiUrl: MY_BASE + '/data/friday_OIData.txt',
-        },
-        monthly: {
-            label: 'Monthly',
-            intradayUrl: MY_BASE + '/data/monthly_IntradayData.txt',
-            oiUrl: MY_BASE + '/data/monthly_OIData.txt',
-        },
-        analysis: { label: 'Trade Setup' },
-        chart: { label: 'Live Chart' } // Dummy for the chart tab
     },
+    nq: {
+        id: 'nq',
+        label: 'Nasdaq (NQ)',
+        shortLabel: 'NQ',
+        yahooSymbol: 'NQ=F',
+        contractMultiplier: 20,        // E-mini NASDAQ 100 options = $20/pt
+        visibleStrikeRange: 2000,      // ±2000 from price (~20000 level)
+        gexScanStep: 25,               // 25-pt grid for GEX flip scan
+        defaultADV: 500000,
+        oiHotThreshold: 50,
+        volHotThreshold: 40,
+        proximityRange: 500,
+        dataFolder: 'data/nq',
+        contracts: {
+            current: {
+                label: 'Current',
+                intradayUrl: MY_BASE + '/data/nq/current_IntradayData.txt',
+                oiUrl: MY_BASE + '/data/nq/current_OIData.txt',
+            },
+            friday: {
+                label: 'Friday',
+                intradayUrl: MY_BASE + '/data/nq/friday_IntradayData.txt',
+                oiUrl: MY_BASE + '/data/nq/friday_OIData.txt',
+            },
+            monthly: {
+                label: 'Monthly',
+                intradayUrl: MY_BASE + '/data/nq/monthly_IntradayData.txt',
+                oiUrl: MY_BASE + '/data/nq/monthly_OIData.txt',
+            },
+            analysis: { label: 'Trade Setup' },
+            chart: { label: 'Live Chart' },
+        },
+    },
+};
+
+// ── Active profile helper ──
+function getProfile() { return ASSET_PROFILES[state.activeAsset]; }
+
+const CONFIG = {
     refreshIntervalMs: 1800000, // 30 minutes
-    visibleStrikeRange: 350,
     barMaxWidth: 180,
-    oiHotThreshold: 100,
-    volHotThreshold: 80,
 };
 
 let state = {
+    activeAsset: 'gc',            // 'gc' | 'nq'
     activeTab: 'analysis',
     data: { current: {}, friday: {}, monthly: {}, analysis: {}, chart: {} },
     refreshTimer: null,
-    chartInitialized: false
+    chartInitialized: false,
 };
 
 // ========== MATH ==========
@@ -81,7 +132,7 @@ function calcMaxPain(strikes) {
 function calcNetGEX(strikes, F, dte) {
     if (!strikes || strikes.length === 0 || dte <= 0) return { netGEX: 0, flipStrike: null };
     const t = dte / 365;
-    const contractMultiplier = 100; // Gold options = 100 oz
+    const contractMultiplier = getProfile().contractMultiplier;
 
     // Helper: compute total net GEX at a hypothetical spot price S
     function totalGEXAtSpot(S) {
@@ -102,7 +153,7 @@ function calcNetGEX(strikes, F, dte) {
     const sortedStrikes = [...strikes].map(s => s.strike).sort((a, b) => a - b);
     const scanLow = sortedStrikes[0] - 300;
     const scanHigh = sortedStrikes[sortedStrikes.length - 1] + 300;
-    const step = 5; // $5 grid — fine enough for gold, with interpolation for sub-dollar precision
+    const step = getProfile().gexScanStep;
     let crossings = [];
     let prevGEX = totalGEXAtSpot(scanLow);
     for (let S = scanLow + step; S <= scanHigh; S += step) {
@@ -139,7 +190,7 @@ function calcVolumeGEX(oiStrikes, intradayStrikes, F, dte) {
     }
 
     const t = dte / 365;
-    const contractMultiplier = 100;
+    const contractMultiplier = getProfile().contractMultiplier;
 
     // Compute GEX using intraday volume instead of OI
     let volGEX = 0;
@@ -227,7 +278,7 @@ function calcCharm(F, K, sigma, t) {
 function calcNetCharmExposure(strikes, F, dte) {
     if (!strikes || strikes.length === 0 || dte <= 0) return 0;
     const t = dte / 365;
-    const contractMultiplier = 100;
+    const contractMultiplier = getProfile().contractMultiplier;
     let netCharm = 0;
     for (const s of strikes) {
         const c = calcCharm(F, s.strike, s.volSettle, t);
@@ -255,7 +306,7 @@ function calcVomma(F, K, sigma, t) {
 function calcNetVommaExposure(strikes, F, dte) {
     if (!strikes || strikes.length === 0 || dte <= 0) return 0;
     const t = dte / 365;
-    const contractMultiplier = 100;
+    const contractMultiplier = getProfile().contractMultiplier;
     let netVomma = 0;
     for (const s of strikes) {
         const vm = calcVomma(F, s.strike, s.volSettle, t);
@@ -284,7 +335,7 @@ function calcVanna(F, K, sigma, t) {
 function calcNetVannaExposure(strikes, F, dte) {
     if (!strikes || strikes.length === 0 || dte <= 0) return 0;
     const t = dte / 365;
-    const contractMultiplier = 100;
+    const contractMultiplier = getProfile().contractMultiplier;
     let netVanna = 0;
     for (const s of strikes) {
         const v = calcVanna(F, s.strike, s.volSettle, t);
@@ -300,7 +351,8 @@ function calcNetVannaExposure(strikes, F, dte) {
 // ========== MULTI-WALL DETECTION (Quant-Grade) ==========
 // Finds ALL significant OI walls, clusters nearby strikes, and classifies by tier
 // Returns array sorted by distance from price (nearest first)
-function findSignificantWalls(strikes, uPrice, side, proximityRange = 100) {
+function findSignificantWalls(strikes, uPrice, side, proximityRange) {
+    if (proximityRange === undefined) proximityRange = getProfile().proximityRange;
     const oiKey = side === 'call' ? 'call' : 'put';
     // Filter to correct side of price
     const filtered = side === 'call'
@@ -649,7 +701,7 @@ function parseVol2VolData(text) {
 
 // ========== FETCH ==========
 async function fetchTabData(tabKey) {
-    const cfg = CONFIG.contracts[tabKey];
+    const cfg = getProfile().contracts[tabKey];
     if (!cfg.intradayUrl && !cfg.oiUrl) {
         state.data[tabKey] = { intraday: null, oi: null };
         return;
@@ -683,8 +735,8 @@ function renderPanel(containerId, data, hotThreshold) {
     else if (state.data.friday?.oi?.underlying) globalUnderlying = state.data.friday.oi.underlying;
     const underlying = globalUnderlying > 0 ? globalUnderlying : data.underlying;
     const filtered = data.strikes.filter(s =>
-        s.strike >= underlying - CONFIG.visibleStrikeRange &&
-        s.strike <= underlying + CONFIG.visibleStrikeRange &&
+        s.strike >= underlying - getProfile().visibleStrikeRange &&
+        s.strike <= underlying + getProfile().visibleStrikeRange &&
         s.total >= hotThreshold
     );
     if (filtered.length === 0) {
@@ -792,7 +844,7 @@ function updateSummary(intraday, oi) {
     const uPrice = globalUnderlying > 0 ? globalUnderlying : data.underlying;
 
     // Header info
-    document.getElementById('contractName').textContent = 'Gold (GC)';
+    document.getElementById('contractName').textContent = getProfile().label;
     document.getElementById('contractDetail').textContent = data.contract || '';
     document.getElementById('priceDisplay').textContent = uPrice.toFixed(1);
     const ce = document.getElementById('priceChange');
@@ -984,7 +1036,7 @@ async function initLightweightChart() {
     if (!container) return;
 
     // Show loading status
-    container.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--text-secondary);font-size:14px;">⏳ Loading Gold chart data...</div>';
+    container.innerHTML = `<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--text-secondary);font-size:14px;">⏳ Loading ${getProfile().label} chart data...</div>`;
 
     chartInstance = LightweightCharts.createChart(container, {
         layout: {
@@ -1009,8 +1061,8 @@ async function initLightweightChart() {
         wickDownColor: '#ef5350'
     });
 
-    // Fetch GC=F Data via CORS proxies (Yahoo Finance blocks direct browser calls)
-    const yahooUrl = 'https://query1.finance.yahoo.com/v8/finance/chart/GC=F?interval=15m&range=5d';
+    // Fetch chart data via CORS proxies (Yahoo Finance blocks direct browser calls)
+    const yahooUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${getProfile().yahooSymbol}?interval=15m&range=5d`;
     const proxies = [
         `https://corsproxy.io/?${encodeURIComponent(yahooUrl)}`,
         `https://api.allorigins.win/raw?url=${encodeURIComponent(yahooUrl)}`,
@@ -1229,7 +1281,7 @@ function renderAnalysisTab() {
         // Short Gamma + Above Call Wall = genuine breakout
         // Vanna confirmation requires meaningful magnitude (> 0.5% ADV)
         const vannaContractsCheck = Math.abs(d.vannaExp / (d.uPrice * 100));
-        const vannaMeaningful = vannaContractsCheck / 200000 > 0.005; // > 0.5% of ADV
+        const vannaMeaningful = vannaContractsCheck / getProfile().defaultADV > 0.005; // > 0.5% of ADV
         const vannaConfirm = d.vannaExp < 0 && vannaMeaningful; // negative = dealers BUY = confirms upside
         const vannaNeutral = !vannaMeaningful;
         bText = vannaConfirm ? '🚀 BREAKOUT + Vanna' : '🚀 BREAKOUT';
@@ -1588,7 +1640,7 @@ function renderAnalysisTab() {
     } else if (d.priceAboveCallWall) {
         // Short Gamma + Above Call Wall = genuine breakout
         const vannaContractsAct = Math.abs(d.vannaExp / (d.uPrice * 100));
-        const vannaMeaningfulAct = vannaContractsAct / adv > 0.005;
+        const vannaMeaningfulAct = vannaContractsAct / getProfile().defaultADV > 0.005;
         const vannaConfirm = d.vannaExp < 0 && vannaMeaningfulAct;
         const swStr = fmtC(d.structCallWall.strike);
         actionHtml = `<b style="color:var(--green)">Buy / Follow Long!</b> ราคาทะลุ Call Wall ${swStr} ไปแล้ว +${d.callWallBreakoutDist.toFixed(0)} pts`;
@@ -1600,7 +1652,7 @@ function renderAnalysisTab() {
         actionHtml += `<div style="font-size:12px;color:var(--text-muted);margin-top:6px">🔥 Wall ถูกทะลุแล้ว — Call Wall เดิมกลายเป็น Support | ห้าม Short สวนทาง!</div>`;
     } else if (d.priceBelowPutWall) {
         const vannaContractsAct = Math.abs(d.vannaExp / (d.uPrice * 100));
-        const vannaMeaningfulAct = vannaContractsAct / adv > 0.005;
+        const vannaMeaningfulAct = vannaContractsAct / getProfile().defaultADV > 0.005;
         const vannaConfirm = d.vannaExp > 0 && vannaMeaningfulAct;
         const swStr = fmtP(d.structPutWall.strike);
         actionHtml = `<b style="color:var(--red)">Sell / Follow Short!</b> ราคาหลุด Put Wall ${swStr} ไปแล้ว -${d.putWallBreakdownDist.toFixed(0)} pts`;
@@ -1995,12 +2047,13 @@ function renderAnalysisTab() {
     }
 
     // ── INSTITUTIONAL INTEL ──
-    // Dynamic ADV: estimate from intraday volume data if available, else fallback 200K
-    let adv = 200000;
+    // Dynamic ADV: estimate from intraday volume data if available, else fallback to profile default
+    const advDefault = getProfile().defaultADV;
+    let adv = advDefault;
     if (d.sourceStrikes2 && d.sourceStrikes2.length > 0) {
         const totalIntradayVol = d.sourceStrikes2.reduce((sum, s) => sum + s.call + s.put, 0);
         // Intraday data is partial-day; scale up ~3× to approximate full-day ADV
-        adv = Math.max(200000, totalIntradayVol * 3);
+        adv = Math.max(advDefault, totalIntradayVol * 3);
     }
 
     // Vanna: positive = dealers SELL (bearish), negative = dealers BUY (bullish)
@@ -2259,8 +2312,8 @@ function renderActiveTab() {
         // Show placeholder
         const oiC = document.getElementById('oiContainer');
         const volC = document.getElementById('volContainer');
-        oiC.innerHTML = `<div class="placeholder-msg"><div class="icon">🔒</div><div class="title">No Data Yet</div><div class="desc">This contract requires a QuikStrike scraper. Set up the Python scraper to fetch ${CONFIG.contracts[state.activeTab].label} contract data.</div></div>`;
-        volC.innerHTML = `<div class="placeholder-msg"><div class="icon">🔒</div><div class="title">No Data Yet</div><div class="desc">Configure the scraper to populate ${CONFIG.contracts[state.activeTab].label} contract Intraday Volume.</div></div>`;
+        oiC.innerHTML = `<div class="placeholder-msg"><div class="icon">🔒</div><div class="title">No Data Yet</div><div class="desc">This contract requires a QuikStrike scraper. Set up the Python scraper to fetch ${getProfile().contracts[state.activeTab].label} contract data.</div></div>`;
+        volC.innerHTML = `<div class="placeholder-msg"><div class="icon">🔒</div><div class="title">No Data Yet</div><div class="desc">Configure the scraper to populate ${getProfile().contracts[state.activeTab].label} contract Intraday Volume.</div></div>`;
 
         // Clear summary
         ['sumVolSettle', 'sumExpRange', 'sumMaxOI', 'sumTotalCall', 'sumTotalPut', 'sumPCRatio', 'sumMaxPain', 'sumNetGEX', 'sumHedgePct'].forEach(id => {
@@ -2277,9 +2330,63 @@ function renderActiveTab() {
         document.getElementById('hedgeBarOTM').style.flex = '0';
         return;
     }
-    renderPanel('oiContainer', tabData.oi, CONFIG.oiHotThreshold);
-    renderPanel('volContainer', tabData.intraday, CONFIG.volHotThreshold);
+    renderPanel('oiContainer', tabData.oi, getProfile().oiHotThreshold);
+    renderPanel('volContainer', tabData.intraday, getProfile().volHotThreshold);
     updateSummary(tabData.intraday, tabData.oi);
+}
+
+// ========== ASSET SWITCH ==========
+async function switchAsset(assetId) {
+    if (!ASSET_PROFILES[assetId] || assetId === state.activeAsset) return;
+    state.activeAsset = assetId;
+
+    // Reset data & chart
+    state.data = { current: {}, friday: {}, monthly: {}, analysis: {}, chart: {} };
+    state.chartInitialized = false;
+    if (chartInstance) {
+        try { chartInstance.remove(); } catch (e) { }
+        chartInstance = null;
+        candleSeries = null;
+        wallLines = [];
+    }
+
+    // Update dropdown (in case called programmatically)
+    const dd = document.getElementById('assetDropdown');
+    if (dd) dd.value = assetId;
+
+    // Update loading text
+    const loadingText = document.querySelector('.loading-text');
+    if (loadingText) loadingText.textContent = `Fetching ${getProfile().label} Data...`;
+
+    // Show loading
+    document.getElementById('loading').classList.remove('hidden');
+
+    // Fetch all tabs for the new asset
+    await Promise.all([
+        fetchTabData('current'),
+        fetchTabData('friday'),
+        fetchTabData('monthly'),
+    ]);
+
+    // Update tab DTE labels
+    for (const key of ['current', 'friday', 'monthly']) {
+        const d = state.data[key]?.oi || state.data[key]?.intraday;
+        if (d) {
+            const el = document.getElementById('tabDte' + key.charAt(0).toUpperCase() + key.slice(1));
+            if (el) el.textContent = `(${d.dte.toFixed(1)}d)`;
+            const contractEl = document.getElementById('tabContract' + key.charAt(0).toUpperCase() + key.slice(1));
+            if (contractEl && d.contract) contractEl.textContent = `[${d.contract}]`;
+        } else {
+            const el = document.getElementById('tabDte' + key.charAt(0).toUpperCase() + key.slice(1));
+            if (el) el.textContent = '';
+            const contractEl = document.getElementById('tabContract' + key.charAt(0).toUpperCase() + key.slice(1));
+            if (contractEl) contractEl.textContent = '';
+        }
+    }
+
+    renderActiveTab();
+    document.getElementById('loading').classList.add('hidden');
+    scheduleRefresh();
 }
 
 // ========== REFRESH ==========
