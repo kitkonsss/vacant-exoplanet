@@ -2159,13 +2159,21 @@ function renderAnalysisTab() {
             ${d.longDteWarning ? '<div style="font-size:11px;color:var(--orange);margin-top:6px;opacity:0.8">⚠️ DTE > 60 — Greeks ใช้ r=0 (ไม่คิด carry/lease rate) ค่าประมาณอาจคลาดเคลื่อน ~1-2%</div>' : ''}
         </div>
 
+        <!-- BATTLE MAP — full width, own box -->
+        <div style="padding:20px 24px 16px;background:var(--bg-panel);border:1px solid var(--border);border-radius:14px">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">
+                <div style="font-size:12px;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:1px">🗺️ Battle Map</div>
+                <div style="font-size:11px;color:var(--text-muted)">${displayedPutWalls.length} Put Walls · ${displayedCallWalls.length} Call Walls</div>
+            </div>
+            ${rangeBarHtml}
+        </div>
+
         <!-- 2-COLUMN ROW: Key Levels + Institutional Intel -->
         <div class="setup-grid-row">
 
             <!-- KEY LEVELS -->
             <div style="padding:18px 22px;background:var(--bg-panel);border:1px solid var(--border);border-radius:14px;display:flex;flex-direction:column">
                 <div style="font-size:12px;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px">📍 Key Levels <span style="font-weight:400;text-transform:none;letter-spacing:0">(เรียงจากใกล้ราคา)</span></div>
-                ${rangeBarHtml}
                 ${levelsHtml}
                 ${breakoutHtml}
             </div>
