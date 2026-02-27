@@ -1365,8 +1365,7 @@ function renderAnalysisTab() {
         </div>`;
     }
 
-    // ── VISUAL RANGE BAR (Multi-Wall) ──
-    // Expand bar range to cover all displayed walls (up to 3 per side)
+    // ── BATTLE MAP BAR (Redesigned — visual centerpiece) ──
     const displayedPutWalls = d.putWalls.slice(0, 3);
     const displayedCallWalls = d.callWalls.slice(0, 3);
     const barLow = displayedPutWalls.length > 0
@@ -1377,61 +1376,198 @@ function renderAnalysisTab() {
         : (d.callSummary.primary ? d.callSummary.primary.strike : d.maxCall.strike);
     const barRange = barHigh - barLow || 1;
     const pricePct = Math.max(2, Math.min(98, ((d.uPrice - barLow) / barRange) * 100));
-    const markers = [];
 
-    // Wall markers (multi-wall, top 3 per side)
+    // Compute helper pct for structural levels
+    const toPct = (val) => Math.max(0, Math.min(100, ((val - barLow) / barRange) * 100));
+
+    // OI density per wall (for glow width)
+    const allWallOIs = [...displayedPutWalls, ...displayedCallWalls].map(w => w.oi);
+    const maxWallOI = allWallOIs.length > 0 ? Math.max(...allWallOIs) : 1;
+
+    // Build wall markers with OI glow zones
+    let wallZonesHtml = '';
     for (const w of displayedPutWalls) {
-        const pct = Math.max(0, Math.min(100, ((w.strike - barLow) / barRange) * 100));
-        const h = w.tier === 'primary' ? 18 : w.tier === 'secondary' ? 13 : 8;
-        markers.push({ pct, color: 'var(--put-color)', label: w.strike.toString(), height: h, opacity: w.tier === 'tertiary' ? 0.5 : 1 });
+        const pct = toPct(w.strike);
+        const oiRatio = w.oi / maxWallOI;
+        const glowW = Math.max(2, oiRatio * 10); // 2-10% width for glow
+        const isPrimary = w.tier === 'primary';
+        const oiK = w.oi >= 1000 ? (w.oi / 1000).toFixed(1) + 'K' : w.oi.toString();
+        wallZonesHtml += `<div style="position:absolute;left:${pct}%;top:0;height:100%;transform:translateX(-50%);z-index:1;pointer-events:none">
+            <div style="position:absolute;left:50%;top:0;transform:translateX(-50%);width:${glowW}%;min-width:${isPrimary ? 14 : 6}px;height:100%;background:radial-gradient(ellipse at center,rgba(255,197,110,.${isPrimary ? '25' : '10'}) 0%,transparent 70%);border-radius:50%"></div>
+            <div style="position:absolute;left:50%;top:0;transform:translateX(-50%);width:${isPrimary ? 3 : 2}px;height:100%;background:var(--put-color);opacity:${isPrimary ? 1 : 0.5};border-radius:1px"></div>
+        </div>`;
+        // Label below bar
+        wallZonesHtml += `<div style="position:absolute;left:${pct}%;top:100%;transform:translateX(-50%);text-align:center;z-index:3;margin-top:4px">
+            <div style="font-size:${isPrimary ? 11 : 9}px;font-weight:${isPrimary ? 800 : 600};color:var(--put-color);white-space:nowrap;opacity:${isPrimary ? 1 : 0.6}">$${w.strike}</div>
+            ${isPrimary ? `<div style="font-size:9px;color:var(--put-color);opacity:0.7">${oiK} OI</div>` : ''}
+        </div>`;
     }
     for (const w of displayedCallWalls) {
-        const pct = Math.max(0, Math.min(100, ((w.strike - barLow) / barRange) * 100));
-        const h = w.tier === 'primary' ? 18 : w.tier === 'secondary' ? 13 : 8;
-        markers.push({ pct, color: 'var(--call-color)', label: w.strike.toString(), height: h, opacity: w.tier === 'tertiary' ? 0.5 : 1 });
-    }
-
-    // Structural markers
-    if (d.risk.gammaMean) markers.push({ pct: Math.max(0, Math.min(100, ((d.risk.gammaMean - barLow) / barRange) * 100)), color: 'var(--cyan)', label: 'GM ' + d.risk.gammaMean.toFixed(0), height: 16, opacity: 1 });
-    if (d.mpStrike) markers.push({ pct: Math.max(0, Math.min(100, ((d.mpStrike - barLow) / barRange) * 100)), color: 'var(--pink)', label: 'MP ' + d.mpStrike, height: 16, opacity: 1 });
-    if (d.gexResult.flipStrike) markers.push({ pct: Math.max(0, Math.min(100, ((d.gexResult.flipStrike - barLow) / barRange) * 100)), color: 'var(--accent)', label: 'Flip ' + d.gexResult.flipStrike, height: 16, opacity: 1 });
-
-    // Prevent overlap by staggering labels vertically
-    markers.sort((a, b) => a.pct - b.pct);
-    let lastPcts = [-999, -999, -999];
-    for (let i = 0; i < markers.length; i++) {
-        let assignedLevel = 0;
-        if (markers[i].pct - lastPcts[0] > 6) assignedLevel = 0;
-        else if (markers[i].pct - lastPcts[1] > 6) assignedLevel = 1;
-        else assignedLevel = 2; // Maximum 3 staggering levels
-
-        markers[i].level = assignedLevel;
-        lastPcts[assignedLevel] = markers[i].pct;
-    }
-
-    const mkHtml = markers.map(m => {
-        const mt = 2 + (m.level || 0) * 11; // Stagger down by 11px each level
-        return `
-        <div style="position:absolute;left:${m.pct}%;top:-2px;transform:translateX(-50%);opacity:${m.opacity}">
-            <div style="width:${m.label ? 2 : 3}px;height:${m.height}px;background:${m.color};margin:0 auto;border-radius:1px"></div>
-            ${m.label ? `<div style="position:absolute;top:100%;left:50%;transform:translateX(-50%);font-size:9px;color:${m.color};font-weight:700;text-align:center;margin-top:${mt}px;white-space:nowrap">${m.label}</div>` : ''}
+        const pct = toPct(w.strike);
+        const oiRatio = w.oi / maxWallOI;
+        const glowW = Math.max(2, oiRatio * 10);
+        const isPrimary = w.tier === 'primary';
+        const oiK = w.oi >= 1000 ? (w.oi / 1000).toFixed(1) + 'K' : w.oi.toString();
+        wallZonesHtml += `<div style="position:absolute;left:${pct}%;top:0;height:100%;transform:translateX(-50%);z-index:1;pointer-events:none">
+            <div style="position:absolute;left:50%;top:0;transform:translateX(-50%);width:${glowW}%;min-width:${isPrimary ? 14 : 6}px;height:100%;background:radial-gradient(ellipse at center,rgba(92,224,240,.${isPrimary ? '25' : '10'}) 0%,transparent 70%);border-radius:50%"></div>
+            <div style="position:absolute;left:50%;top:0;transform:translateX(-50%);width:${isPrimary ? 3 : 2}px;height:100%;background:var(--call-color);opacity:${isPrimary ? 1 : 0.5};border-radius:1px"></div>
         </div>`;
-    }).join('');
+        wallZonesHtml += `<div style="position:absolute;left:${pct}%;top:100%;transform:translateX(-50%);text-align:center;z-index:3;margin-top:4px">
+            <div style="font-size:${isPrimary ? 11 : 9}px;font-weight:${isPrimary ? 800 : 600};color:var(--call-color);white-space:nowrap;opacity:${isPrimary ? 1 : 0.6}">$${w.strike}</div>
+            ${isPrimary ? `<div style="font-size:9px;color:var(--call-color);opacity:0.7">${oiK} OI</div>` : ''}
+        </div>`;
+    }
+
+    // Structural level markers (Max Pain, Gamma Mean, GEX Flip) — dashed lines
+    let structMarkersHtml = '';
+    if (d.mpStrike) {
+        const mpPct = toPct(d.mpStrike);
+        structMarkersHtml += `<div style="position:absolute;left:${mpPct}%;top:0;height:100%;width:1px;border-left:2px dashed var(--pink);opacity:0.6;z-index:2"></div>`;
+        structMarkersHtml += `<div style="position:absolute;left:${mpPct}%;top:-1px;transform:translateX(-50%);z-index:4">
+            <div style="font-size:8px;font-weight:700;color:var(--pink);background:rgba(194,102,219,.2);padding:1px 5px;border-radius:3px;white-space:nowrap">MP $${d.mpStrike}</div>
+        </div>`;
+    }
+    if (d.risk.gammaMean) {
+        const gmPct = toPct(d.risk.gammaMean);
+        structMarkersHtml += `<div style="position:absolute;left:${gmPct}%;top:0;height:100%;width:1px;border-left:2px dashed var(--cyan);opacity:0.6;z-index:2"></div>`;
+        structMarkersHtml += `<div style="position:absolute;left:${gmPct}%;top:-1px;transform:translateX(-50%);z-index:4">
+            <div style="font-size:8px;font-weight:700;color:var(--cyan);background:rgba(86,181,250,.2);padding:1px 5px;border-radius:3px;white-space:nowrap">GM $${d.risk.gammaMean.toFixed(0)}</div>
+        </div>`;
+    }
+    if (d.gexResult.flipStrike) {
+        const flipPct = toPct(d.gexResult.flipStrike);
+        structMarkersHtml += `<div style="position:absolute;left:${flipPct}%;top:0;height:100%;width:1px;border-left:2px dashed var(--accent);opacity:0.7;z-index:2"></div>`;
+        structMarkersHtml += `<div style="position:absolute;left:${flipPct}%;bottom:-1px;transform:translateX(-50%) translateY(100%);z-index:4">
+            <div style="font-size:8px;font-weight:700;color:var(--accent);background:rgba(59,125,255,.2);padding:1px 5px;border-radius:3px;white-space:nowrap">⚡ Flip $${d.gexResult.flipStrike}</div>
+        </div>`;
+    }
+
+    // Action labels on the bar (the "3-second glance" feature)
+    const nearPutStrike = d.nearestPut ? d.nearestPut.strike : (displayedPutWalls[0] ? displayedPutWalls[0].strike : null);
+    const nearCallStrike = d.nearestCall ? d.nearestCall.strike : (displayedCallWalls[0] ? displayedCallWalls[0].strike : null);
+    const nearPutDist = nearPutStrike ? Math.abs(d.uPrice - nearPutStrike) : 999;
+    const nearCallDist = nearCallStrike ? Math.abs(nearCallStrike - d.uPrice) : 999;
+
+    let actionTagsHtml = '';
+    if (d.isLongGamma && nearCallStrike && !d.priceAboveCallWall) {
+        const cPct = toPct(nearCallStrike);
+        actionTagsHtml += `<div style="position:absolute;left:${cPct}%;bottom:100%;transform:translateX(-50%);z-index:5;margin-bottom:2px">
+            <div style="font-size:9px;font-weight:800;color:#111;background:var(--call-color);padding:2px 7px;border-radius:4px;white-space:nowrap">SELL ⬇</div>
+        </div>`;
+    }
+    if (d.isLongGamma && nearPutStrike && !d.priceBelowPutWall) {
+        const pPct = toPct(nearPutStrike);
+        actionTagsHtml += `<div style="position:absolute;left:${pPct}%;bottom:100%;transform:translateX(-50%);z-index:5;margin-bottom:2px">
+            <div style="font-size:9px;font-weight:800;color:#111;background:var(--put-color);padding:2px 7px;border-radius:4px;white-space:nowrap">BUY ⬆</div>
+        </div>`;
+    }
+    if (!d.isLongGamma && nearCallStrike && !d.priceAboveCallWall) {
+        const cPct = toPct(nearCallStrike);
+        actionTagsHtml += `<div style="position:absolute;left:${cPct}%;bottom:100%;transform:translateX(-50%);z-index:5;margin-bottom:2px">
+            <div style="font-size:9px;font-weight:800;color:#111;background:var(--green);padding:2px 7px;border-radius:4px;white-space:nowrap;letter-spacing:.3px">ทะลุ=BUY 🚀</div>
+        </div>`;
+    }
+    if (!d.isLongGamma && nearPutStrike && !d.priceBelowPutWall) {
+        const pPct = toPct(nearPutStrike);
+        actionTagsHtml += `<div style="position:absolute;left:${pPct}%;bottom:100%;transform:translateX(-50%);z-index:5;margin-bottom:2px">
+            <div style="font-size:9px;font-weight:800;color:#111;background:var(--red);padding:2px 7px;border-radius:4px;white-space:nowrap;letter-spacing:.3px">หลุด=SELL 💧</div>
+        </div>`;
+    }
+
+    // Distance cards (left/right quick read)
+    const distLeftHtml = nearPutStrike ? `<div style="text-align:left">
+        <div style="font-size:10px;color:var(--put-color);font-weight:700;opacity:0.8">◀ Support</div>
+        <div style="font-size:18px;font-weight:900;color:var(--put-color)">$${nearPutStrike}</div>
+        <div style="font-size:11px;font-weight:700;color:var(--text-muted)">${nearPutDist.toFixed(0)} pts away</div>
+    </div>` : '';
+    const distRightHtml = nearCallStrike ? `<div style="text-align:right">
+        <div style="font-size:10px;color:var(--call-color);font-weight:700;opacity:0.8">Resistance ▶</div>
+        <div style="font-size:18px;font-weight:900;color:var(--call-color)">$${nearCallStrike}</div>
+        <div style="font-size:11px;font-weight:700;color:var(--text-muted)">${nearCallDist.toFixed(0)} pts away</div>
+    </div>` : '';
+
+    // Squeeze/Cascade inline tags at bar edges
+    let edgeTagsHtml = '';
+    if (d.risk.gammaZoneLow) {
+        const cascPct = toPct(d.risk.gammaZoneLow);
+        if (cascPct >= 0 && cascPct <= 100) {
+            edgeTagsHtml += `<div style="position:absolute;left:${cascPct}%;top:50%;transform:translate(-50%,-50%);z-index:4">
+                <div style="font-size:7px;font-weight:800;color:var(--red);background:rgba(244,88,102,.15);padding:1px 4px;border-radius:3px;border:1px solid rgba(244,88,102,.3);white-space:nowrap">CASCADE</div>
+            </div>`;
+        }
+    }
+    if (d.risk.gammaZoneHigh) {
+        const sqzPct = toPct(d.risk.gammaZoneHigh);
+        if (sqzPct >= 0 && sqzPct <= 100) {
+            edgeTagsHtml += `<div style="position:absolute;left:${sqzPct}%;top:50%;transform:translate(-50%,-50%);z-index:4">
+                <div style="font-size:7px;font-weight:800;color:var(--green);background:rgba(46,216,164,.15);padding:1px 4px;border-radius:3px;border:1px solid rgba(46,216,164,.3);white-space:nowrap">SQUEEZE</div>
+            </div>`;
+        }
+    }
+
+    // Regime background gradient for the bar
+    const regimeGrad = d.isLongGamma
+        ? 'linear-gradient(90deg, rgba(255,197,110,.08) 0%, rgba(86,181,250,.05) 30%, rgba(86,181,250,.05) 70%, rgba(92,224,240,.08) 100%)'
+        : 'linear-gradient(90deg, rgba(244,88,102,.1) 0%, rgba(255,255,255,.03) 30%, rgba(255,255,255,.03) 70%, rgba(46,216,164,.1) 100%)';
+
+    // Tradeable range in center
+    const tradeRangePts = d.tradeableRange < 999 ? d.tradeableRange.toFixed(0) : '—';
+    const tradeRangeLabel = d.tradeableRange < 999
+        ? (d.tradeableRange < 30 ? '⚠️ แคบมาก!' : d.tradeableRange < 60 ? 'แคบ' : 'กว้างพอ')
+        : '';
 
     const rangeBarHtml = `
-    <div style="padding:16px 0 28px 0;margin:6px 0 10px">
-        <div style="display:flex;justify-content:space-between;font-size:11px;margin-bottom:6px">
-            <span style="color:var(--put-color);font-weight:700">$${barLow} Support</span>
-            <span style="font-size:10px;color:var(--text-muted)">${displayedPutWalls.length}P + ${displayedCallWalls.length}C walls</span>
-            <span style="color:var(--call-color);font-weight:700">Resistance $${barHigh}</span>
-        </div>
-        <div style="position:relative;height:12px;background:rgba(255,255,255,.07);border-radius:6px;overflow:visible">
-            <div style="position:absolute;left:0;top:0;height:100%;width:${pricePct}%;background:linear-gradient(to right,var(--put-color)22,var(--cyan)33,transparent);border-radius:6px 0 0 6px"></div>
-            ${mkHtml}
-            <div style="position:absolute;left:${pricePct}%;bottom:100%;transform:translateX(-50%);z-index:2;margin-bottom:3px">
-                <div style="font-size:10px;color:white;font-weight:800;text-align:center;margin-bottom:2px">$${d.uPrice.toFixed(0)}</div>
-                <div style="width:0;height:0;border-left:5px solid transparent;border-right:5px solid transparent;border-top:6px solid white;margin:0 auto"></div>
+    <div style="padding:10px 0 14px 0;margin:8px 0 14px">
+        <!-- Distance cards row -->
+        <div style="display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:10px">
+            ${distLeftHtml}
+            <div style="text-align:center;flex:1">
+                <div style="font-size:10px;color:var(--text-muted);font-weight:600">Tradeable Range</div>
+                <div style="font-size:16px;font-weight:900;color:${d.tradeableRange < 30 ? 'var(--red)' : d.tradeableRange < 60 ? 'var(--orange)' : 'var(--text-primary)'}">${tradeRangePts} pts</div>
+                <div style="font-size:9px;color:var(--text-muted)">${tradeRangeLabel}</div>
             </div>
+            ${distRightHtml}
+        </div>
+
+        <!-- THE BAR -->
+        <div style="position:relative;height:40px;background:${regimeGrad};border-radius:8px;overflow:visible;border:1px solid rgba(255,255,255,.08)">
+            <!-- Filled zone up to price -->
+            <div style="position:absolute;left:0;top:0;height:100%;width:${pricePct}%;background:linear-gradient(to right,rgba(255,197,110,.06),rgba(255,255,255,.04));border-radius:8px 0 0 8px"></div>
+
+            <!-- Wall glow zones + lines -->
+            ${wallZonesHtml}
+
+            <!-- Structural markers (Max Pain, GM, Flip) -->
+            ${structMarkersHtml}
+
+            <!-- Action tags (SELL/BUY) -->
+            ${actionTagsHtml}
+
+            <!-- Squeeze/Cascade edge tags -->
+            ${edgeTagsHtml}
+
+            <!-- Price needle (prominent) -->
+            <div style="position:absolute;left:${pricePct}%;top:-6px;bottom:-6px;width:3px;background:white;transform:translateX(-50%);z-index:6;border-radius:2px;box-shadow:0 0 8px rgba(255,255,255,.5),0 0 16px rgba(255,255,255,.2)"></div>
+            <div style="position:absolute;left:${pricePct}%;top:-20px;transform:translateX(-50%);z-index:7">
+                <div style="font-size:13px;color:white;font-weight:900;text-align:center;text-shadow:0 1px 6px rgba(0,0,0,.8);background:rgba(0,0,0,.7);padding:2px 8px;border-radius:6px;border:1px solid rgba(255,255,255,.2)">$${d.uPrice.toFixed(1)}</div>
+            </div>
+        </div>
+
+        <!-- Bottom legend row -->
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px;font-size:10px;color:var(--text-muted)">
+            <span style="display:flex;align-items:center;gap:4px"><span style="width:8px;height:3px;background:var(--put-color);border-radius:1px;display:inline-block"></span> Put Wall</span>
+            <span style="display:flex;align-items:center;gap:4px"><span style="width:8px;height:1px;border-top:2px dashed var(--pink);display:inline-block"></span> Max Pain</span>
+            <span style="display:flex;align-items:center;gap:4px"><span style="width:8px;height:1px;border-top:2px dashed var(--cyan);display:inline-block"></span> Gamma Mean</span>
+            <span style="display:flex;align-items:center;gap:4px"><span style="width:8px;height:1px;border-top:2px dashed var(--accent);display:inline-block"></span> GEX Flip</span>
+            <span style="display:flex;align-items:center;gap:4px"><span style="width:8px;height:3px;background:var(--call-color);border-radius:1px;display:inline-block"></span> Call Wall</span>
+        </div>
+
+        <!-- Regime quick-read -->
+        <div style="text-align:center;margin-top:6px;font-size:11px">
+            ${d.isLongGamma
+                ? '<span style="color:var(--green);font-weight:700">🔄 Long γ</span> <span style="color:var(--text-muted)">— Wall = Fade (SELL ที่ Call / BUY ที่ Put)</span>'
+                : '<span style="color:var(--red);font-weight:700">🌊 Short γ</span> <span style="color:var(--text-muted)">— Wall = Breakout trigger (ทะลุ = Follow!)</span>'
+            }
         </div>
     </div>`;
 
