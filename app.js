@@ -1384,190 +1384,129 @@ function renderAnalysisTab() {
     const allWallOIs = [...displayedPutWalls, ...displayedCallWalls].map(w => w.oi);
     const maxWallOI = allWallOIs.length > 0 ? Math.max(...allWallOIs) : 1;
 
-    // Build wall markers with OI glow zones
-    let wallZonesHtml = '';
+    // Build wall line markers (lines only — labels go in the row below)
+    let wallLinesHtml = '';
     for (const w of displayedPutWalls) {
         const pct = toPct(w.strike);
-        const oiRatio = w.oi / maxWallOI;
-        const glowW = Math.max(2, oiRatio * 10); // 2-10% width for glow
         const isPrimary = w.tier === 'primary';
-        const oiK = w.oi >= 1000 ? (w.oi / 1000).toFixed(1) + 'K' : w.oi.toString();
-        wallZonesHtml += `<div style="position:absolute;left:${pct}%;top:0;height:100%;transform:translateX(-50%);z-index:1;pointer-events:none">
-            <div style="position:absolute;left:50%;top:0;transform:translateX(-50%);width:${glowW}%;min-width:${isPrimary ? 14 : 6}px;height:100%;background:radial-gradient(ellipse at center,rgba(255,197,110,.${isPrimary ? '25' : '10'}) 0%,transparent 70%);border-radius:50%"></div>
-            <div style="position:absolute;left:50%;top:0;transform:translateX(-50%);width:${isPrimary ? 3 : 2}px;height:100%;background:var(--put-color);opacity:${isPrimary ? 1 : 0.5};border-radius:1px"></div>
-        </div>`;
-        // Label below bar
-        wallZonesHtml += `<div style="position:absolute;left:${pct}%;top:100%;transform:translateX(-50%);text-align:center;z-index:3;margin-top:4px">
-            <div style="font-size:${isPrimary ? 11 : 9}px;font-weight:${isPrimary ? 800 : 600};color:var(--put-color);white-space:nowrap;opacity:${isPrimary ? 1 : 0.6}">$${w.strike}</div>
-            ${isPrimary ? `<div style="font-size:9px;color:var(--put-color);opacity:0.7">${oiK} OI</div>` : ''}
+        wallLinesHtml += `<div style="position:absolute;left:${pct}%;top:0;height:100%;transform:translateX(-50%);z-index:1">
+            <div style="position:absolute;left:50%;top:0;transform:translateX(-50%);width:${isPrimary ? 3 : 2}px;height:100%;background:var(--put-color);opacity:${isPrimary ? 0.9 : 0.4};border-radius:1px"></div>
         </div>`;
     }
     for (const w of displayedCallWalls) {
         const pct = toPct(w.strike);
-        const oiRatio = w.oi / maxWallOI;
-        const glowW = Math.max(2, oiRatio * 10);
         const isPrimary = w.tier === 'primary';
-        const oiK = w.oi >= 1000 ? (w.oi / 1000).toFixed(1) + 'K' : w.oi.toString();
-        wallZonesHtml += `<div style="position:absolute;left:${pct}%;top:0;height:100%;transform:translateX(-50%);z-index:1;pointer-events:none">
-            <div style="position:absolute;left:50%;top:0;transform:translateX(-50%);width:${glowW}%;min-width:${isPrimary ? 14 : 6}px;height:100%;background:radial-gradient(ellipse at center,rgba(92,224,240,.${isPrimary ? '25' : '10'}) 0%,transparent 70%);border-radius:50%"></div>
-            <div style="position:absolute;left:50%;top:0;transform:translateX(-50%);width:${isPrimary ? 3 : 2}px;height:100%;background:var(--call-color);opacity:${isPrimary ? 1 : 0.5};border-radius:1px"></div>
-        </div>`;
-        wallZonesHtml += `<div style="position:absolute;left:${pct}%;top:100%;transform:translateX(-50%);text-align:center;z-index:3;margin-top:4px">
-            <div style="font-size:${isPrimary ? 11 : 9}px;font-weight:${isPrimary ? 800 : 600};color:var(--call-color);white-space:nowrap;opacity:${isPrimary ? 1 : 0.6}">$${w.strike}</div>
-            ${isPrimary ? `<div style="font-size:9px;color:var(--call-color);opacity:0.7">${oiK} OI</div>` : ''}
+        wallLinesHtml += `<div style="position:absolute;left:${pct}%;top:0;height:100%;transform:translateX(-50%);z-index:1">
+            <div style="position:absolute;left:50%;top:0;transform:translateX(-50%);width:${isPrimary ? 3 : 2}px;height:100%;background:var(--call-color);opacity:${isPrimary ? 0.9 : 0.4};border-radius:1px"></div>
         </div>`;
     }
 
-    // Structural level markers (Max Pain, Gamma Mean, GEX Flip) — dashed lines
-    let structMarkersHtml = '';
+    // Structural level lines (dashed — no labels on bar, shown in row below)
+    let structLinesHtml = '';
     if (d.mpStrike) {
         const mpPct = toPct(d.mpStrike);
-        structMarkersHtml += `<div style="position:absolute;left:${mpPct}%;top:0;height:100%;width:1px;border-left:2px dashed var(--pink);opacity:0.6;z-index:2"></div>`;
-        structMarkersHtml += `<div style="position:absolute;left:${mpPct}%;top:-1px;transform:translateX(-50%);z-index:4">
-            <div style="font-size:8px;font-weight:700;color:var(--pink);background:rgba(194,102,219,.2);padding:1px 5px;border-radius:3px;white-space:nowrap">MP $${d.mpStrike}</div>
-        </div>`;
+        structLinesHtml += `<div style="position:absolute;left:${mpPct}%;top:0;height:100%;width:0;border-left:2px dashed var(--pink);opacity:0.5;z-index:2"></div>`;
     }
     if (d.risk.gammaMean) {
         const gmPct = toPct(d.risk.gammaMean);
-        structMarkersHtml += `<div style="position:absolute;left:${gmPct}%;top:0;height:100%;width:1px;border-left:2px dashed var(--cyan);opacity:0.6;z-index:2"></div>`;
-        structMarkersHtml += `<div style="position:absolute;left:${gmPct}%;top:-1px;transform:translateX(-50%);z-index:4">
-            <div style="font-size:8px;font-weight:700;color:var(--cyan);background:rgba(86,181,250,.2);padding:1px 5px;border-radius:3px;white-space:nowrap">GM $${d.risk.gammaMean.toFixed(0)}</div>
-        </div>`;
+        structLinesHtml += `<div style="position:absolute;left:${gmPct}%;top:0;height:100%;width:0;border-left:2px dashed var(--cyan);opacity:0.5;z-index:2"></div>`;
     }
     if (d.gexResult.flipStrike) {
         const flipPct = toPct(d.gexResult.flipStrike);
-        structMarkersHtml += `<div style="position:absolute;left:${flipPct}%;top:0;height:100%;width:1px;border-left:2px dashed var(--accent);opacity:0.7;z-index:2"></div>`;
-        structMarkersHtml += `<div style="position:absolute;left:${flipPct}%;bottom:-1px;transform:translateX(-50%) translateY(100%);z-index:4">
-            <div style="font-size:8px;font-weight:700;color:var(--accent);background:rgba(59,125,255,.2);padding:1px 5px;border-radius:3px;white-space:nowrap">⚡ Flip $${d.gexResult.flipStrike}</div>
-        </div>`;
+        structLinesHtml += `<div style="position:absolute;left:${flipPct}%;top:0;height:100%;width:0;border-left:2px dashed var(--accent);opacity:0.6;z-index:2"></div>`;
     }
 
-    // Action labels on the bar (the "3-second glance" feature)
+    // Nearest walls for distance display
     const nearPutStrike = d.nearestPut ? d.nearestPut.strike : (displayedPutWalls[0] ? displayedPutWalls[0].strike : null);
     const nearCallStrike = d.nearestCall ? d.nearestCall.strike : (displayedCallWalls[0] ? displayedCallWalls[0].strike : null);
     const nearPutDist = nearPutStrike ? Math.abs(d.uPrice - nearPutStrike) : 999;
     const nearCallDist = nearCallStrike ? Math.abs(nearCallStrike - d.uPrice) : 999;
 
-    let actionTagsHtml = '';
-    if (d.isLongGamma && nearCallStrike && !d.priceAboveCallWall) {
-        const cPct = toPct(nearCallStrike);
-        actionTagsHtml += `<div style="position:absolute;left:${cPct}%;bottom:100%;transform:translateX(-50%);z-index:5;margin-bottom:2px">
-            <div style="font-size:9px;font-weight:800;color:#111;background:var(--call-color);padding:2px 7px;border-radius:4px;white-space:nowrap">SELL ⬇</div>
-        </div>`;
-    }
-    if (d.isLongGamma && nearPutStrike && !d.priceBelowPutWall) {
-        const pPct = toPct(nearPutStrike);
-        actionTagsHtml += `<div style="position:absolute;left:${pPct}%;bottom:100%;transform:translateX(-50%);z-index:5;margin-bottom:2px">
-            <div style="font-size:9px;font-weight:800;color:#111;background:var(--put-color);padding:2px 7px;border-radius:4px;white-space:nowrap">BUY ⬆</div>
-        </div>`;
-    }
-    if (!d.isLongGamma && nearCallStrike && !d.priceAboveCallWall) {
-        const cPct = toPct(nearCallStrike);
-        actionTagsHtml += `<div style="position:absolute;left:${cPct}%;bottom:100%;transform:translateX(-50%);z-index:5;margin-bottom:2px">
-            <div style="font-size:9px;font-weight:800;color:#111;background:var(--green);padding:2px 7px;border-radius:4px;white-space:nowrap;letter-spacing:.3px">ทะลุ=BUY 🚀</div>
-        </div>`;
-    }
-    if (!d.isLongGamma && nearPutStrike && !d.priceBelowPutWall) {
-        const pPct = toPct(nearPutStrike);
-        actionTagsHtml += `<div style="position:absolute;left:${pPct}%;bottom:100%;transform:translateX(-50%);z-index:5;margin-bottom:2px">
-            <div style="font-size:9px;font-weight:800;color:#111;background:var(--red);padding:2px 7px;border-radius:4px;white-space:nowrap;letter-spacing:.3px">หลุด=SELL 💧</div>
-        </div>`;
-    }
-
-    // Distance cards (left/right quick read)
-    const distLeftHtml = nearPutStrike ? `<div style="text-align:left">
-        <div style="font-size:10px;color:var(--put-color);font-weight:700;opacity:0.8">◀ Support</div>
-        <div style="font-size:18px;font-weight:900;color:var(--put-color)">$${nearPutStrike}</div>
-        <div style="font-size:11px;font-weight:700;color:var(--text-muted)">${nearPutDist.toFixed(0)} pts away</div>
-    </div>` : '';
-    const distRightHtml = nearCallStrike ? `<div style="text-align:right">
-        <div style="font-size:10px;color:var(--call-color);font-weight:700;opacity:0.8">Resistance ▶</div>
-        <div style="font-size:18px;font-weight:900;color:var(--call-color)">$${nearCallStrike}</div>
-        <div style="font-size:11px;font-weight:700;color:var(--text-muted)">${nearCallDist.toFixed(0)} pts away</div>
-    </div>` : '';
-
-    // Squeeze/Cascade inline tags at bar edges
-    let edgeTagsHtml = '';
-    if (d.risk.gammaZoneLow) {
-        const cascPct = toPct(d.risk.gammaZoneLow);
-        if (cascPct >= 0 && cascPct <= 100) {
-            edgeTagsHtml += `<div style="position:absolute;left:${cascPct}%;top:50%;transform:translate(-50%,-50%);z-index:4">
-                <div style="font-size:7px;font-weight:800;color:var(--red);background:rgba(244,88,102,.15);padding:1px 4px;border-radius:3px;border:1px solid rgba(244,88,102,.3);white-space:nowrap">CASCADE</div>
-            </div>`;
-        }
-    }
-    if (d.risk.gammaZoneHigh) {
-        const sqzPct = toPct(d.risk.gammaZoneHigh);
-        if (sqzPct >= 0 && sqzPct <= 100) {
-            edgeTagsHtml += `<div style="position:absolute;left:${sqzPct}%;top:50%;transform:translate(-50%,-50%);z-index:4">
-                <div style="font-size:7px;font-weight:800;color:var(--green);background:rgba(46,216,164,.15);padding:1px 4px;border-radius:3px;border:1px solid rgba(46,216,164,.3);white-space:nowrap">SQUEEZE</div>
-            </div>`;
-        }
-    }
-
-    // Regime background gradient for the bar
+    // Regime gradient
     const regimeGrad = d.isLongGamma
-        ? 'linear-gradient(90deg, rgba(255,197,110,.08) 0%, rgba(86,181,250,.05) 30%, rgba(86,181,250,.05) 70%, rgba(92,224,240,.08) 100%)'
-        : 'linear-gradient(90deg, rgba(244,88,102,.1) 0%, rgba(255,255,255,.03) 30%, rgba(255,255,255,.03) 70%, rgba(46,216,164,.1) 100%)';
+        ? 'linear-gradient(90deg, rgba(255,197,110,.08) 0%, rgba(86,181,250,.04) 50%, rgba(92,224,240,.08) 100%)'
+        : 'linear-gradient(90deg, rgba(244,88,102,.08) 0%, rgba(255,255,255,.03) 50%, rgba(46,216,164,.08) 100%)';
 
-    // Tradeable range in center
+    // Tradeable range
     const tradeRangePts = d.tradeableRange < 999 ? d.tradeableRange.toFixed(0) : '—';
-    const tradeRangeLabel = d.tradeableRange < 999
-        ? (d.tradeableRange < 30 ? '⚠️ แคบมาก!' : d.tradeableRange < 60 ? 'แคบ' : 'กว้างพอ')
-        : '';
+
+    // Build labels row BELOW bar — clean separated row, no overlap
+    let labelsRow = [];
+    for (const w of displayedPutWalls) {
+        const oiK = w.oi >= 1000 ? (w.oi / 1000).toFixed(1) + 'K' : w.oi.toString();
+        labelsRow.push({ strike: w.strike, color: 'var(--put-color)', label: `$${w.strike}`, sub: w.tier === 'primary' ? oiK : '', primary: w.tier === 'primary' });
+    }
+    if (d.mpStrike) labelsRow.push({ strike: d.mpStrike, color: 'var(--pink)', label: `MP`, sub: `$${d.mpStrike}`, primary: false });
+    if (d.risk.gammaMean) labelsRow.push({ strike: d.risk.gammaMean, color: 'var(--cyan)', label: `GM`, sub: `$${d.risk.gammaMean.toFixed(0)}`, primary: false });
+    if (d.gexResult.flipStrike) labelsRow.push({ strike: d.gexResult.flipStrike, color: 'var(--accent)', label: `⚡Flip`, sub: `$${d.gexResult.flipStrike}`, primary: false });
+    for (const w of displayedCallWalls) {
+        const oiK = w.oi >= 1000 ? (w.oi / 1000).toFixed(1) + 'K' : w.oi.toString();
+        labelsRow.push({ strike: w.strike, color: 'var(--call-color)', label: `$${w.strike}`, sub: w.tier === 'primary' ? oiK : '', primary: w.tier === 'primary' });
+    }
+    labelsRow.sort((a, b) => a.strike - b.strike);
+    const labelsRowHtml = labelsRow.map(l => {
+        const pct = toPct(l.strike);
+        return `<div style="position:absolute;left:${pct}%;transform:translateX(-50%);text-align:center;white-space:nowrap">
+            <div style="font-size:${l.primary ? 11 : 9}px;font-weight:${l.primary ? 800 : 600};color:${l.color};opacity:${l.primary ? 1 : 0.7}">${l.label}</div>
+            ${l.sub ? `<div style="font-size:8px;color:${l.color};opacity:0.6">${l.sub}</div>` : ''}
+        </div>`;
+    }).join('');
+
+    // Action hint (single line, not on bar)
+    let actionHint = '';
+    if (d.isLongGamma) {
+        const sellAt = nearCallStrike && !d.priceAboveCallWall ? `<span style="color:var(--call-color);font-weight:700">SELL $${nearCallStrike}</span>` : '';
+        const buyAt = nearPutStrike && !d.priceBelowPutWall ? `<span style="color:var(--put-color);font-weight:700">BUY $${nearPutStrike}</span>` : '';
+        actionHint = [buyAt, sellAt].filter(Boolean).join(' <span style="color:var(--text-muted)">·····</span> ');
+    } else {
+        const bko = nearCallStrike && !d.priceAboveCallWall ? `ทะลุ $${nearCallStrike} = <span style="color:var(--green);font-weight:700">BUY 🚀</span>` : '';
+        const bkd = nearPutStrike && !d.priceBelowPutWall ? `หลุด $${nearPutStrike} = <span style="color:var(--red);font-weight:700">SELL 💧</span>` : '';
+        actionHint = [bkd, bko].filter(Boolean).join(' <span style="color:var(--text-muted)">·····</span> ');
+    }
 
     const rangeBarHtml = `
-    <div style="padding:10px 0 14px 0;margin:8px 0 14px">
-        <!-- Distance cards row -->
-        <div style="display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:10px">
-            ${distLeftHtml}
-            <div style="text-align:center;flex:1">
-                <div style="font-size:10px;color:var(--text-muted);font-weight:600">Tradeable Range</div>
-                <div style="font-size:16px;font-weight:900;color:${d.tradeableRange < 30 ? 'var(--red)' : d.tradeableRange < 60 ? 'var(--orange)' : 'var(--text-primary)'}">${tradeRangePts} pts</div>
-                <div style="font-size:9px;color:var(--text-muted)">${tradeRangeLabel}</div>
+    <div style="padding:6px 0 8px 0;margin:4px 0 8px">
+        <!-- 3-col header: Support | Range | Resistance -->
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+            <div style="text-align:left">
+                <div style="font-size:9px;color:var(--put-color);font-weight:600;text-transform:uppercase;letter-spacing:.5px">◀ Support</div>
+                <div style="font-size:20px;font-weight:900;color:var(--put-color)">$${nearPutStrike || barLow}</div>
+                <div style="font-size:11px;color:var(--text-muted);font-weight:600">${nearPutDist < 999 ? nearPutDist.toFixed(0) + ' pts' : ''}</div>
             </div>
-            ${distRightHtml}
-        </div>
-
-        <!-- THE BAR -->
-        <div style="position:relative;height:40px;background:${regimeGrad};border-radius:8px;overflow:visible;border:1px solid rgba(255,255,255,.08)">
-            <!-- Filled zone up to price -->
-            <div style="position:absolute;left:0;top:0;height:100%;width:${pricePct}%;background:linear-gradient(to right,rgba(255,197,110,.06),rgba(255,255,255,.04));border-radius:8px 0 0 8px"></div>
-
-            <!-- Wall glow zones + lines -->
-            ${wallZonesHtml}
-
-            <!-- Structural markers (Max Pain, GM, Flip) -->
-            ${structMarkersHtml}
-
-            <!-- Action tags (SELL/BUY) -->
-            ${actionTagsHtml}
-
-            <!-- Squeeze/Cascade edge tags -->
-            ${edgeTagsHtml}
-
-            <!-- Price needle (prominent) -->
-            <div style="position:absolute;left:${pricePct}%;top:-6px;bottom:-6px;width:3px;background:white;transform:translateX(-50%);z-index:6;border-radius:2px;box-shadow:0 0 8px rgba(255,255,255,.5),0 0 16px rgba(255,255,255,.2)"></div>
-            <div style="position:absolute;left:${pricePct}%;top:-20px;transform:translateX(-50%);z-index:7">
-                <div style="font-size:13px;color:white;font-weight:900;text-align:center;text-shadow:0 1px 6px rgba(0,0,0,.8);background:rgba(0,0,0,.7);padding:2px 8px;border-radius:6px;border:1px solid rgba(255,255,255,.2)">$${d.uPrice.toFixed(1)}</div>
+            <div style="text-align:center">
+                <div style="font-size:24px;font-weight:900;color:white">$${d.uPrice.toFixed(1)}</div>
+                <div style="font-size:11px;color:${d.tradeableRange < 30 ? 'var(--red)' : d.tradeableRange < 60 ? 'var(--orange)' : 'var(--text-muted)'};font-weight:700">Range: ${tradeRangePts} pts</div>
+            </div>
+            <div style="text-align:right">
+                <div style="font-size:9px;color:var(--call-color);font-weight:600;text-transform:uppercase;letter-spacing:.5px">Resistance ▶</div>
+                <div style="font-size:20px;font-weight:900;color:var(--call-color)">$${nearCallStrike || barHigh}</div>
+                <div style="font-size:11px;color:var(--text-muted);font-weight:600">${nearCallDist < 999 ? nearCallDist.toFixed(0) + ' pts' : ''}</div>
             </div>
         </div>
 
-        <!-- Bottom legend row -->
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px;font-size:10px;color:var(--text-muted)">
-            <span style="display:flex;align-items:center;gap:4px"><span style="width:8px;height:3px;background:var(--put-color);border-radius:1px;display:inline-block"></span> Put Wall</span>
-            <span style="display:flex;align-items:center;gap:4px"><span style="width:8px;height:1px;border-top:2px dashed var(--pink);display:inline-block"></span> Max Pain</span>
-            <span style="display:flex;align-items:center;gap:4px"><span style="width:8px;height:1px;border-top:2px dashed var(--cyan);display:inline-block"></span> Gamma Mean</span>
-            <span style="display:flex;align-items:center;gap:4px"><span style="width:8px;height:1px;border-top:2px dashed var(--accent);display:inline-block"></span> GEX Flip</span>
-            <span style="display:flex;align-items:center;gap:4px"><span style="width:8px;height:3px;background:var(--call-color);border-radius:1px;display:inline-block"></span> Call Wall</span>
+        <!-- THE BAR (clean — lines only, no text) -->
+        <div style="position:relative;height:32px;background:${regimeGrad};border-radius:6px;overflow:visible;border:1px solid rgba(255,255,255,.08)">
+            <div style="position:absolute;left:0;top:0;height:100%;width:${pricePct}%;background:linear-gradient(to right,rgba(255,197,110,.05),rgba(255,255,255,.03));border-radius:6px 0 0 6px"></div>
+            ${wallLinesHtml}
+            ${structLinesHtml}
+            <!-- Price needle -->
+            <div style="position:absolute;left:${pricePct}%;top:-4px;bottom:-4px;width:3px;background:white;transform:translateX(-50%);z-index:6;border-radius:2px;box-shadow:0 0 8px rgba(255,255,255,.5)"></div>
         </div>
 
-        <!-- Regime quick-read -->
-        <div style="text-align:center;margin-top:6px;font-size:11px">
-            ${d.isLongGamma
-                ? '<span style="color:var(--green);font-weight:700">🔄 Long γ</span> <span style="color:var(--text-muted)">— Wall = Fade (SELL ที่ Call / BUY ที่ Put)</span>'
-                : '<span style="color:var(--red);font-weight:700">🌊 Short γ</span> <span style="color:var(--text-muted)">— Wall = Breakout trigger (ทะลุ = Follow!)</span>'
-            }
+        <!-- Labels row (below bar, clean horizontal) -->
+        <div style="position:relative;height:28px;margin-top:4px">
+            ${labelsRowHtml}
+        </div>
+
+        <!-- Action hint + regime -->
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-top:2px">
+            <div style="font-size:11px">
+                ${d.isLongGamma
+                    ? '<span style="color:var(--green);font-weight:700">🔄 Long γ</span> <span style="color:var(--text-muted)">Wall = Fade</span>'
+                    : '<span style="color:var(--red);font-weight:700">🌊 Short γ</span> <span style="color:var(--text-muted)">Wall = Breakout</span>'
+                }
+            </div>
+            <div style="font-size:12px">${actionHint}</div>
         </div>
     </div>`;
 
@@ -1901,7 +1840,94 @@ function renderAnalysisTab() {
         actionHtml += `</div>`; // close flex column
     }
 
-    // ── PATIENCE GUARD (Anti-Shakeout) — triggers for BOTH Long γ and Short γ ──
+    // ── PRE-TRADE CHECKLIST (Always visible — the most important section) ──
+    const triggerCall = d.nearestCall ? d.nearestCall.strike : d.maxCall.strike;
+    const triggerPut = d.nearestPut ? d.nearestPut.strike : d.maxPut.strike;
+    const erLabel = erRef.toFixed(0);
+
+    // Auto-evaluate checks
+    const chk1_atWall = nearCallZone || nearPutZone || d.priceAboveCallWall || d.priceBelowPutWall;
+    const chk1_icon = chk1_atWall ? '✅' : '⬜';
+    const chk1_color = chk1_atWall ? 'var(--green)' : 'var(--orange)';
+    const chk1_text = chk1_atWall
+        ? (nearCallZone ? `ใกล้ Call Wall $${triggerCall}` : nearPutZone ? `ใกล้ Put Wall $${triggerPut}` : d.priceAboveCallWall ? `ทะลุ Call Wall แล้ว` : `หลุด Put Wall แล้ว`)
+        : `ราคายังห่าง Wall (Put ${nearPutDist.toFixed(0)} / Call ${nearCallDist.toFixed(0)} pts) — <b>รอ</b>`;
+
+    const chk2_range = d.tradeableRange >= erRef * 1.5;
+    const chk2_icon = chk2_range ? '✅' : '⬜';
+    const chk2_color = chk2_range ? 'var(--green)' : 'var(--orange)';
+    const chk2_text = chk2_range
+        ? `Range ${d.tradeableRange.toFixed(0)} pts > 1.5× ER (${erLabel}) — R:R ดี`
+        : `Range ${d.tradeableRange < 999 ? d.tradeableRange.toFixed(0) : '?'} pts < 1.5× ER (${erLabel}) — <b>Range แคบ ลดไซส์/รอ</b>`;
+
+    const chk3_regime = true; // Always readable from data
+    const regimeClear = Math.abs(d.gexVal) > 0; // just verify data exists
+    const chk3_text = d.isLongGamma
+        ? `Long γ → Fade strategy (ซื้อ Support / ขาย Resistance)`
+        : `Short γ → Breakout strategy (รอทะลุ Wall แล้ว Follow)`;
+
+    const chk4_risk = d.risk.totalScore < 70;
+    const chk4_icon = chk4_risk ? '✅' : '⬜';
+    const chk4_color = chk4_risk ? 'var(--green)' : 'var(--red)';
+    const chk4_text = chk4_risk
+        ? `Risk Score ${d.risk.totalScore}/100 — อยู่ในเกณฑ์`
+        : `Risk Score ${d.risk.totalScore}/100 — <b>สูงมาก! ลดไซส์ หรือรอ</b>`;
+
+    const allPass = chk1_atWall && chk2_range && chk4_risk;
+    const passCount = [chk1_atWall, chk2_range, true, chk4_risk].filter(Boolean).length;
+    const statusColor = allPass ? 'var(--green)' : passCount >= 3 ? 'var(--orange)' : 'var(--red)';
+    const statusText = allPass ? '✅ READY — เข้าได้ตาม Setup' : passCount >= 3 ? '⚠️ เกือบพร้อม — ตรวจข้อที่ไม่ผ่าน' : '🛑 ยังไม่พร้อม — ห้ามเข้า!';
+
+    const checklistHtml = `
+    <div style="padding:18px 22px;background:linear-gradient(135deg,rgba(59,125,255,.06),rgba(255,255,255,.02));border-radius:14px;border:1px solid ${statusColor}40;border-left:5px solid ${statusColor}">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+            <div style="display:flex;align-items:center;gap:10px">
+                <span style="font-size:22px">📋</span>
+                <span style="font-size:16px;font-weight:900;color:var(--text-primary);letter-spacing:.3px">PRE-TRADE CHECKLIST</span>
+            </div>
+            <div style="display:inline-flex;padding:5px 14px;border-radius:20px;font-size:13px;font-weight:800;background:${statusColor}1a;border:1px solid ${statusColor}55;color:${statusColor}">${statusText}</div>
+        </div>
+
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px 16px">
+            <div style="display:flex;align-items:flex-start;gap:8px;padding:10px 12px;background:rgba(0,0,0,.2);border-radius:8px;border:1px solid ${chk1_color}22">
+                <span style="font-size:18px;line-height:1">${chk1_icon}</span>
+                <div>
+                    <div style="font-size:10px;color:var(--text-muted);font-weight:700;text-transform:uppercase;margin-bottom:2px">① ราคาที่ Wall</div>
+                    <div style="font-size:12px;color:${chk1_color};line-height:1.5">${chk1_text}</div>
+                </div>
+            </div>
+            <div style="display:flex;align-items:flex-start;gap:8px;padding:10px 12px;background:rgba(0,0,0,.2);border-radius:8px;border:1px solid ${chk2_color}22">
+                <span style="font-size:18px;line-height:1">${chk2_icon}</span>
+                <div>
+                    <div style="font-size:10px;color:var(--text-muted);font-weight:700;text-transform:uppercase;margin-bottom:2px">② Range vs ER</div>
+                    <div style="font-size:12px;color:${chk2_color};line-height:1.5">${chk2_text}</div>
+                </div>
+            </div>
+            <div style="display:flex;align-items:flex-start;gap:8px;padding:10px 12px;background:rgba(0,0,0,.2);border-radius:8px;border:1px solid rgba(255,255,255,.05)">
+                <span style="font-size:18px;line-height:1">✅</span>
+                <div>
+                    <div style="font-size:10px;color:var(--text-muted);font-weight:700;text-transform:uppercase;margin-bottom:2px">③ Regime ชัดเจน</div>
+                    <div style="font-size:12px;color:var(--green);line-height:1.5">${chk3_text}</div>
+                </div>
+            </div>
+            <div style="display:flex;align-items:flex-start;gap:8px;padding:10px 12px;background:rgba(0,0,0,.2);border-radius:8px;border:1px solid ${chk4_color}22">
+                <span style="font-size:18px;line-height:1">${chk4_icon}</span>
+                <div>
+                    <div style="font-size:10px;color:var(--text-muted);font-weight:700;text-transform:uppercase;margin-bottom:2px">④ Risk Score</div>
+                    <div style="font-size:12px;color:${chk4_color};line-height:1.5">${chk4_text}</div>
+                </div>
+            </div>
+        </div>
+
+        <div style="display:flex;gap:12px;align-items:center;margin-top:12px;padding-top:10px;border-top:1px solid rgba(255,255,255,.06)">
+            <div style="font-size:11px;color:var(--text-muted);line-height:1.6;flex:1">
+                ⚠️ <b>ก่อนคลิก Buy/Sell:</b> ยืนยัน candle ปิดที่ Wall + Volume สูง + ไม่โดน SL มาก่อน 2 ครั้งวันนี้<br>
+                🔔 ตั้ง Alert ที่ <span style="color:var(--put-color);font-weight:700">$${triggerPut}</span> และ <span style="color:var(--call-color);font-weight:700">$${triggerCall}</span> → ปิดจอ → กลับมาเฉพาะตอน Alert ดัง
+            </div>
+        </div>
+    </div>`;
+
+    // ── PATIENCE GUARD (Sideway warning — compact) ──
     let patienceHtml = '';
     const isChoppyLong = d.tradeableRange < 999 && d.tradeableRange < erRef * 1.5 && d.isLongGamma;
     const isChoppyShort = d.tradeableRange < 999 && d.tradeableRange < erRef * 2 && !d.isLongGamma;
@@ -1910,57 +1936,20 @@ function renderAnalysisTab() {
     const isShortGammaSideway = !d.isLongGamma && (callProx > 0.5 && putProx > 0.5);
 
     if (isChoppyLong || isChoppyShort || (noEdgeZone && d.isLongGamma) || isDampeningZone || isShortGammaSideway) {
-        const triggerCall = d.nearestCall ? `$${d.nearestCall.strike}` : `$${d.maxCall.strike}`;
-        const triggerPut = d.nearestPut ? `$${d.nearestPut.strike}` : `$${d.maxPut.strike}`;
-        const rangeLabel = d.tradeableRange < 999 ? `${d.tradeableRange.toFixed(0)}` : '—';
-        const erLabel = erRef.toFixed(0);
         const gammaLabel = d.isLongGamma ? 'Long γ' : 'Short γ';
         const dangerExplain = d.isLongGamma
             ? 'Dealer ต้านทั้ง 2 ทิศ → ราคาเด้งไปมาในกรอบ → โดน Stop ทั้งขึ้นทั้งลง'
-            : 'Dealer วิ่งตามราคา → Spike ขึ้นลงรุนแรงไร้ทิศทาง → Stop โดนง่าย R:R ไม่ดี';
-
-        // Calculate how many consecutive losses from sideway (educational)
+            : 'Dealer วิ่งตามราคา → Spike ขึ้นลงรุนแรงไร้ทิศทาง → Stop โดนง่าย';
         const maxLossesInRange = d.tradeableRange > 0 ? Math.floor(erRef / (d.tradeableRange * 0.3)) : 0;
 
         patienceHtml = `
-        <div style="padding:16px 20px;background:linear-gradient(135deg,rgba(255,23,68,.08),rgba(255,87,34,.04));border-radius:12px;border:1px solid rgba(255,23,68,.3);border-left:4px solid #ff1744">
-            <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
-                <span style="font-size:20px">🛑</span>
-                <span style="font-size:14px;font-weight:900;color:#ff1744;letter-spacing:.5px">PATIENCE GUARD — ห้ามเข้าตอน SIDEWAY</span>
+        <div style="padding:14px 18px;background:rgba(255,23,68,.06);border-radius:12px;border:1px solid rgba(255,23,68,.25);border-left:4px solid #ff1744">
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+                <span style="font-size:18px">🛑</span>
+                <span style="font-size:13px;font-weight:900;color:#ff1744">PATIENCE GUARD — ${gammaLabel} + ราคากลาง Range = รอ!</span>
+                ${maxLossesInRange > 0 ? `<span style="font-size:11px;color:var(--red);margin-left:auto">ฝืน = โดน SL ~${maxLossesInRange}+ ครั้ง</span>` : ''}
             </div>
-            <div style="font-size:14px;color:var(--text-primary);line-height:2.2">
-                <span style="color:var(--red);font-weight:800;font-size:15px">🚫 ${gammaLabel} + ราคากลาง Range = ห้ามเทรด!</span><br>
-                <span style="color:var(--text-secondary)">${dangerExplain}</span>
-            </div>
-
-            <div style="margin:12px 0;padding:12px 16px;background:rgba(0,0,0,.25);border-radius:10px;border:1px dashed rgba(255,255,255,.1)">
-                <div style="font-size:11px;color:var(--text-muted);font-weight:700;margin-bottom:8px">📋 CHECKLIST ก่อนเข้า (ต้องผ่าน <u>ทุกข้อ</u>)</div>
-                <div style="font-size:13px;color:var(--text-primary);line-height:2.2">
-                    <span style="color:var(--orange)">☐</span> ราคาแตะ Wall (${triggerPut} หรือ ${triggerCall}) → ถ้ายังไม่แตะ = <span style="color:var(--red);font-weight:700">ห้ามเข้า</span><br>
-                    <span style="color:var(--orange)">☐</span> แท่งเทียนปิดเหนือ/ใต้ Wall → ถ้าแค่ wick = <span style="color:var(--red);font-weight:700">ยังไม่ทะลุ</span><br>
-                    <span style="color:var(--orange)">☐</span> Volume แท่ง Breakout สูงกว่าค่าเฉลี่ย → ถ้า Volume เบา = <span style="color:var(--red);font-weight:700">Fake Breakout</span><br>
-                    <span style="color:var(--orange)">☐</span> ไม่โดน SL มาก่อนในวันนี้ → ถ้าโดนแล้ว 2 ครั้ง = <span style="color:var(--red);font-weight:700">หยุดเทรดวันนี้</span>
-                </div>
-            </div>
-
-            <div style="display:flex;gap:12px;flex-wrap:wrap;margin-top:8px">
-                <div style="flex:1;min-width:180px;padding:10px 14px;background:rgba(255,255,255,.03);border-radius:8px;border:1px solid rgba(255,255,255,.06)">
-                    <div style="font-size:11px;color:var(--text-muted);margin-bottom:4px">📏 Range vs ER</div>
-                    <div style="font-size:15px;font-weight:800;color:${(d.tradeableRange < erRef * 1.5) ? 'var(--red)' : 'var(--text-primary)'}">${rangeLabel} pts <span style="font-size:12px;color:var(--text-muted);font-weight:400">vs ER ${erLabel} pts</span></div>
-                    <div style="font-size:11px;color:var(--text-secondary);margin-top:2px">${d.tradeableRange < erRef * 1.5 ? '⚠️ Range < 1.5× ER → ห้ามเทรดเลย!' : d.tradeableRange < erRef * 2 ? '⚠️ Range < 2× ER → ลดขนาด 50%' : 'Range พอเทรดได้'}</div>
-                </div>
-                <div style="flex:1;min-width:180px;padding:10px 14px;background:rgba(255,255,255,.03);border-radius:8px;border:1px solid rgba(255,255,255,.06)">
-                    <div style="font-size:11px;color:var(--text-muted);margin-bottom:4px">💀 ความเสียหายถ้าฝืน</div>
-                    <div style="font-size:15px;font-weight:800;color:var(--red)">${maxLossesInRange > 0 ? `โดน SL ~${maxLossesInRange}+ ครั้ง` : 'ขาดทุนรัวๆ'}</div>
-                    <div style="font-size:11px;color:var(--text-secondary);margin-top:2px">ก่อนราคาจะทะลุ Wall จริง</div>
-                </div>
-            </div>
-
-            <div style="font-size:11px;color:var(--text-muted);margin-top:12px;padding-top:10px;border-top:1px solid rgba(255,255,255,.06);line-height:1.8">
-                💡 <b>กฎเหล็ก:</b> ขาดทุนรัวๆ จาก Sideway ทำพอร์ตแตกเร็วกว่าพลาด Breakout 10 ครั้ง<br>
-                🎯 <b>วิธีแก้:</b> เปิดหน้า Dashboard ทิ้งไว้ — รอจนราคาแตะ Wall + ผ่าน Checklist → ค่อยเข้า<br>
-                🔔 <b>เทคนิค:</b> ตั้ง Alert ที่ ${triggerPut} และ ${triggerCall} → ปิดจอไปทำอย่างอื่น → กลับมาเฉพาะตอน Alert ดัง
-            </div>
+            <div style="font-size:12px;color:var(--text-secondary);line-height:1.6">${dangerExplain}</div>
         </div>`;
     }
 
@@ -2159,11 +2148,14 @@ function renderAnalysisTab() {
             ${d.longDteWarning ? '<div style="font-size:11px;color:var(--orange);margin-top:6px;opacity:0.8">⚠️ DTE > 60 — Greeks ใช้ r=0 (ไม่คิด carry/lease rate) ค่าประมาณอาจคลาดเคลื่อน ~1-2%</div>' : ''}
         </div>
 
-        <!-- BATTLE MAP — full width, own box -->
-        <div style="padding:20px 24px 16px;background:var(--bg-panel);border:1px solid var(--border);border-radius:14px">
-            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">
+        <!-- PRE-TRADE CHECKLIST — full width, prominent -->
+        ${checklistHtml}
+
+        <!-- BATTLE MAP — full width -->
+        <div style="padding:16px 24px 12px;background:var(--bg-panel);border:1px solid var(--border);border-radius:14px">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:0">
                 <div style="font-size:12px;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:1px">🗺️ Battle Map</div>
-                <div style="font-size:11px;color:var(--text-muted)">${displayedPutWalls.length} Put Walls · ${displayedCallWalls.length} Call Walls</div>
+                <div style="font-size:11px;color:var(--text-muted)">${displayedPutWalls.length} Put · ${displayedCallWalls.length} Call</div>
             </div>
             ${rangeBarHtml}
         </div>
