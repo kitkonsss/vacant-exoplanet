@@ -1640,7 +1640,11 @@ function renderAnalysisTab() {
             actionHtml += `<div style="font-size:13px;color:var(--text-primary);line-height:2">`;
             actionHtml += `Entry: ${nrStr} (ที่ Wall)<br>`;
             actionHtml += `SL: $${(nrStrike + slBuffer).toFixed(0)}<br>`;
-            actionHtml += `TP: ${mpStr || gmStr || nsStr}`;
+            // Short TP ต้องต่ำกว่า Entry (nrStrike)
+            const scalpShortTP = (d.mpStrike && d.mpStrike < nrStrike) ? mpStr
+                : (d.risk.gammaMean && d.risk.gammaMean < nrStrike) ? gmStr
+                : nsStr;
+            actionHtml += `TP: ${scalpShortTP}`;
             actionHtml += `</div>`;
             actionHtml += `<div style="font-size:11px;color:var(--orange);margin-top:6px;font-weight:600">⚠️ Size เล็ก — สวนเทรน scalp เท่านั้น</div>`;
             actionHtml += `</div></div>`;
@@ -1667,7 +1671,11 @@ function renderAnalysisTab() {
             actionHtml += `<div style="font-size:13px;color:var(--text-primary);line-height:2">`;
             actionHtml += `Entry: ${nsStr} (ที่ Wall)<br>`;
             actionHtml += `SL: $${(nsStrike - slBuffer).toFixed(0)}<br>`;
-            actionHtml += `TP: ${mpStr || gmStr || nrStr}`;
+            // Long TP ต้องสูงกว่า Entry (nsStrike)
+            const scalpLongTP = (d.mpStrike && d.mpStrike > nsStrike) ? mpStr
+                : (d.risk.gammaMean && d.risk.gammaMean > nsStrike) ? gmStr
+                : nrStr;
+            actionHtml += `TP: ${scalpLongTP}`;
             actionHtml += `</div>`;
             actionHtml += `<div style="font-size:11px;color:var(--orange);margin-top:6px;font-weight:600">⚠️ Size เล็ก — สวนเทรน scalp เท่านั้น</div>`;
             actionHtml += `</div></div>`;
@@ -1710,7 +1718,11 @@ function renderAnalysisTab() {
             actionHtml += `<span style="color:var(--text-muted);font-size:11px">❷ Confirm:</span> แท่งแดง Reject / Pin Bar / Doji ที่ Wall<br>`;
             actionHtml += `<span style="color:var(--text-muted);font-size:11px">❸ Entry:</span> Sell ที่ ${nrStr} (หรือรอ Reject ก่อน)<br>`;
             actionHtml += `<span style="color:var(--text-muted);font-size:11px">❹ SL:</span> <span style="color:var(--red);font-weight:700">$${(nrStrike + slBuffer).toFixed(0)}</span> (เหนือ Wall ${slBuffer} pts)<br>`;
-            actionHtml += `<span style="color:var(--text-muted);font-size:11px">❺ TP₁:</span> ${mpStr || gmStr || nsStr} <span style="color:var(--text-muted)">(กลาง Range)</span>`;
+            // Fade Short TP ต้องต่ำกว่า Entry (nrStrike)
+            const fadeShortTP = (d.mpStrike && d.mpStrike < nrStrike) ? mpStr
+                : (d.risk.gammaMean && d.risk.gammaMean < nrStrike) ? gmStr
+                : nsStr;
+            actionHtml += `<span style="color:var(--text-muted);font-size:11px">❺ TP₁:</span> ${fadeShortTP} <span style="color:var(--text-muted)">(กลาง Range)</span>`;
             actionHtml += ` | <span style="color:var(--text-muted);font-size:11px">TP₂:</span> ${nsStr} <span style="color:var(--text-muted)">(Wall ล่าง)</span>`;
             actionHtml += `</div></div>`;
 
@@ -1722,7 +1734,11 @@ function renderAnalysisTab() {
             actionHtml += `<span style="color:var(--text-muted);font-size:11px">❷ Confirm:</span> แท่งเขียว Reject / Pin Bar / Doji ที่ Wall<br>`;
             actionHtml += `<span style="color:var(--text-muted);font-size:11px">❸ Entry:</span> Buy ที่ ${nsStr} (หรือรอ Reject ก่อน)<br>`;
             actionHtml += `<span style="color:var(--text-muted);font-size:11px">❹ SL:</span> <span style="color:var(--red);font-weight:700">$${(nsStrike - slBuffer).toFixed(0)}</span> (ใต้ Wall ${slBuffer} pts)<br>`;
-            actionHtml += `<span style="color:var(--text-muted);font-size:11px">❺ TP₁:</span> ${mpStr || gmStr || nrStr} <span style="color:var(--text-muted)">(กลาง Range)</span>`;
+            // Fade Long TP ต้องสูงกว่า Entry (nsStrike)
+            const fadeLongTP = (d.mpStrike && d.mpStrike > nsStrike) ? mpStr
+                : (d.risk.gammaMean && d.risk.gammaMean > nsStrike) ? gmStr
+                : nrStr;
+            actionHtml += `<span style="color:var(--text-muted);font-size:11px">❺ TP₁:</span> ${fadeLongTP} <span style="color:var(--text-muted)">(กลาง Range)</span>`;
             actionHtml += ` | <span style="color:var(--text-muted);font-size:11px">TP₂:</span> ${nrStr} <span style="color:var(--text-muted)">(Wall บน)</span>`;
             actionHtml += `</div></div></div>`;
 
