@@ -1037,11 +1037,19 @@ function renderAnalysisTab() {
         const nearestCall = callSummary.nearest;
         const nearestPut = putSummary.nearest;
 
-        // Structural walls: highest OI across ALL strikes (for breakout detection)
-        const structCallWall = data.strikes.reduce((p, c) => c.call > p.call ? c : p);
-        const structPutWall = data.strikes.reduce((p, c) => c.put > p.put ? c : p);
-        const priceAboveCallWall = uPrice > structCallWall.strike;
-        const priceBelowPutWall = uPrice < structPutWall.strike;
+        // Structural walls: highest OI on the CORRECT side of price (for breakout detection)
+        // Call wall = highest call OI at strikes >= uPrice (resistance)
+        // Put wall  = highest put OI at strikes <= uPrice (support)
+        const callsAtOrAbove = data.strikes.filter(s => s.strike >= uPrice && s.call > 0);
+        const putsAtOrBelow = data.strikes.filter(s => s.strike <= uPrice && s.put > 0);
+        const structCallWall = callsAtOrAbove.length > 0
+            ? callsAtOrAbove.reduce((p, c) => c.call > p.call ? c : p)
+            : data.strikes.reduce((p, c) => c.call > p.call ? c : p); // fallback: no calls above price
+        const structPutWall = putsAtOrBelow.length > 0
+            ? putsAtOrBelow.reduce((p, c) => c.put > p.put ? c : p)
+            : data.strikes.reduce((p, c) => c.put > p.put ? c : p); // fallback: no puts below price
+        const priceAboveCallWall = callsAtOrAbove.length > 0 && uPrice > structCallWall.strike;
+        const priceBelowPutWall = putsAtOrBelow.length > 0 && uPrice < structPutWall.strike;
         const callWallBreakoutDist = uPrice - structCallWall.strike;
         const putWallBreakdownDist = structPutWall.strike - uPrice;
 
@@ -1101,7 +1109,8 @@ function renderAnalysisTab() {
             nearCallWall, nearPutWall,
             nearestCall, nearestPut, callWalls, putWalls, callSummary, putSummary,
             tradeableRange, er1Day, sourceStrikes2,
-            risk, vannaExp, charmExp, vommaExp, hedgeLabel, itmPct, dte: data.dte
+            risk, vannaExp, charmExp, vommaExp, hedgeLabel, itmPct, dte: data.dte,
+            longDteWarning: data.dte > 60 // Greeks less accurate at long DTE (r=0 assumption)
         };
     }
 
@@ -1132,18 +1141,27 @@ function renderAnalysisTab() {
         bDesc += ` — Squeeze ไม่เกิด เพราะ Dealer ขายเมื่อขึ้น ซื้อเมื่อลง (Mean-Revert)`;
     } else if (d.priceAboveCallWall) {
         // Short Gamma + Above Call Wall = genuine breakout
-        const vannaConfirm = d.vannaExp < 0; // negative = dealers BUY = confirms upside
+        // Vanna confirmation requires meaningful magnitude (> 0.5% ADV)
+        const vannaContractsCheck = Math.abs(d.vannaExp / (d.uPrice * 100));
+        const vannaMeaningful = vannaContractsCheck / 200000 > 0.005; // > 0.5% of ADV
+        const vannaConfirm = d.vannaExp < 0 && vannaMeaningful; // negative = dealers BUY = confirms upside
+        const vannaNeutral = !vannaMeaningful;
         bText = vannaConfirm ? '🚀 BREAKOUT + Vanna' : '🚀 BREAKOUT';
         bColor = 'var(--green)';
         bDesc = `ราคาทะลุ Call Wall $${d.structCallWall.strike} ไปแล้ว +${d.callWallBreakoutDist.toFixed(0)} pts`;
         if (vannaConfirm) bDesc += ` — Vanna ยืนยัน: Dealers ต้อง Buy ดันราคาต่อ`;
+        else if (vannaNeutral) bDesc += ` — Vanna แรงน้อย (ไม่มีนัยสำคัญ) ระวัง pullback`;
         else bDesc += ` — Vanna ยังไม่ confirm ระวัง pullback`;
     } else if (d.priceBelowPutWall) {
-        const vannaConfirm = d.vannaExp > 0; // positive = dealers SELL = confirms downside
+        const vannaContractsCheck = Math.abs(d.vannaExp / (d.uPrice * 100));
+        const vannaMeaningful = vannaContractsCheck / 200000 > 0.005;
+        const vannaConfirm = d.vannaExp > 0 && vannaMeaningful; // positive = dealers SELL = confirms downside
+        const vannaNeutral = !vannaMeaningful;
         bText = vannaConfirm ? '💧 CASCADE + Vanna' : '💧 CASCADE';
         bColor = 'var(--red)';
         bDesc = `ราคาหลุด Put Wall $${d.structPutWall.strike} ไปแล้ว -${d.putWallBreakdownDist.toFixed(0)} pts`;
         if (vannaConfirm) bDesc += ` — Vanna ยืนยัน: Dealers ต้อง Sell กดราคาต่อ`;
+        else if (vannaNeutral) bDesc += ` — Vanna แรงน้อย (ไม่มีนัยสำคัญ) ระวัง bounce`;
         else bDesc += ` — Vanna ยังไม่ confirm ระวัง bounce`;
     } else if (d.nearCallWall && d.gexVal >= 0) {
         const ncs = d.nearestCall ? d.nearestCall.strike : d.maxCall.strike;
@@ -1383,25 +1401,32 @@ function renderAnalysisTab() {
         actionHtml += `</div></div>`;
     } else if (d.priceAboveCallWall) {
         // Short Gamma + Above Call Wall = genuine breakout
-        const vannaConfirm = d.vannaExp < 0;
+        const vannaContractsAct = Math.abs(d.vannaExp / (d.uPrice * 100));
+        const vannaMeaningfulAct = vannaContractsAct / adv > 0.005;
+        const vannaConfirm = d.vannaExp < 0 && vannaMeaningfulAct;
         const swStr = fmtC(d.structCallWall.strike);
         actionHtml = `<b style="color:var(--green)">Buy / Follow Long!</b> ราคาทะลุ Call Wall ${swStr} ไปแล้ว +${d.callWallBreakoutDist.toFixed(0)} pts`;
         if (vannaConfirm) actionHtml += `<br>✅ Vanna ยืนยัน — Dealers ต้อง Buy = ดัน squeeze ต่อ`;
+        else if (!vannaMeaningfulAct) actionHtml += `<br>⚠️ Vanna แรงน้อย — ไม่มีนัยสำคัญ pullback ได้`;
         else actionHtml += `<br>⚠️ Vanna ยังไม่ยืนยัน — ถ้า IV ลดราคาอาจ pullback กลับ`;
         actionHtml += `<br>SL ใต้ Call Wall เดิม ${swStr}`;
         if (d.callWalls.length > 0) actionHtml += ` | TP ที่ ${fmtC(d.callWalls[0].strike)} ${callChain}`;
         actionHtml += `<div style="font-size:12px;color:var(--text-muted);margin-top:6px">🔥 Wall ถูกทะลุแล้ว — Call Wall เดิมกลายเป็น Support | ห้าม Short สวนทาง!</div>`;
     } else if (d.priceBelowPutWall) {
-        const vannaConfirm = d.vannaExp > 0;
+        const vannaContractsAct = Math.abs(d.vannaExp / (d.uPrice * 100));
+        const vannaMeaningfulAct = vannaContractsAct / adv > 0.005;
+        const vannaConfirm = d.vannaExp > 0 && vannaMeaningfulAct;
         const swStr = fmtP(d.structPutWall.strike);
         actionHtml = `<b style="color:var(--red)">Sell / Follow Short!</b> ราคาหลุด Put Wall ${swStr} ไปแล้ว -${d.putWallBreakdownDist.toFixed(0)} pts`;
         if (vannaConfirm) actionHtml += `<br>✅ Vanna ยืนยัน — Dealers ต้อง Sell = กดลงต่อ`;
+        else if (!vannaMeaningfulAct) actionHtml += `<br>⚠️ Vanna แรงน้อย — ไม่มีนัยสำคัญ bounce ได้`;
         else actionHtml += `<br>⚠️ Vanna ยังไม่ยืนยัน — ถ้า IV ลดราคาอาจ bounce กลับ`;
         actionHtml += `<br>SL เหนือ Put Wall เดิม ${swStr}`;
         if (d.putWalls.length > 0) actionHtml += ` | TP ที่ ${fmtP(d.putWalls[0].strike)} ${putChain}`;
         actionHtml += `<div style="font-size:12px;color:var(--text-muted);margin-top:6px">🔥 Wall ถูกทะลุแล้ว — Put Wall เดิมกลายเป็น Resistance | ห้าม Buy สวนทาง!</div>`;
     } else if (d.isLongGamma) {
-        const slBuffer = 15;
+        // SL buffer scales with volatility: ~40% of 1-day Expected Range, min $10
+        const slBuffer = Math.max(10, Math.round(erRef * 0.4));
         const nrStrike = d.nearestCall ? d.nearestCall.strike : d.maxCall.strike;
         const nsStrike = d.nearestPut ? d.nearestPut.strike : d.maxPut.strike;
         // Next walls beyond nearest (for breakout TP targets)
@@ -1539,7 +1564,13 @@ function renderAnalysisTab() {
     }
 
     // ── INSTITUTIONAL INTEL ──
-    const adv = 200000; // Estimated Daily Gold Futures Volume (Contracts)
+    // Dynamic ADV: estimate from intraday volume data if available, else fallback 200K
+    let adv = 200000;
+    if (d.sourceStrikes2 && d.sourceStrikes2.length > 0) {
+        const totalIntradayVol = d.sourceStrikes2.reduce((sum, s) => sum + s.call + s.put, 0);
+        // Intraday data is partial-day; scale up ~3× to approximate full-day ADV
+        adv = Math.max(200000, totalIntradayVol * 3);
+    }
 
     // Vanna: positive = dealers SELL (bearish), negative = dealers BUY (bullish)
     // 1 Option = 1 Futures contract equivalent (100 oz)
@@ -1695,6 +1726,7 @@ function renderAnalysisTab() {
             </div>
             <div style="font-size:14px;color:var(--text-secondary);margin-bottom:4px;line-height:1.6">${bDesc}</div>
             <div style="font-size:13px">${regimeLabel}</div>
+            ${d.longDteWarning ? '<div style="font-size:11px;color:var(--orange);margin-top:6px;opacity:0.8">⚠️ DTE > 60 — Greeks ใช้ r=0 (ไม่คิด carry/lease rate) ค่าประมาณอาจคลาดเคลื่อน ~1-2%</div>' : ''}
         </div>
 
         <!-- 2-COLUMN ROW: Key Levels + Institutional Intel -->
