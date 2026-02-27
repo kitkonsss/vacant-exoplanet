@@ -42,21 +42,21 @@ echo "=== [$(date '+%Y-%m-%d %H:%M:%S')] Scrape started ===" >> "$LOG_FILE"
 cd "$REPO_DIR"
 git pull --rebase --quiet 2>> "$LOG_FILE" || true
 
-# ── Run scraper ──
+# ── Run scraper (scrapes all assets: GC + NQ) ──
 cd "$REPO_DIR/scraper"
-python quikstrike_scraper.py >> "$LOG_FILE" 2>&1
+python quikstrike_scraper.py --asset all >> "$LOG_FILE" 2>&1
 SCRAPE_EXIT=$?
 
 if [ $SCRAPE_EXIT -ne 0 ]; then
-    echo "[$(date '+%H:%M:%S')] ❌ Scraper exited with code $SCRAPE_EXIT" >> "$LOG_FILE"
+    echo "[$(date '+%H:%M:%S')] Scraper exited with code $SCRAPE_EXIT" >> "$LOG_FILE"
     exit $SCRAPE_EXIT
 fi
 
-# ── Commit & Push ──
+# ── Commit & Push (data/ includes data/nq/ for NQ) ──
 cd "$REPO_DIR"
 if ! git diff --quiet data/; then
     git add data/
-    git commit -m "auto-update data $(date '+%Y-%m-%d %H:%M') [skip ci]" --quiet
+    git commit -m "auto-update data (GC+NQ) $(date '+%Y-%m-%d %H:%M') [skip ci]" --quiet
     git push --quiet 2>> "$LOG_FILE"
     echo "[$(date '+%H:%M:%S')] ✅ Pushed data update" >> "$LOG_FILE"
 else
