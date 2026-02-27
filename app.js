@@ -151,13 +151,13 @@ function calcVolumeGEX(oiStrikes, intradayStrikes, F, dte) {
 
         const g = calcGamma(F, iStrike.strike, vol, t);
         const callGEX = g * iStrike.call * contractMultiplier * F * F * 0.01;
-        const putGEX  = g * iStrike.put  * contractMultiplier * F * F * 0.01;
+        const putGEX = g * iStrike.put * contractMultiplier * F * F * 0.01;
         volGEX += callGEX - putGEX;
     }
 
     // Compute total volume vs total OI to gauge volume significance
     const totalVol = intradayStrikes.reduce((sum, s) => sum + s.call + s.put, 0);
-    const totalOI  = oiStrikes.reduce((sum, s) => sum + s.call + s.put, 0);
+    const totalOI = oiStrikes.reduce((sum, s) => sum + s.call + s.put, 0);
     const volOIRatio = totalOI > 0 ? totalVol / totalOI : 0;
 
     // OI GEX sign for comparison (already computed externally, but we need sign here)
@@ -1444,9 +1444,16 @@ function renderAnalysisTab() {
         labelsRow.push({ strike: w.strike, color: 'var(--call-color)', label: `$${w.strike}`, sub: w.tier === 'primary' ? oiK : '', primary: w.tier === 'primary' });
     }
     labelsRow.sort((a, b) => a.strike - b.strike);
-    const labelsRowHtml = labelsRow.map(l => {
-        const pct = toPct(l.strike);
-        return `<div style="position:absolute;left:${pct}%;transform:translateX(-50%);text-align:center;white-space:nowrap">
+    // Anti-overlap: stagger labels that are too close together
+    const MIN_PCT_GAP = 6; // minimum % gap before staggering
+    const labelPcts = labelsRow.map(l => ({ ...l, pct: toPct(l.strike), offsetY: 0 }));
+    for (let i = 1; i < labelPcts.length; i++) {
+        if (Math.abs(labelPcts[i].pct - labelPcts[i - 1].pct) < MIN_PCT_GAP) {
+            labelPcts[i].offsetY = labelPcts[i - 1].offsetY === 0 ? 18 : 0;
+        }
+    }
+    const labelsRowHtml = labelPcts.map(l => {
+        return `<div style="position:absolute;left:${l.pct}%;transform:translateX(-50%);text-align:center;white-space:nowrap;top:${l.offsetY}px">
             <div style="font-size:${l.primary ? 11 : 9}px;font-weight:${l.primary ? 800 : 600};color:${l.color};opacity:${l.primary ? 1 : 0.7}">${l.label}</div>
             ${l.sub ? `<div style="font-size:8px;color:${l.color};opacity:0.6">${l.sub}</div>` : ''}
         </div>`;
@@ -1489,12 +1496,15 @@ function renderAnalysisTab() {
             <div style="position:absolute;left:0;top:0;height:100%;width:${pricePct}%;background:linear-gradient(to right,rgba(255,197,110,.05),rgba(255,255,255,.03));border-radius:6px 0 0 6px"></div>
             ${wallLinesHtml}
             ${structLinesHtml}
-            <!-- Price needle -->
+            <!-- Price needle with futures label -->
             <div style="position:absolute;left:${pricePct}%;top:-4px;bottom:-4px;width:3px;background:white;transform:translateX(-50%);z-index:6;border-radius:2px;box-shadow:0 0 8px rgba(255,255,255,.5)"></div>
+            <div style="position:absolute;left:${pricePct}%;top:-22px;transform:translateX(-50%);z-index:7;white-space:nowrap">
+                <div style="font-size:11px;font-weight:800;color:white;background:rgba(30,30,40,.85);padding:1px 6px;border-radius:4px;border:1px solid rgba(255,255,255,.3);text-shadow:0 0 4px rgba(255,255,255,.4)">$${d.uPrice.toFixed(1)}</div>
+            </div>
         </div>
 
         <!-- Labels row (below bar, clean horizontal) -->
-        <div style="position:relative;height:28px;margin-top:4px">
+        <div style="position:relative;height:38px;margin-top:4px">
             ${labelsRowHtml}
         </div>
 
@@ -1502,9 +1512,9 @@ function renderAnalysisTab() {
         <div style="display:flex;justify-content:space-between;align-items:center;margin-top:2px">
             <div style="font-size:11px">
                 ${d.isLongGamma
-                    ? '<span style="color:var(--green);font-weight:700">🔄 Long γ</span> <span style="color:var(--text-muted)">Wall = Fade</span>'
-                    : '<span style="color:var(--red);font-weight:700">🌊 Short γ</span> <span style="color:var(--text-muted)">Wall = Breakout</span>'
-                }
+            ? '<span style="color:var(--green);font-weight:700">🔄 Long γ</span> <span style="color:var(--text-muted)">Wall = Fade</span>'
+            : '<span style="color:var(--red);font-weight:700">🌊 Short γ</span> <span style="color:var(--text-muted)">Wall = Breakout</span>'
+        }
             </div>
             <div style="font-size:12px">${actionHint}</div>
         </div>
