@@ -59,7 +59,7 @@ ASSET_PROFILES = {
     'nq': {
         'name': 'Nasdaq (NQ)',
         'short': 'NQ',
-        'pid': 54,
+        'pid': None,               # Unknown — will be discovered at runtime
         'pf': 6,
         'yahoo_symbol': 'NQ=F',
         'min_price': 5000,          # NQ futures price > 5000
@@ -93,12 +93,14 @@ BASE_OUTPUT_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(_
 DATA_REPO_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'atas-data')
 
 # Which assets to scrape (can be overridden via CLI args)
-# Default: scrape both GC and NQ
-ASSETS_TO_SCRAPE = ['gc', 'nq']
+# Default: GC only (NQ pid needs to be discovered first)
+ASSETS_TO_SCRAPE = ['gc']
 
 def get_quikstrike_url(asset_id):
     """Build QuikStrike URL for a given asset."""
     p = ASSET_PROFILES[asset_id]
+    if p['pid'] is None:
+        return None
     return f'https://cmegroup-sso.quikstrike.net/User/QuikStrikeView.aspx?pid={p["pid"]}&pf={p["pf"]}'
 
 def get_output_dir(asset_id):
@@ -1004,7 +1006,119 @@ def scrape_contract(driver, contract, prefix, output_dir=None, asset_id='gc'):
 
 
 # ============================================================
-# MAIN
+# ERROR DETECTION & PRODUCT DISCOVERY
+# ============================================================
+
+def is_error_page(driver):
+    """Check if the current page is a QuikStrike error page."""
+    try:
+        url = driver.current_url or ''
+        title = driver.title or ''
+        if 'Error/ErrorPage' in url or 'ErrorPage' in url:
+            return True
+        if 'error' in title.lower() and 'quikstrike' in title.lower():
+            return True
+    except:
+        pass
+    return False
+
+
+def discover_product_pid(driver, asset_id):
+    """
+    Try to discover the correct QuikStrike product ID for an asset.
+    
+    Strategy 1: Navigate to the QuikStrike dashboard and scan all links
+    for product references with pid= parameters.
+    Strategy 2: Try common PIDs and check page content for product name.
+    """
+    profile = ASSET_PROFILES[asset_id]
+    short = profile['short']  # e.g. 'NQ'
+    pf = profile['pf']
+
+    print(f'[DISCOVER] Searching for {short} product ID...')
+
+    # Strategy 1: Go to QuikStrike dashboard (no pid) and scan for product links
+    try:
+        driver.get('https://cmegroup-sso.quikstrike.net/User/QuikStrikeView.aspx')
+        time.sleep(5)
+
+        # Scan all links for pid= in href and product code in text
+        found = driver.execute_script(r"""
+            var code = arguments[0];
+            var result = [];
+            document.querySelectorAll('a').forEach(function(a) {
+                var href = a.href || '';
+                var text = (a.textContent || '').trim();
+                var pidMatch = href.match(/pid=(\d+)/);
+                if (pidMatch && text.length < 80) {
+                    result.push({text: text.substring(0, 80), pid: parseInt(pidMatch[1]), href: href.substring(0, 200)});
+                }
+            });
+            document.querySelectorAll('select option').forEach(function(opt) {
+                var text = (opt.textContent || '').trim();
+                var val = opt.value || '';
+                if (text.toUpperCase().indexOf(code) >= 0 || val.toUpperCase().indexOf(code) >= 0) {
+                    result.push({text: text.substring(0, 80), pid: null, href: val});
+                }
+            });
+            return result;
+        """, short)
+
+        if found:
+            print(f'[DISCOVER] Found {len(found)} links on dashboard:')
+            for item in found[:10]:
+                print(f'  pid={item["pid"]} text="{item["text"]}"')
+
+            # Filter for links containing our product code
+            matching = [f for f in found if f['pid'] and short.upper() in f['text'].upper()]
+            if matching:
+                pid = matching[0]['pid']
+                print(f'[DISCOVER] Matched {short} -> pid={pid} ("{matching[0]["text"]}")')
+                return pid
+
+    except Exception as e:
+        print(f'[DISCOVER] Dashboard scan failed: {e}')
+
+    # Strategy 2: Try common QuikStrike product IDs and check page content
+    candidate_pids = [39, 41, 42, 43, 44, 45, 50, 55, 58, 100, 134, 23, 25, 30, 35]
+    print(f'[DISCOVER] Trying {len(candidate_pids)} candidate PIDs...')
+
+    for pid in candidate_pids:
+        try:
+            test_url = f'https://cmegroup-sso.quikstrike.net/User/QuikStrikeView.aspx?pid={pid}&pf={pf}'
+            driver.get(test_url)
+            time.sleep(3)
+
+            if is_error_page(driver):
+                continue
+
+            # Check if this page mentions our product
+            body_preview = driver.execute_script(
+                'return (document.body.innerText || "").substring(0, 1000).toUpperCase()'
+            ) or ''
+
+            # Look for product code in page content (e.g. "NASDAQ" or "(NQ)")
+            name_parts = profile['name'].upper().split('(')[0].strip().split()
+            if f'({short.upper()})' in body_preview or f'|{short.upper()}' in body_preview or \
+               any(part in body_preview for part in name_parts if len(part) > 3):
+                print(f'[DISCOVER] Found {short} at pid={pid}!')
+                return pid
+            else:
+                snippet = body_preview[:80].replace('\n', ' ')
+                print(f'[DISCOVER] pid={pid} -> not {short} ({snippet}...)')
+
+        except Exception as e:
+            print(f'[DISCOVER] pid={pid} error: {e}')
+            continue
+
+    print(f'[DISCOVER] Could not find {short} in any tested pid.')
+    print(f'[DISCOVER] To fix manually: open QuikStrike in browser, navigate to {short} Vol2Vol,')
+    print(f'[DISCOVER] check the URL for ?pid=XX and update ASSET_PROFILES["nq"]["pid"] in this file.')
+    return None
+
+
+# ============================================================
+# SCRAPE ASSET
 # ============================================================
 
 def scrape_asset(driver, asset_id):
@@ -1020,9 +1134,41 @@ def scrape_asset(driver, asset_id):
 
     # Navigate to asset's QuikStrike page
     url = get_quikstrike_url(asset_id)
+    if url is None:
+        print(f'[NAV] No known pid for {profile["short"]} — trying to discover...')
+        discovered_pid = discover_product_pid(driver, asset_id)
+        if discovered_pid:
+            profile['pid'] = discovered_pid
+            url = get_quikstrike_url(asset_id)
+        else:
+            print(f'[NAV] Could not discover pid for {profile["short"]}. Skipping.')
+            print(f'[NAV] To fix: open QuikStrike in your browser, navigate to {profile["short"]} Vol2Vol,')
+            print(f'[NAV] check the URL for ?pid=XX and update ASSET_PROFILES in quikstrike_scraper.py')
+            return False
+
     print(f'[NAV] Loading {profile["short"]} page: {url}')
     driver.get(url)
     time.sleep(5)
+
+    # Check for QuikStrike error page
+    if is_error_page(driver):
+        print(f'[NAV] QuikStrike error page — pid={profile["pid"]} is wrong for {profile["short"]}')
+        print(f'[NAV] Trying to discover the correct pid...')
+        discovered_pid = discover_product_pid(driver, asset_id)
+        if discovered_pid:
+            profile['pid'] = discovered_pid
+            url = get_quikstrike_url(asset_id)
+            print(f'[NAV] Retrying with pid={discovered_pid}...')
+            driver.get(url)
+            time.sleep(5)
+            if is_error_page(driver):
+                print(f'[NAV] Still error. Skipping {profile["short"]}.')
+                return False
+        else:
+            print(f'[NAV] Could not discover pid. Skipping {profile["short"]}.')
+            print(f'[NAV] To fix: open QuikStrike, go to {profile["short"]} Vol2Vol, check URL for ?pid=XX')
+            return False
+
     wait_ready(driver)
     time.sleep(3)
 
