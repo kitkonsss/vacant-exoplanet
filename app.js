@@ -127,9 +127,16 @@ function calcNetGEX(strikes, F, dte) {
 
 // ========== VOLUME GEX — Intraday flow regime confirmation ==========
 // Uses today's traded volume (instead of OI) to see if new flow confirms or contradicts the OI-based regime
+// NOTE: This is SECONDARY — OI GEX remains the primary regime signal. Volume GEX is "second opinion" only.
+// For expiring contracts (DTE < 1), volume is meaningless for future regime — skip.
 function calcVolumeGEX(oiStrikes, intradayStrikes, F, dte) {
     if (!intradayStrikes || intradayStrikes.length === 0 || !oiStrikes || oiStrikes.length === 0 || dte <= 0)
-        return { volumeGEX: 0, confidence: 'NO_DATA', detail: 'ไม่มี Intraday data', volOIRatio: 0 };
+        return { volumeGEX: 0, confidence: 'NO_DATA', detail: 'ไม่มี Intraday data', volOIRatio: 0, hotStrikes: [] };
+
+    // Expiring contract — volume won't become tomorrow's OI, skip analysis
+    if (dte < 1) {
+        return { volumeGEX: 0, confidence: 'EXPIRING', detail: `Contract ใกล้หมดอายุ (${dte.toFixed(2)} DTE) — volume ไม่มีผลต่อ regime พรุ่งนี้`, volOIRatio: 0, hotStrikes: [] };
+    }
 
     const t = dte / 365;
     const contractMultiplier = 100;
@@ -1966,6 +1973,8 @@ function renderAnalysisTab() {
         volConfBadge = `<span style="display:inline-flex;align-items:center;gap:4px;padding:2px 10px;border-radius:12px;font-size:11px;font-weight:700;background:rgba(255,152,0,.15);border:1px solid rgba(255,152,0,.4);color:var(--orange);margin-left:8px">⚠️ Volume สวนทาง!</span>`;
     } else if (volConf.confidence === 'LOW_VOLUME') {
         volConfBadge = `<span style="display:inline-flex;align-items:center;gap:4px;padding:2px 10px;border-radius:12px;font-size:11px;font-weight:700;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.1);color:var(--text-muted);margin-left:8px">📊 Volume เบา</span>`;
+    } else if (volConf.confidence === 'EXPIRING') {
+        volConfBadge = `<span style="display:inline-flex;align-items:center;gap:4px;padding:2px 10px;border-radius:12px;font-size:11px;font-weight:700;background:rgba(255,82,82,.1);border:1px solid rgba(255,82,82,.3);color:var(--red);margin-left:8px">⏰ หมดอายุวันนี้</span>`;
     }
 
     const regimeLabel = d.isLongGamma
