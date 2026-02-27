@@ -1500,28 +1500,58 @@ function renderAnalysisTab() {
             if (trStr) actionHtml += `<div style="margin-top:6px">${trStr}</div>`;
 
         } else {
-            // ── SCENARIO D: DEFAULT — แสดง Short/Long setup ที่ walls ──
-            actionHtml = `<div style="display:flex;gap:12px;flex-wrap:wrap">`;
-            // Short setup at nearest resistance
-            actionHtml += `<div style="flex:1;min-width:200px;padding:12px 14px;background:rgba(239,83,80,.06);border-radius:10px;border:1px solid rgba(239,83,80,.15)">`;
-            actionHtml += `<div style="font-size:11px;color:var(--text-muted);font-weight:700;margin-bottom:4px">🎯 SHORT SETUP</div>`;
-            actionHtml += `<div style="font-size:13px;color:var(--text-primary);line-height:1.8">`;
-            actionHtml += `Entry → ${nrStr} (+${nrDist.toFixed(0)} pts)<br>`;
-            actionHtml += `SL: $${(nrStrike + slBuffer).toFixed(0)}<br>`;
-            actionHtml += `TP₁: ${mpStr || gmStr || nsStr}`;
-            if (d.nearestPut) actionHtml += ` | TP₂: ${nsStr}`;
+            // ── SCENARIO D: WALL-TO-WALL FADE (Long γ = Dealer คุม Range) ──
+            // R:R calculation
+            const fadeRR_short = nrDist > 0 ? ((nrDist - slBuffer) / nrDist).toFixed(1) : '?';
+            const fadeRR_long = nsDist > 0 ? ((nsDist - slBuffer) / nsDist).toFixed(1) : '?';
+
+            actionHtml = `<div style="padding:14px 18px;background:rgba(0,188,212,.04);border-radius:12px;border:1px solid rgba(0,188,212,.2);margin-bottom:12px">`;
+            actionHtml += `<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">`;
+            actionHtml += `<span style="font-size:16px">🔄</span>`;
+            actionHtml += `<span style="font-size:14px;font-weight:900;color:var(--cyan);letter-spacing:.3px">WALL-TO-WALL FADE — Long γ = Dealer คุมกรอบ ราคาเด้งไปมา</span>`;
+            actionHtml += `</div>`;
+            actionHtml += `<div style="font-size:13px;color:var(--text-secondary);line-height:1.7;margin-bottom:10px">`;
+            actionHtml += `Long γ = Dealer <span style="color:var(--cyan);font-weight:700">ขายเมื่อขึ้น + ซื้อเมื่อลง</span> → ราคาวิ่งถึง Wall แล้วเด้ง → เทรดกลับได้`;
             actionHtml += `</div></div>`;
-            // Long setup at nearest support
-            actionHtml += `<div style="flex:1;min-width:200px;padding:12px 14px;background:rgba(38,166,154,.06);border-radius:10px;border:1px solid rgba(38,166,154,.15)">`;
-            actionHtml += `<div style="font-size:11px;color:var(--text-muted);font-weight:700;margin-bottom:4px">🎯 LONG SETUP</div>`;
-            actionHtml += `<div style="font-size:13px;color:var(--text-primary);line-height:1.8">`;
-            actionHtml += `Entry → ${nsStr} (-${nsDist.toFixed(0)} pts)<br>`;
-            actionHtml += `SL: $${(nsStrike - slBuffer).toFixed(0)}<br>`;
-            actionHtml += `TP₁: ${mpStr || gmStr || nrStr}`;
-            if (d.nearestCall) actionHtml += ` | TP₂: ${nrStr}`;
+
+            actionHtml += `<div style="display:flex;gap:12px;flex-wrap:wrap">`;
+
+            // ── SHORT at Call Wall (ถึง Wall บน → Sell) ──
+            actionHtml += `<div style="flex:1;min-width:220px;padding:14px 16px;background:rgba(239,83,80,.06);border-radius:12px;border:1px solid rgba(239,83,80,.2)">`;
+            actionHtml += `<div style="font-size:12px;color:var(--red);font-weight:800;margin-bottom:8px">⬇️ SELL ที่ Call Wall (ถึงข้างบน → ขาย)</div>`;
+            actionHtml += `<div style="font-size:13px;color:var(--text-primary);line-height:2.2">`;
+            actionHtml += `<span style="color:var(--text-muted);font-size:11px">❶ รอราคาแตะ:</span> ${nrStr}<br>`;
+            actionHtml += `<span style="color:var(--text-muted);font-size:11px">❷ Confirm:</span> แท่งแดง Reject / Pin Bar / Doji ที่ Wall<br>`;
+            actionHtml += `<span style="color:var(--text-muted);font-size:11px">❸ Entry:</span> Sell ที่ ${nrStr} (หรือรอ Reject ก่อน)<br>`;
+            actionHtml += `<span style="color:var(--text-muted);font-size:11px">❹ SL:</span> <span style="color:var(--red);font-weight:700">$${(nrStrike + slBuffer).toFixed(0)}</span> (เหนือ Wall ${slBuffer} pts)<br>`;
+            actionHtml += `<span style="color:var(--text-muted);font-size:11px">❺ TP₁:</span> ${mpStr || gmStr || nsStr} <span style="color:var(--text-muted)">(กลาง Range)</span>`;
+            actionHtml += ` | <span style="color:var(--text-muted);font-size:11px">TP₂:</span> ${nsStr} <span style="color:var(--text-muted)">(Wall ล่าง)</span>`;
+            actionHtml += `</div></div>`;
+
+            // ── LONG at Put Wall (ถึง Wall ล่าง → Buy) ──
+            actionHtml += `<div style="flex:1;min-width:220px;padding:14px 16px;background:rgba(38,166,154,.06);border-radius:12px;border:1px solid rgba(38,166,154,.2)">`;
+            actionHtml += `<div style="font-size:12px;color:var(--green);font-weight:800;margin-bottom:8px">⬆️ BUY ที่ Put Wall (ถึงข้างล่าง → ซื้อ)</div>`;
+            actionHtml += `<div style="font-size:13px;color:var(--text-primary);line-height:2.2">`;
+            actionHtml += `<span style="color:var(--text-muted);font-size:11px">❶ รอราคาแตะ:</span> ${nsStr}<br>`;
+            actionHtml += `<span style="color:var(--text-muted);font-size:11px">❷ Confirm:</span> แท่งเขียว Reject / Pin Bar / Doji ที่ Wall<br>`;
+            actionHtml += `<span style="color:var(--text-muted);font-size:11px">❸ Entry:</span> Buy ที่ ${nsStr} (หรือรอ Reject ก่อน)<br>`;
+            actionHtml += `<span style="color:var(--text-muted);font-size:11px">❹ SL:</span> <span style="color:var(--red);font-weight:700">$${(nsStrike - slBuffer).toFixed(0)}</span> (ใต้ Wall ${slBuffer} pts)<br>`;
+            actionHtml += `<span style="color:var(--text-muted);font-size:11px">❺ TP₁:</span> ${mpStr || gmStr || nrStr} <span style="color:var(--text-muted)">(กลาง Range)</span>`;
+            actionHtml += ` | <span style="color:var(--text-muted);font-size:11px">TP₂:</span> ${nrStr} <span style="color:var(--text-muted)">(Wall บน)</span>`;
             actionHtml += `</div></div></div>`;
+
+            // ── Important Rules ──
+            actionHtml += `<div style="padding:12px 16px;background:rgba(255,152,0,.05);border-radius:10px;border:1px solid rgba(255,152,0,.15);margin-top:4px">`;
+            actionHtml += `<div style="font-size:12px;font-weight:700;color:var(--orange);margin-bottom:6px">⚠️ กฎสำคัญ (Wall-to-Wall Fade)</div>`;
+            actionHtml += `<div style="font-size:13px;color:var(--text-primary);line-height:2">`;
+            actionHtml += `✅ เข้า<b>เฉพาะที่ Wall</b> — ห้ามเข้ากลาง Range (โดน Shakeout 2 ทาง)<br>`;
+            actionHtml += `✅ <b>รอแท่ง Reject</b> ก่อนเข้า — Pin Bar / Doji / Volume Spike ที่ Wall<br>`;
+            actionHtml += `✅ TP กลาง Range (หรือ Max Pain) ก่อน แล้วค่อยเลื่อนไป Wall ตรงข้าม<br>`;
+            actionHtml += `<span style="color:var(--red);font-weight:700">❌ ห้ามไล่ตามฆาก Breakout!</span> Long γ = Fake Breakout สูง ราคาจะเด้งกลับ<br>`;
+            actionHtml += `<span style="color:var(--red);font-weight:700">❌ ห้ามถือข้ามคืน!</span> ถ้าตั้ง TP ที่กลางแล้วราคายังไม่ถึง → ปิด อย่าโลภ`;
+            actionHtml += `</div></div>`;
+
             if (trStr) actionHtml += `<div style="margin-top:6px">${trStr}</div>`;
-            actionHtml += `<div style="font-size:12px;color:var(--text-muted);margin-top:6px">❌ ห้ามไล่ซื้อ breakout ใน Wall (Long γ = fake breakout สูง เมื่อราคายังไม่ทะลุ Wall)</div>`;
         }
     } else {
         // Short gamma: trend following with nearest walls
@@ -1614,6 +1644,36 @@ function renderAnalysisTab() {
         actionHtml += `❌ ห้ามเข้าก่อนทะลุ Wall — ราคาระหว่าง Wall ยังไม่มี Setup<br>`;
         actionHtml += `❌ ห้ามเดาทิศ — ถ้าแท่งไม่ปิดเหนือ/ใต้ Wall = ยังไม่ Breakout<br>`;
         actionHtml += `❌ ห้ามเข้าซ้ำหลังโดน SL — รอ Setup ใหม่เท่านั้น ห้าม Revenge Trade`;
+        actionHtml += `</div></div>`;
+
+        // ── Why can't you fade walls in Short γ? Education box ──
+        actionHtml += `<div style="padding:14px 18px;background:rgba(255,255,255,.02);border-radius:12px;border:1px dashed rgba(255,255,255,.12)">`;
+        actionHtml += `<div style="font-size:12px;font-weight:700;color:var(--text-muted);margin-bottom:10px">💡 ทำไม Sell ที่ $${nrStrikeShort} / Buy ที่ $${nsStrikeShort} ไม่ได้?</div>`;
+        actionHtml += `<div style="display:flex;gap:12px;flex-wrap:wrap">`;
+
+        // Long γ explanation
+        actionHtml += `<div style="flex:1;min-width:200px;padding:12px 14px;background:rgba(0,188,212,.06);border-radius:10px;border:1px solid rgba(0,188,212,.15)">`;
+        actionHtml += `<div style="font-size:12px;font-weight:800;color:var(--cyan);margin-bottom:6px">✅ Long γ → Fade ได้!</div>`;
+        actionHtml += `<div style="font-size:12px;color:var(--text-secondary);line-height:1.8">`;
+        actionHtml += `Dealer <b>ขาย</b>เมื่อขึ้น + <b>ซื้อ</b>เมื่อลง<br>`;
+        actionHtml += `→ ราคาถึง Wall แล้ว<b>เด้งกลับ</b><br>`;
+        actionHtml += `→ Stop ไม่โดนง่าย (Wall ต้านจริง)<br>`;
+        actionHtml += `→ <span style="color:var(--cyan);font-weight:700">Win Rate สูง R:R ดี</span>`;
+        actionHtml += `</div></div>`;
+
+        // Short γ explanation  
+        actionHtml += `<div style="flex:1;min-width:200px;padding:12px 14px;background:rgba(255,23,68,.06);border-radius:10px;border:1px solid rgba(255,23,68,.15)">`;
+        actionHtml += `<div style="font-size:12px;font-weight:800;color:var(--red);margin-bottom:6px">❌ Short γ (ตอนนี้!) → Fade ไม่ได้!</div>`;
+        actionHtml += `<div style="font-size:12px;color:var(--text-secondary);line-height:1.8">`;
+        actionHtml += `Dealer <b>ซื้อ</b>เมื่อขึ้น + <b>ขาย</b>เมื่อลง<br>`;
+        actionHtml += `→ ราคาถึง Wall แล้ว<b>ทะลุไปเลย</b><br>`;
+        actionHtml += `→ Stop โดนทันที (Wall ไม่ต้าน)<br>`;
+        actionHtml += `→ <span style="color:var(--red);font-weight:700">Win Rate ต่ำ พอร์ตแตก</span>`;
+        actionHtml += `</div></div></div>`;
+
+        actionHtml += `<div style="font-size:12px;color:var(--text-muted);margin-top:6px;line-height:1.7">`;
+        actionHtml += `📊 สรุป: เทคนิค “Sell ที่ Wall บน / Buy ที่ Wall ล่าง” ใช้ได้เฉพาะ <span style="color:var(--cyan);font-weight:700">Long γ</span> เท่านั้น | `;
+        actionHtml += `ตอนนี้เป็น <span style="color:var(--red);font-weight:700">Short γ</span> = ต้องรอ Breakout/Breakdown เท่านั้น`;
         actionHtml += `</div></div>`;
 
         actionHtml += `</div>`; // close flex column
