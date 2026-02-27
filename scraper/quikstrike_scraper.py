@@ -59,8 +59,8 @@ ASSET_PROFILES = {
     'nq': {
         'name': 'Nasdaq (NQ)',
         'short': 'NQ',
-        'pid': None,               # Unknown — will be discovered at runtime
-        'pf': 6,
+        'pid': 121,
+        'pf': 26,
         'yahoo_symbol': 'NQ=F',
         'min_price': 5000,          # NQ futures price > 5000
         'data_subfolder': 'nq',     # data/nq/
@@ -93,8 +93,7 @@ BASE_OUTPUT_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(_
 DATA_REPO_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'atas-data')
 
 # Which assets to scrape (can be overridden via CLI args)
-# Default: GC only (NQ pid needs to be discovered first)
-ASSETS_TO_SCRAPE = ['gc']
+ASSETS_TO_SCRAPE = ['gc', 'nq']
 
 def get_quikstrike_url(asset_id):
     """Build QuikStrike URL for a given asset."""
