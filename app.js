@@ -125,6 +125,82 @@ function calcNetGEX(strikes, F, dte) {
     return { netGEX, flipStrike };
 }
 
+// ========== VOLUME GEX — Intraday flow regime confirmation ==========
+// Uses today's traded volume (instead of OI) to see if new flow confirms or contradicts the OI-based regime
+function calcVolumeGEX(oiStrikes, intradayStrikes, F, dte) {
+    if (!intradayStrikes || intradayStrikes.length === 0 || !oiStrikes || oiStrikes.length === 0 || dte <= 0)
+        return { volumeGEX: 0, confidence: 'NO_DATA', detail: 'ไม่มี Intraday data', volOIRatio: 0 };
+
+    const t = dte / 365;
+    const contractMultiplier = 100;
+
+    // Compute GEX using intraday volume instead of OI
+    let volGEX = 0;
+    for (const iStrike of intradayStrikes) {
+        // Use volSettle from intraday data (live IV), fallback to OI data's vol
+        const oiMatch = oiStrikes.find(s => s.strike === iStrike.strike);
+        const vol = iStrike.volSettle > 0 ? iStrike.volSettle : (oiMatch ? oiMatch.volSettle : 0);
+        if (vol <= 0) continue;
+
+        const g = calcGamma(F, iStrike.strike, vol, t);
+        const callGEX = g * iStrike.call * contractMultiplier * F * F * 0.01;
+        const putGEX  = g * iStrike.put  * contractMultiplier * F * F * 0.01;
+        volGEX += callGEX - putGEX;
+    }
+
+    // Compute total volume vs total OI to gauge volume significance
+    const totalVol = intradayStrikes.reduce((sum, s) => sum + s.call + s.put, 0);
+    const totalOI  = oiStrikes.reduce((sum, s) => sum + s.call + s.put, 0);
+    const volOIRatio = totalOI > 0 ? totalVol / totalOI : 0;
+
+    // OI GEX sign for comparison (already computed externally, but we need sign here)
+    let oiGEX = 0;
+    for (const s of oiStrikes) {
+        if (s.volSettle <= 0) continue;
+        const g = calcGamma(F, s.strike, s.volSettle, t);
+        oiGEX += g * s.call * contractMultiplier * F * F * 0.01 - g * s.put * contractMultiplier * F * F * 0.01;
+    }
+
+    const sameSign = (oiGEX >= 0 && volGEX >= 0) || (oiGEX < 0 && volGEX < 0);
+    const meaningfulVolume = volOIRatio > 0.05; // At least 5% of OI traded today
+
+    let confidence, detail;
+    if (!meaningfulVolume) {
+        confidence = 'LOW_VOLUME';
+        detail = `Volume เบา (${(volOIRatio * 100).toFixed(1)}% of OI) — ยังไม่พอยืนยัน Regime`;
+    } else if (sameSign) {
+        confidence = 'CONFIRMED';
+        detail = `Intraday Flow ยืนยัน ${oiGEX >= 0 ? 'Long' : 'Short'} γ`;
+        detail += ` — วันนี้ ${volGEX >= 0 ? 'Call' : 'Put'} volume dominant (Vol/OI: ${(volOIRatio * 100).toFixed(0)}%)`;
+    } else {
+        confidence = 'DIVERGING';
+        const shifting = volGEX >= 0 ? 'Long γ' : 'Short γ';
+        detail = `Volume GEX ชี้ไป ${shifting} สวนทาง OI! Regime อาจเปลี่ยนหลัง settlement (Vol/OI: ${(volOIRatio * 100).toFixed(0)}%)`;
+    }
+
+    // Per-wall reinforcement: find where volume is concentrated
+    let hotStrikes = [];
+    for (const iStrike of intradayStrikes) {
+        const totalStrikeVol = iStrike.call + iStrike.put;
+        if (totalStrikeVol > totalVol * 0.05) { // > 5% of total volume at one strike
+            const oiMatch = oiStrikes.find(s => s.strike === iStrike.strike);
+            const existingOI = oiMatch ? oiMatch.call + oiMatch.put : 0;
+            hotStrikes.push({
+                strike: iStrike.strike,
+                callVol: iStrike.call,
+                putVol: iStrike.put,
+                totalVol: totalStrikeVol,
+                existingOI,
+                isNewWall: existingOI < totalStrikeVol * 2, // Volume > 50% of OI = likely new wall
+                side: iStrike.call > iStrike.put ? 'call' : 'put'
+            });
+        }
+    }
+    hotStrikes.sort((a, b) => b.totalVol - a.totalVol);
+
+    return { volumeGEX: volGEX, confidence, detail, volOIRatio, hotStrikes: hotStrikes.slice(0, 5) };
+}
+
 // Charm: ∂Delta/∂T (time-decay of delta) — Black-76 with r=0
 // Shows how dealer delta positions drift as time passes, independent of price/vol
 function calcCharm(F, K, sigma, t) {
@@ -1065,6 +1141,9 @@ function renderAnalysisTab() {
         const gexVal = gexResult.netGEX;
         const isLongGamma = gexVal >= 0;
 
+        // Volume GEX: use intraday volume to confirm/challenge OI-based regime
+        const volGEXResult = calcVolumeGEX(data.strikes, sourceStrikes2, uPrice, data.dte);
+
         // Use NEAREST wall for proximity detection (dynamic threshold = 1-day ER)
         const distToNearestCall = nearestCall ? nearestCall.dist : (maxCall.strike - uPrice);
         const distToNearestPut = nearestPut ? nearestPut.dist : (uPrice - maxPut.strike);
@@ -1104,7 +1183,7 @@ function renderAnalysisTab() {
             maxCall, maxPut, mpStrike, mpDist, priceAboveMP, priceBelowMP,
             structCallWall, structPutWall, priceAboveCallWall, priceBelowPutWall,
             callWallBreakoutDist, putWallBreakdownDist,
-            gexResult, gexVal, isLongGamma,
+            gexResult, gexVal, isLongGamma, volGEXResult,
             distToCallWall: maxCall.strike - uPrice, distToPutWall: uPrice - maxPut.strike,
             nearCallWall, nearPutWall,
             nearestCall, nearestPut, callWalls, putWalls, callSummary, putSummary,
@@ -1878,10 +1957,35 @@ function renderAnalysisTab() {
         tfHints.push(`<span style="color:${bc};font-weight:700">${lbl}: ${r.biasLabel}</span>`);
     }
 
-    // ── Regime label ──
+    // ── Regime label + Volume Confidence ──
+    const volConf = d.volGEXResult || {};
+    let volConfBadge = '';
+    if (volConf.confidence === 'CONFIRMED') {
+        volConfBadge = `<span style="display:inline-flex;align-items:center;gap:4px;padding:2px 10px;border-radius:12px;font-size:11px;font-weight:700;background:rgba(38,166,154,.15);border:1px solid rgba(38,166,154,.4);color:var(--green);margin-left:8px">✅ Intraday Volume ยืนยัน</span>`;
+    } else if (volConf.confidence === 'DIVERGING') {
+        volConfBadge = `<span style="display:inline-flex;align-items:center;gap:4px;padding:2px 10px;border-radius:12px;font-size:11px;font-weight:700;background:rgba(255,152,0,.15);border:1px solid rgba(255,152,0,.4);color:var(--orange);margin-left:8px">⚠️ Volume สวนทาง!</span>`;
+    } else if (volConf.confidence === 'LOW_VOLUME') {
+        volConfBadge = `<span style="display:inline-flex;align-items:center;gap:4px;padding:2px 10px;border-radius:12px;font-size:11px;font-weight:700;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.1);color:var(--text-muted);margin-left:8px">📊 Volume เบา</span>`;
+    }
+
     const regimeLabel = d.isLongGamma
-        ? `<span style="color:var(--green);font-weight:700">Long Gamma</span> <span style="color:var(--text-secondary);font-size:12px">· Mean Reversion · ราคา Stable</span>`
-        : `<span style="color:var(--red);font-weight:700">Short Gamma</span> <span style="color:var(--text-secondary);font-size:12px">· Trend Following · ราคา Volatile</span>`;
+        ? `<span style="color:var(--green);font-weight:700">Long Gamma</span> <span style="color:var(--text-secondary);font-size:12px">· Mean Reversion · ราคา Stable</span>${volConfBadge}`
+        : `<span style="color:var(--red);font-weight:700">Short Gamma</span> <span style="color:var(--text-secondary);font-size:12px">· Trend Following · ราคา Volatile</span>${volConfBadge}`;
+
+    // Volume GEX detail line (shown below regime)
+    const volConfDetail = volConf.detail ? `<div style="font-size:11px;color:${volConf.confidence === 'DIVERGING' ? 'var(--orange)' : 'var(--text-muted)'};margin-top:3px;line-height:1.4">${volConf.confidence === 'DIVERGING' ? '⚠️' : '📊'} ${volConf.detail}</div>` : '';
+
+    // Hot strikes from volume (new wall formations)
+    let hotStrikesHtml = '';
+    if (volConf.hotStrikes && volConf.hotStrikes.length > 0) {
+        const hotItems = volConf.hotStrikes.map(h => {
+            const sideColor = h.side === 'call' ? 'var(--call-color)' : 'var(--put-color)';
+            const sideLabel = h.side === 'call' ? 'Call' : 'Put';
+            const newTag = h.isNewWall ? ' <span style="color:var(--orange);font-size:9px">🆕 NEW</span>' : '';
+            return `<span style="color:${sideColor};font-weight:700">$${h.strike}</span> ${sideLabel} ${h.totalVol.toLocaleString()} vol${newTag}`;
+        }).join(' · ');
+        hotStrikesHtml = `<div style="font-size:11px;color:var(--text-muted);margin-top:3px">🔥 Hot strikes: ${hotItems}</div>`;
+    }
 
     // ── Fallback warning ──
     const fallbackHtml = isFallback ? `
@@ -1905,6 +2009,8 @@ function renderAnalysisTab() {
             </div>
             <div style="font-size:14px;color:var(--text-secondary);margin-bottom:4px;line-height:1.6">${bDesc}</div>
             <div style="font-size:13px">${regimeLabel}</div>
+            ${volConfDetail}
+            ${hotStrikesHtml}
             ${d.longDteWarning ? '<div style="font-size:11px;color:var(--orange);margin-top:6px;opacity:0.8">⚠️ DTE > 60 — Greeks ใช้ r=0 (ไม่คิด carry/lease rate) ค่าประมาณอาจคลาดเคลื่อน ~1-2%</div>' : ''}
         </div>
 
