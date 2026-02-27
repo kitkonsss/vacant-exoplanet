@@ -1194,7 +1194,7 @@ function renderAnalysisTab() {
     if (d.priceBelowPutWall) {
         levels.push({ price: d.structPutWall.strike, label: '💔 Broken Put Wall', color: 'var(--orange)', icon: '💔', dist: d.structPutWall.strike - d.uPrice, oi: 0, tier: '', action: 'ราคาหลุดแล้ว → กลายเป็น Resistance (SL zone)' });
     }
-    for (const w of d.putWalls) {
+    for (const w of d.putWalls.slice(0, 3)) {
         const tierBadge = tierLabel(w.tier);
         const clusterInfo = w.clusterCount > 1 ? ` [${w.clusterCount} strikes, ${w.clusterOI.toLocaleString()} total]` : '';
         const migrationTag = checkWallMigration(w.strike, 'put', w.oi, d.sourceStrikes2);
@@ -1218,7 +1218,7 @@ function renderAnalysisTab() {
     if (d.priceAboveCallWall) {
         levels.push({ price: d.structCallWall.strike, label: '💔 Broken Call Wall', color: 'var(--orange)', icon: '💔', dist: d.structCallWall.strike - d.uPrice, oi: 0, tier: '', action: 'ราคาทะลุแล้ว → กลายเป็น Support (SL zone)' });
     }
-    for (const w of d.callWalls) {
+    for (const w of d.callWalls.slice(0, 3)) {
         const tierBadge = tierLabel(w.tier);
         const clusterInfo = w.clusterCount > 1 ? ` [${w.clusterCount} strikes, ${w.clusterOI.toLocaleString()} total]` : '';
         const migrationTag = checkWallMigration(w.strike, 'call', w.oi, d.sourceStrikes2);
@@ -1262,19 +1262,26 @@ function renderAnalysisTab() {
     }
 
     // ── VISUAL RANGE BAR (Multi-Wall) ──
-    const barLow = d.putSummary.primary ? d.putSummary.primary.strike : d.maxPut.strike;
-    const barHigh = d.callSummary.primary ? d.callSummary.primary.strike : d.maxCall.strike;
+    // Expand bar range to cover all displayed walls (up to 3 per side)
+    const displayedPutWalls = d.putWalls.slice(0, 3);
+    const displayedCallWalls = d.callWalls.slice(0, 3);
+    const barLow = displayedPutWalls.length > 0
+        ? Math.min(...displayedPutWalls.map(w => w.strike))
+        : (d.putSummary.primary ? d.putSummary.primary.strike : d.maxPut.strike);
+    const barHigh = displayedCallWalls.length > 0
+        ? Math.max(...displayedCallWalls.map(w => w.strike))
+        : (d.callSummary.primary ? d.callSummary.primary.strike : d.maxCall.strike);
     const barRange = barHigh - barLow || 1;
     const pricePct = Math.max(2, Math.min(98, ((d.uPrice - barLow) / barRange) * 100));
     const markers = [];
 
-    // Wall markers (multi-wall)
-    for (const w of d.putWalls) {
+    // Wall markers (multi-wall, top 3 per side)
+    for (const w of displayedPutWalls) {
         const pct = Math.max(0, Math.min(100, ((w.strike - barLow) / barRange) * 100));
         const h = w.tier === 'primary' ? 18 : w.tier === 'secondary' ? 13 : 8;
         markers.push({ pct, color: 'var(--put-color)', label: w.strike.toString(), height: h, opacity: w.tier === 'tertiary' ? 0.5 : 1 });
     }
-    for (const w of d.callWalls) {
+    for (const w of displayedCallWalls) {
         const pct = Math.max(0, Math.min(100, ((w.strike - barLow) / barRange) * 100));
         const h = w.tier === 'primary' ? 18 : w.tier === 'secondary' ? 13 : 8;
         markers.push({ pct, color: 'var(--call-color)', label: w.strike.toString(), height: h, opacity: w.tier === 'tertiary' ? 0.5 : 1 });
@@ -1311,7 +1318,7 @@ function renderAnalysisTab() {
     <div style="padding:16px 0 28px 0;margin:6px 0 10px">
         <div style="display:flex;justify-content:space-between;font-size:11px;margin-bottom:6px">
             <span style="color:var(--put-color);font-weight:700">$${barLow} Support</span>
-            <span style="font-size:10px;color:var(--text-muted)">${d.putWalls.length}P + ${d.callWalls.length}C walls</span>
+            <span style="font-size:10px;color:var(--text-muted)">${displayedPutWalls.length}P + ${displayedCallWalls.length}C walls</span>
             <span style="color:var(--call-color);font-weight:700">Resistance $${barHigh}</span>
         </div>
         <div style="position:relative;height:12px;background:rgba(255,255,255,.07);border-radius:6px;overflow:visible">
