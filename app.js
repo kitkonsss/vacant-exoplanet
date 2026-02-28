@@ -1551,12 +1551,17 @@ function renderAnalysisTab() {
         ...displayedBrokenCalls.map(bw => bw.strike),
         ...displayedBrokenPuts.map(bw => bw.strike),
     ];
-    const barLow = allBarStrikes.length > 0
+    const rawBarLow = allBarStrikes.length > 0
         ? Math.min(...allBarStrikes)
         : (d.putSummary.primary ? d.putSummary.primary.strike : d.maxPut.strike);
-    const barHigh = allBarStrikes.length > 0
+    const rawBarHigh = allBarStrikes.length > 0
         ? Math.max(...allBarStrikes)
         : (d.callSummary.primary ? d.callSummary.primary.strike : d.maxCall.strike);
+    // Add 5% padding on each side so edge labels don't get clipped
+    const rawRange = rawBarHigh - rawBarLow || 1;
+    const barPad = rawRange * 0.05;
+    const barLow = rawBarLow - barPad;
+    const barHigh = rawBarHigh + barPad;
     const barRange = barHigh - barLow || 1;
     const pricePct = Math.max(2, Math.min(98, ((d.uPrice - barLow) / barRange) * 100));
 
@@ -1668,31 +1673,93 @@ function renderAnalysisTab() {
         labelsRow.push({ strike: w.strike, color: 'var(--call-color)', label: `$${w.strike}`, sub: w.tier === 'primary' ? oiK : '', primary: w.tier === 'primary' });
     }
     labelsRow.sort((a, b) => a.strike - b.strike);
-    // Anti-overlap: multi-row greedy placement
-    // Each label has an estimated width in % units (~5% for short labels)
-    const MIN_PCT_GAP = 5;
-    const ROWS = [0, 18, 36]; // 3 possible vertical offsets
-    const rowLastPct = [[-999], [-999], [-999]]; // track last placed pct per row
-    const labelPcts = labelsRow.map(l => ({ ...l, pct: toPct(l.strike), offsetY: 0 }));
+
+    // ── Anti-overlap: width-aware collision detection with dedup ──
+    // Estimate label width in % of bar based on character count
+    const estLabelWidthPct = (label, sub) => {
+        const clean = (s) => s.replace(/[✕⚡🔥◀▶]/g, 'xx').length; // emoji ≈ 2 chars
+        const mainLen = clean(label);
+        const subLen = sub ? clean(sub) : 0;
+        const charPx = 7; // avg px per character at 9-11px font
+        const widthPx = Math.max(mainLen, subLen) * charPx + 16; // +padding
+        return (widthPx / 1000) * 100; // assume ~1000px bar width, conservative
+    };
+
+    let labelPcts = labelsRow.map(l => ({
+        ...l,
+        pct: toPct(l.strike),
+        widthPct: estLabelWidthPct(l.label, l.sub),
+        offsetY: 0,
+        hidden: false,
+    }));
+
+    // 1) Hide labels too close to price (price badge already visible on bar)
+    const PRICE_EXCLUSION_PCT = 2;
     for (const lbl of labelPcts) {
+        if (Math.abs(lbl.pct - pricePct) < PRICE_EXCLUSION_PCT && !lbl.primary) {
+            lbl.hidden = true;
+        }
+    }
+
+    // 2) Deduplicate labels within 2% — keep higher priority (primary > secondary)
+    const DEDUP_PCT = 2;
+    for (let i = 0; i < labelPcts.length; i++) {
+        if (labelPcts[i].hidden) continue;
+        for (let j = i + 1; j < labelPcts.length; j++) {
+            if (labelPcts[j].hidden) continue;
+            if (Math.abs(labelPcts[i].pct - labelPcts[j].pct) < DEDUP_PCT) {
+                // Hide the less important one
+                if (labelPcts[j].primary && !labelPcts[i].primary) {
+                    labelPcts[i].hidden = true;
+                } else {
+                    labelPcts[j].hidden = true;
+                }
+            }
+        }
+    }
+
+    // 3) Multi-row placement with bounding-box collision detection
+    const ROW_H = 20; // px per row
+    const MAX_LABEL_ROWS = 4;
+    const rowOccupied = Array.from({ length: MAX_LABEL_ROWS }, () => []); // [{left, right}]
+    let maxRowUsed = 0;
+    const visible = labelPcts.filter(l => !l.hidden);
+
+    for (const lbl of visible) {
+        const halfW = lbl.widthPct / 2 + 1; // +1% safety margin
+        const lblL = lbl.pct - halfW;
+        const lblR = lbl.pct + halfW;
         let placed = false;
-        for (let r = 0; r < ROWS.length; r++) {
-            const lastPct = rowLastPct[r][rowLastPct[r].length - 1];
-            if (lbl.pct - lastPct >= MIN_PCT_GAP) {
-                lbl.offsetY = ROWS[r];
-                rowLastPct[r].push(lbl.pct);
+        for (let r = 0; r < MAX_LABEL_ROWS; r++) {
+            const overlap = rowOccupied[r].some(o => lblL < o.right && lblR > o.left);
+            if (!overlap) {
+                lbl.offsetY = r * ROW_H;
+                rowOccupied[r].push({ left: lblL, right: lblR });
+                maxRowUsed = Math.max(maxRowUsed, r);
                 placed = true;
                 break;
             }
         }
         if (!placed) {
-            // Force into least-congested row
-            lbl.offsetY = ROWS[2];
-            rowLastPct[2].push(lbl.pct);
+            // Force last row
+            lbl.offsetY = (MAX_LABEL_ROWS - 1) * ROW_H;
+            rowOccupied[MAX_LABEL_ROWS - 1].push({ left: lblL, right: lblR });
+            maxRowUsed = MAX_LABEL_ROWS - 1;
         }
     }
-    const labelsRowHtml = labelPcts.map(l => {
-        return `<div style="position:absolute;left:${l.pct}%;transform:translateX(-50%);text-align:center;white-space:nowrap;top:${l.offsetY}px">
+    const labelsRowHeight = (maxRowUsed + 1) * ROW_H + 12; // dynamic height
+
+    const labelsRowHtml = visible.map(l => {
+        // Edge alignment: left-align near 0%, right-align near 100%, center otherwise
+        let alignStyle;
+        if (l.pct < 5) {
+            alignStyle = `left:${l.pct}%;text-align:left`;
+        } else if (l.pct > 95) {
+            alignStyle = `left:${l.pct}%;transform:translateX(-100%);text-align:right`;
+        } else {
+            alignStyle = `left:${l.pct}%;transform:translateX(-50%);text-align:center`;
+        }
+        return `<div style="position:absolute;${alignStyle};white-space:nowrap;top:${l.offsetY}px">
             <div style="font-size:${l.primary ? 11 : 9}px;font-weight:${l.primary ? 800 : 600};color:${l.color};opacity:${l.primary ? 1 : 0.7}">${l.label}</div>
             ${l.sub ? `<div style="font-size:8px;color:${l.color};opacity:0.6">${l.sub}</div>` : ''}
         </div>`;
@@ -1763,25 +1830,26 @@ function renderAnalysisTab() {
             </div>
         </div>
 
-        <!-- Labels row (below bar, clean horizontal) -->
-        <div style="position:relative;height:56px;margin-top:4px">
+        <!-- Labels row (below bar, dynamic height) -->
+        <div style="position:relative;height:${labelsRowHeight}px;margin-top:4px">
             ${labelsRowHtml}
         </div>
 
         <!-- Trade Flow Arrow (shows retest → TP path when broken wall exists) -->
         ${(displayedBrokenCalls.length > 0 || displayedBrokenPuts.length > 0) ? (() => {
-            let flowHtml = '<div style="position:relative;height:20px;margin-top:2px;margin-bottom:4px">';
+            // Collect flow labels, then de-overlap them
+            const flowLabels = [];
+            let flowLinesHtml = '';
             for (const bw of displayedBrokenCalls) {
                 const bwPct = toPct(bw.strike);
                 const isStrong = bw.volumeConf === 'strong';
                 const nextWall = displayedCallWalls.length > 0 ? displayedCallWalls[0] : null;
                 const tpPct = nextWall ? toPct(nextWall.strike) : null;
-                // Arrow from broken wall (retest) → price → next wall (TP)
-                flowHtml += `<div style="position:absolute;left:${bwPct}%;top:8px;width:${pricePct - bwPct}%;height:0;border-bottom:2px dotted rgba(255,171,64,${isStrong ? 0.6 : 0.3});z-index:1"></div>`;
-                flowHtml += `<div style="position:absolute;left:${bwPct}%;top:1px;font-size:9px;font-weight:700;color:var(--orange);transform:translateX(-50%);white-space:nowrap;opacity:${isStrong ? 1 : 0.7}">↩ Retest</div>`;
+                flowLinesHtml += `<div style="position:absolute;left:${bwPct}%;top:8px;width:${Math.max(0, pricePct - bwPct)}%;height:0;border-bottom:2px dotted rgba(255,171,64,${isStrong ? 0.6 : 0.3});z-index:1"></div>`;
+                flowLabels.push({ pct: bwPct, text: '↩ Retest', color: 'var(--orange)', opacity: isStrong ? 1 : 0.7 });
                 if (tpPct && tpPct > pricePct) {
-                    flowHtml += `<div style="position:absolute;left:${pricePct}%;top:8px;width:${tpPct - pricePct}%;height:0;border-bottom:2px solid rgba(92,224,240,0.4);z-index:1"></div>`;
-                    flowHtml += `<div style="position:absolute;left:${tpPct}%;top:1px;font-size:9px;font-weight:700;color:var(--call-color);transform:translateX(-50%);white-space:nowrap;opacity:0.8">TP →</div>`;
+                    flowLinesHtml += `<div style="position:absolute;left:${pricePct}%;top:8px;width:${tpPct - pricePct}%;height:0;border-bottom:2px solid rgba(92,224,240,0.4);z-index:1"></div>`;
+                    flowLabels.push({ pct: tpPct, text: 'TP →', color: 'var(--call-color)', opacity: 0.8 });
                 }
             }
             for (const bw of displayedBrokenPuts) {
@@ -1789,15 +1857,31 @@ function renderAnalysisTab() {
                 const isStrong = bw.volumeConf === 'strong';
                 const nextWall = displayedPutWalls.length > 0 ? displayedPutWalls[0] : null;
                 const tpPct = nextWall ? toPct(nextWall.strike) : null;
-                flowHtml += `<div style="position:absolute;left:${pricePct}%;top:8px;width:${bwPct - pricePct}%;height:0;border-bottom:2px dotted rgba(255,171,64,${isStrong ? 0.6 : 0.3});z-index:1"></div>`;
-                flowHtml += `<div style="position:absolute;left:${bwPct}%;top:1px;font-size:9px;font-weight:700;color:var(--orange);transform:translateX(-50%);white-space:nowrap;opacity:${isStrong ? 1 : 0.7}">↩ Retest</div>`;
+                flowLinesHtml += `<div style="position:absolute;left:${pricePct}%;top:8px;width:${Math.max(0, bwPct - pricePct)}%;height:0;border-bottom:2px dotted rgba(255,171,64,${isStrong ? 0.6 : 0.3});z-index:1"></div>`;
+                flowLabels.push({ pct: bwPct, text: '↩ Retest', color: 'var(--orange)', opacity: isStrong ? 1 : 0.7 });
                 if (tpPct && tpPct < pricePct) {
-                    flowHtml += `<div style="position:absolute;left:${tpPct}%;top:8px;width:${pricePct - tpPct}%;height:0;border-bottom:2px solid rgba(255,197,110,0.4);z-index:1"></div>`;
-                    flowHtml += `<div style="position:absolute;left:${tpPct}%;top:1px;font-size:9px;font-weight:700;color:var(--put-color);transform:translateX(-50%);white-space:nowrap;opacity:0.8">← TP</div>`;
+                    flowLinesHtml += `<div style="position:absolute;left:${tpPct}%;top:8px;width:${Math.max(0, pricePct - tpPct)}%;height:0;border-bottom:2px solid rgba(255,197,110,0.4);z-index:1"></div>`;
+                    flowLabels.push({ pct: tpPct, text: '← TP', color: 'var(--put-color)', opacity: 0.8 });
                 }
             }
-            flowHtml += '</div>';
-            return flowHtml;
+            // De-overlap flow labels: if two labels are within 8%, nudge the second one down
+            flowLabels.sort((a, b) => a.pct - b.pct);
+            const flowRowOcc = [[]]; // row 0
+            for (const fl of flowLabels) {
+                fl.topPx = 1;
+                const halfW = 5; // ~5% estimated width
+                const flL = fl.pct - halfW;
+                const flR = fl.pct + halfW;
+                const overlapR0 = flowRowOcc[0].some(o => flL < o.right && flR > o.left);
+                if (overlapR0) {
+                    fl.topPx = 12; // second row
+                }
+                flowRowOcc[0].push({ left: flL, right: flR });
+            }
+            const flowLabelsHtml = flowLabels.map(fl =>
+                `<div style="position:absolute;left:${fl.pct}%;top:${fl.topPx}px;font-size:9px;font-weight:700;color:${fl.color};transform:translateX(-50%);white-space:nowrap;opacity:${fl.opacity}">${fl.text}</div>`
+            ).join('');
+            return `<div style="position:relative;height:22px;margin-top:2px;margin-bottom:4px">${flowLinesHtml}${flowLabelsHtml}</div>`;
         })() : ''}
 
         <!-- Action hint + regime -->
