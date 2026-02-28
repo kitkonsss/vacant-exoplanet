@@ -1572,31 +1572,48 @@ function renderAnalysisTab() {
     for (const w of displayedPutWalls) {
         const pct = toPct(w.strike);
         const isPrimary = w.tier === 'primary';
+        const oiRatio = w.oi / maxWallOI;  // 0-1 scale for visual weight
+        const glowSize = isPrimary ? 12 : 6;
         wallLinesHtml += `<div style="position:absolute;left:${pct}%;top:0;height:100%;transform:translateX(-50%);z-index:1">
-            <div style="position:absolute;left:50%;top:0;transform:translateX(-50%);width:${isPrimary ? 3 : 2}px;height:100%;background:var(--put-color);opacity:${isPrimary ? 0.9 : 0.4};border-radius:1px"></div>
+            <div style="position:absolute;left:50%;top:0;transform:translateX(-50%);width:${isPrimary ? 3 : 2}px;height:100%;background:var(--put-color);opacity:${isPrimary ? 0.9 : 0.4};border-radius:1px;box-shadow:0 0 ${glowSize}px rgba(255,197,110,${(oiRatio * 0.5).toFixed(2)})"></div>
         </div>`;
     }
     for (const w of displayedCallWalls) {
         const pct = toPct(w.strike);
         const isPrimary = w.tier === 'primary';
+        const oiRatio = w.oi / maxWallOI;
+        const glowSize = isPrimary ? 12 : 6;
         wallLinesHtml += `<div style="position:absolute;left:${pct}%;top:0;height:100%;transform:translateX(-50%);z-index:1">
-            <div style="position:absolute;left:50%;top:0;transform:translateX(-50%);width:${isPrimary ? 3 : 2}px;height:100%;background:var(--call-color);opacity:${isPrimary ? 0.9 : 0.4};border-radius:1px"></div>
+            <div style="position:absolute;left:50%;top:0;transform:translateX(-50%);width:${isPrimary ? 3 : 2}px;height:100%;background:var(--call-color);opacity:${isPrimary ? 0.9 : 0.4};border-radius:1px;box-shadow:0 0 ${glowSize}px rgba(92,224,240,${(oiRatio * 0.5).toFixed(2)})"></div>
         </div>`;
     }
 
-    // Broken wall lines (dashed orange — volume-confirmed broken levels)
+    // Broken walls: "conquered territory" zone + ✕ marker
+    // Shade the area between broken wall and price to show territory gained
     for (const bw of displayedBrokenCalls) {
-        const pct = toPct(bw.strike);
+        const bwPct = toPct(bw.strike);
         const isStrong = bw.volumeConf === 'strong';
-        wallLinesHtml += `<div style="position:absolute;left:${pct}%;top:0;height:100%;transform:translateX(-50%);z-index:2">
-            <div style="position:absolute;left:50%;top:0;transform:translateX(-50%);width:0;height:100%;border-left:${isStrong ? 3 : 2}px dashed var(--orange);opacity:${isStrong ? 0.9 : 0.5}"></div>
+        const zoneWidth = pricePct - bwPct; // broken call wall is BELOW price
+        if (zoneWidth > 0) {
+            // Conquered territory: gradient from broken wall to price
+            wallLinesHtml += `<div style="position:absolute;left:${bwPct}%;top:0;height:100%;width:${zoneWidth}%;z-index:0;background:linear-gradient(90deg,rgba(255,171,64,${isStrong ? 0.15 : 0.08}),rgba(255,171,64,0.02));pointer-events:none"></div>`;
+        }
+        // ✕ broken wall marker
+        wallLinesHtml += `<div style="position:absolute;left:${bwPct}%;top:0;height:100%;transform:translateX(-50%);z-index:3;display:flex;align-items:center;justify-content:center">
+            <div style="width:0;height:100%;border-left:2px dashed var(--orange);opacity:${isStrong ? 0.7 : 0.35}"></div>
+            <div style="position:absolute;font-size:10px;font-weight:900;color:var(--orange);text-shadow:0 0 ${isStrong ? 8 : 4}px rgba(255,171,64,${isStrong ? 0.8 : 0.4});opacity:${isStrong ? 1 : 0.7}">✕</div>
         </div>`;
     }
     for (const bw of displayedBrokenPuts) {
-        const pct = toPct(bw.strike);
+        const bwPct = toPct(bw.strike);
         const isStrong = bw.volumeConf === 'strong';
-        wallLinesHtml += `<div style="position:absolute;left:${pct}%;top:0;height:100%;transform:translateX(-50%);z-index:2">
-            <div style="position:absolute;left:50%;top:0;transform:translateX(-50%);width:0;height:100%;border-left:${isStrong ? 3 : 2}px dashed var(--orange);opacity:${isStrong ? 0.9 : 0.5}"></div>
+        const zoneWidth = bwPct - pricePct; // broken put wall is ABOVE price
+        if (zoneWidth > 0) {
+            wallLinesHtml += `<div style="position:absolute;left:${pricePct}%;top:0;height:100%;width:${zoneWidth}%;z-index:0;background:linear-gradient(90deg,rgba(255,171,64,0.02),rgba(255,171,64,${isStrong ? 0.15 : 0.08}));pointer-events:none"></div>`;
+        }
+        wallLinesHtml += `<div style="position:absolute;left:${bwPct}%;top:0;height:100%;transform:translateX(-50%);z-index:3;display:flex;align-items:center;justify-content:center">
+            <div style="width:0;height:100%;border-left:2px dashed var(--orange);opacity:${isStrong ? 0.7 : 0.35}"></div>
+            <div style="position:absolute;font-size:10px;font-weight:900;color:var(--orange);text-shadow:0 0 ${isStrong ? 8 : 4}px rgba(255,171,64,${isStrong ? 0.8 : 0.4});opacity:${isStrong ? 1 : 0.7}">✕</div>
         </div>`;
     }
 
@@ -1639,10 +1656,12 @@ function renderAnalysisTab() {
     if (d.risk.gammaMean) labelsRow.push({ strike: d.risk.gammaMean, color: 'var(--cyan)', label: `GM`, sub: `$${d.risk.gammaMean.toFixed(0)}`, primary: false });
     if (d.gexResult.flipStrike) labelsRow.push({ strike: d.gexResult.flipStrike, color: 'var(--accent)', label: `⚡Flip`, sub: `$${d.gexResult.flipStrike}`, primary: false });
     for (const bw of displayedBrokenCalls) {
-        labelsRow.push({ strike: bw.strike, color: 'var(--orange)', label: `🔥$${bw.strike}`, sub: 'Broken', primary: bw.volumeConf === 'strong' });
+        const confTag = bw.volumeConf === 'strong' ? '🔥' : '⚡';
+        labelsRow.push({ strike: bw.strike, color: 'var(--orange)', label: `✕ $${bw.strike}`, sub: `New S ${confTag}`, primary: bw.volumeConf === 'strong' });
     }
     for (const bw of displayedBrokenPuts) {
-        labelsRow.push({ strike: bw.strike, color: 'var(--orange)', label: `🔥$${bw.strike}`, sub: 'Broken', primary: bw.volumeConf === 'strong' });
+        const confTag = bw.volumeConf === 'strong' ? '🔥' : '⚡';
+        labelsRow.push({ strike: bw.strike, color: 'var(--orange)', label: `✕ $${bw.strike}`, sub: `New R ${confTag}`, primary: bw.volumeConf === 'strong' });
     }
     for (const w of displayedCallWalls) {
         const oiK = w.oi >= 1000 ? (w.oi / 1000).toFixed(1) + 'K' : w.oi.toString();
@@ -1748,6 +1767,38 @@ function renderAnalysisTab() {
         <div style="position:relative;height:56px;margin-top:4px">
             ${labelsRowHtml}
         </div>
+
+        <!-- Trade Flow Arrow (shows retest → TP path when broken wall exists) -->
+        ${(displayedBrokenCalls.length > 0 || displayedBrokenPuts.length > 0) ? (() => {
+            let flowHtml = '<div style="position:relative;height:20px;margin-top:2px;margin-bottom:4px">';
+            for (const bw of displayedBrokenCalls) {
+                const bwPct = toPct(bw.strike);
+                const isStrong = bw.volumeConf === 'strong';
+                const nextWall = displayedCallWalls.length > 0 ? displayedCallWalls[0] : null;
+                const tpPct = nextWall ? toPct(nextWall.strike) : null;
+                // Arrow from broken wall (retest) → price → next wall (TP)
+                flowHtml += `<div style="position:absolute;left:${bwPct}%;top:8px;width:${pricePct - bwPct}%;height:0;border-bottom:2px dotted rgba(255,171,64,${isStrong ? 0.6 : 0.3});z-index:1"></div>`;
+                flowHtml += `<div style="position:absolute;left:${bwPct}%;top:1px;font-size:9px;font-weight:700;color:var(--orange);transform:translateX(-50%);white-space:nowrap;opacity:${isStrong ? 1 : 0.7}">↩ Retest</div>`;
+                if (tpPct && tpPct > pricePct) {
+                    flowHtml += `<div style="position:absolute;left:${pricePct}%;top:8px;width:${tpPct - pricePct}%;height:0;border-bottom:2px solid rgba(92,224,240,0.4);z-index:1"></div>`;
+                    flowHtml += `<div style="position:absolute;left:${tpPct}%;top:1px;font-size:9px;font-weight:700;color:var(--call-color);transform:translateX(-50%);white-space:nowrap;opacity:0.8">TP →</div>`;
+                }
+            }
+            for (const bw of displayedBrokenPuts) {
+                const bwPct = toPct(bw.strike);
+                const isStrong = bw.volumeConf === 'strong';
+                const nextWall = displayedPutWalls.length > 0 ? displayedPutWalls[0] : null;
+                const tpPct = nextWall ? toPct(nextWall.strike) : null;
+                flowHtml += `<div style="position:absolute;left:${pricePct}%;top:8px;width:${bwPct - pricePct}%;height:0;border-bottom:2px dotted rgba(255,171,64,${isStrong ? 0.6 : 0.3});z-index:1"></div>`;
+                flowHtml += `<div style="position:absolute;left:${bwPct}%;top:1px;font-size:9px;font-weight:700;color:var(--orange);transform:translateX(-50%);white-space:nowrap;opacity:${isStrong ? 1 : 0.7}">↩ Retest</div>`;
+                if (tpPct && tpPct < pricePct) {
+                    flowHtml += `<div style="position:absolute;left:${tpPct}%;top:8px;width:${pricePct - tpPct}%;height:0;border-bottom:2px solid rgba(255,197,110,0.4);z-index:1"></div>`;
+                    flowHtml += `<div style="position:absolute;left:${tpPct}%;top:1px;font-size:9px;font-weight:700;color:var(--put-color);transform:translateX(-50%);white-space:nowrap;opacity:0.8">← TP</div>`;
+                }
+            }
+            flowHtml += '</div>';
+            return flowHtml;
+        })() : ''}
 
         <!-- Action hint + regime -->
         <div style="display:flex;justify-content:space-between;align-items:center;margin-top:2px">
