@@ -430,6 +430,101 @@ function getWallSummary(walls) {
     return { nearest, primary, walls };
 }
 
+// ========== BROKEN WALL DETECTION (Volume-Confirmed) ==========
+// Detects OI walls that price has ALREADY passed through, confirmed by intraday volume
+// Call broken wall = call OI cluster BELOW price (was resistance → now potential support)
+// Put broken wall = put OI cluster ABOVE price (was support → now potential resistance)
+// Returns array sorted by distance from price (nearest first)
+function detectBrokenWalls(oiStrikes, intradayStrikes, uPrice, side, er1Day) {
+    if (!oiStrikes || oiStrikes.length === 0) return [];
+    const oiKey = side === 'call' ? 'call' : 'put';
+
+    // Call: broken walls are call OI clusters BELOW price (price moved above them)
+    // Put: broken walls are put OI clusters ABOVE price (price moved below them)
+    const filtered = side === 'call'
+        ? oiStrikes.filter(s => s.strike < uPrice && s[oiKey] > 0)
+        : oiStrikes.filter(s => s.strike > uPrice && s[oiKey] > 0);
+    if (filtered.length === 0) return [];
+
+    // Only consider walls within reasonable distance (2× ER = recently broken)
+    const maxDist = (er1Day || 50) * 2.5;
+    const nearby = filtered.filter(s => {
+        const dist = side === 'call' ? uPrice - s.strike : s.strike - uPrice;
+        return dist > 0 && dist <= maxDist;
+    });
+    if (nearby.length === 0) return [];
+
+    // Find significant OI (same thresholds as findSignificantWalls)
+    const maxOI = Math.max(...nearby.map(s => s[oiKey]));
+    const avgOI = nearby.reduce((sum, s) => sum + s[oiKey], 0) / nearby.length;
+    const significantThreshold = Math.max(maxOI * 0.15, avgOI * 2);
+    const significant = nearby.filter(s => s[oiKey] >= significantThreshold);
+    if (significant.length === 0) {
+        // Fallback: take the highest OI nearby
+        const top = nearby.reduce((p, c) => c[oiKey] > p[oiKey] ? c : p);
+        const dist = side === 'call' ? uPrice - top.strike : top.strike - uPrice;
+        // Only include if OI is meaningful (> 50% of global max nearby)
+        if (top[oiKey] < maxOI * 0.5) return [];
+        return [buildBrokenEntry([top], top, oiKey, side, dist, intradayStrikes)];
+    }
+
+    // Cluster adjacent strikes within $15 (same as findSignificantWalls)
+    const sorted = [...significant].sort((a, b) => a.strike - b.strike);
+    const clusters = [];
+    let cluster = { strikes: [sorted[0]], totalOI: sorted[0][oiKey] };
+    for (let i = 1; i < sorted.length; i++) {
+        if (sorted[i].strike - sorted[i - 1].strike <= 15) {
+            cluster.strikes.push(sorted[i]);
+            cluster.totalOI += sorted[i][oiKey];
+        } else {
+            clusters.push(cluster);
+            cluster = { strikes: [sorted[i]], totalOI: sorted[i][oiKey] };
+        }
+    }
+    clusters.push(cluster);
+
+    // Build broken wall entries
+    const brokenWalls = clusters.map(cl => {
+        const rep = cl.strikes.reduce((p, c) => c[oiKey] > p[oiKey] ? c : p);
+        const dist = side === 'call' ? uPrice - rep.strike : rep.strike - uPrice;
+        return buildBrokenEntry(cl.strikes, rep, oiKey, side, dist, intradayStrikes, cl.totalOI);
+    });
+
+    brokenWalls.sort((a, b) => a.dist - b.dist);
+    return brokenWalls;
+}
+
+// Helper: build a single broken wall entry with volume confirmation
+function buildBrokenEntry(clusterStrikes, rep, oiKey, side, dist, intradayStrikes, clusterOI) {
+    const oi = rep[oiKey];
+    const totalOI = clusterOI || oi;
+    let volumeConf = 'none';
+    let volRatio = 0;
+    let intradayVol = 0;
+
+    if (intradayStrikes && intradayStrikes.length > 0) {
+        for (const cs of clusterStrikes) {
+            const iMatch = intradayStrikes.find(is => is.strike === cs.strike);
+            if (iMatch) intradayVol += (side === 'call' ? iMatch.call : iMatch.put);
+        }
+        volRatio = totalOI > 0 ? intradayVol / totalOI : 0;
+        // Volume confirmation:
+        // > 15% of OI traded today at this strike = STRONG (wall was actively absorbed)
+        // > 5%  = MODERATE (decent flow through the wall)
+        // > 2%  = WEAK (some activity)
+        if (volRatio > 0.15) volumeConf = 'strong';
+        else if (volRatio > 0.05) volumeConf = 'moderate';
+        else if (volRatio > 0.02) volumeConf = 'weak';
+    }
+
+    return {
+        strike: rep.strike, oi, clusterOI: totalOI,
+        clusterStrikes: clusterStrikes.map(s => s.strike),
+        dist, intradayVol, volRatio, volumeConf,
+        newRole: side === 'call' ? 'support' : 'resistance'
+    };
+}
+
 // ========== BREAKDOWN RISK SCORE (0-100) ==========
 function calcBreakdownRisk(oiStrikes, intradayStrikes, uPrice, dte, gexFlipStrike, er1Day) {
     const components = {
@@ -1158,6 +1253,10 @@ function renderAnalysisTab() {
         const callSummary = getWallSummary(callWalls);
         const putSummary = getWallSummary(putWalls);
 
+        // ── Broken Wall Detection (Volume-Confirmed) ──
+        const brokenCallWalls = detectBrokenWalls(data.strikes, sourceStrikes2, uPrice, 'call', er1Day);
+        const brokenPutWalls = detectBrokenWalls(data.strikes, sourceStrikes2, uPrice, 'put', er1Day);
+
         // Backward-compat: maxCall/maxPut = primary wall (or fallback to old logic)
         const callsAbove = data.strikes.filter(s => s.strike >= uPrice && s.call > 0);
         const putsBelow = data.strikes.filter(s => s.strike <= uPrice && s.put > 0);
@@ -1246,6 +1345,7 @@ function renderAnalysisTab() {
             distToCallWall: maxCall.strike - uPrice, distToPutWall: uPrice - maxPut.strike,
             nearCallWall, nearPutWall,
             nearestCall, nearestPut, callWalls, putWalls, callSummary, putSummary,
+            brokenCallWalls, brokenPutWalls,
             tradeableRange, er1Day, sourceStrikes2,
             risk, vannaExp, charmExp, vommaExp, hedgeLabel, itmPct, dte: data.dte,
             longDteWarning: data.dte > 60 // Greeks less accurate at long DTE (r=0 assumption)
@@ -1361,6 +1461,17 @@ function renderAnalysisTab() {
         });
     }
 
+    // Broken Call Walls — was resistance, now new support below price (volume-confirmed)
+    for (const bw of (d.brokenCallWalls || []).filter(bw => bw.volumeConf !== 'none').slice(0, 2)) {
+        const confIcon = bw.volumeConf === 'strong' ? '🔥' : bw.volumeConf === 'moderate' ? '⚡' : '💤';
+        const confLabel = bw.volumeConf === 'strong' ? 'Vol ยืนยัน!' : bw.volumeConf === 'moderate' ? 'Vol พอใช้' : 'Vol น้อย';
+        levels.push({
+            price: bw.strike, label: `${confIcon} Broken R→S`, color: 'var(--orange)',
+            icon: confIcon, dist: -(bw.dist), oi: bw.oi, tier: '',
+            action: `New Support (เคยเป็น Call Wall) | OI: ${bw.oi.toLocaleString()} | ${confLabel} (Vol/OI: ${(bw.volRatio * 100).toFixed(0)}%)`
+        });
+    }
+
     // Structural levels
     if (d.risk.gammaMean) levels.push({ price: +d.risk.gammaMean.toFixed(0), label: 'Gamma Mean', color: 'var(--cyan)', icon: '🔵', dist: d.risk.gammaMean - d.uPrice, oi: 0, tier: '', action: 'จุดสมดุล — TP ชั้นดี' });
     if (d.mpStrike) levels.push({ price: d.mpStrike, label: 'Max Pain', color: 'var(--pink)', icon: '🟣', dist: d.mpStrike - d.uPrice, oi: 0, tier: '', action: 'จุดดึงดูดราคา (Expiry Magnet)' });
@@ -1384,6 +1495,18 @@ function renderAnalysisTab() {
             action: `Resistance ${w.isNearby ? '📍 ใกล้!' : ''} OI: ${w.oi.toLocaleString()}${clusterInfo}`
         });
     }
+
+    // Broken Put Walls — was support, now new resistance above price (volume-confirmed)
+    for (const bw of (d.brokenPutWalls || []).filter(bw => bw.volumeConf !== 'none').slice(0, 2)) {
+        const confIcon = bw.volumeConf === 'strong' ? '🔥' : bw.volumeConf === 'moderate' ? '⚡' : '💤';
+        const confLabel = bw.volumeConf === 'strong' ? 'Vol ยืนยัน!' : bw.volumeConf === 'moderate' ? 'Vol พอใช้' : 'Vol น้อย';
+        levels.push({
+            price: bw.strike, label: `${confIcon} Broken S→R`, color: 'var(--orange)',
+            icon: confIcon, dist: bw.dist, oi: bw.oi, tier: '',
+            action: `New Resistance (เคยเป็น Put Wall) | OI: ${bw.oi.toLocaleString()} | ${confLabel} (Vol/OI: ${(bw.volRatio * 100).toFixed(0)}%)`
+        });
+    }
+
     levels.sort((a, b) => Math.abs(a.dist) - Math.abs(b.dist));
 
     const levelsHtml = levels.map(l => {
@@ -1420,11 +1543,19 @@ function renderAnalysisTab() {
     // ── BATTLE MAP BAR (Redesigned — visual centerpiece) ──
     const displayedPutWalls = d.putWalls.slice(0, 3);
     const displayedCallWalls = d.callWalls.slice(0, 3);
-    const barLow = displayedPutWalls.length > 0
-        ? Math.min(...displayedPutWalls.map(w => w.strike))
+    const displayedBrokenCalls = (d.brokenCallWalls || []).filter(bw => bw.volumeConf !== 'none').slice(0, 2);
+    const displayedBrokenPuts = (d.brokenPutWalls || []).filter(bw => bw.volumeConf !== 'none').slice(0, 2);
+    const allBarStrikes = [
+        ...displayedPutWalls.map(w => w.strike),
+        ...displayedCallWalls.map(w => w.strike),
+        ...displayedBrokenCalls.map(bw => bw.strike),
+        ...displayedBrokenPuts.map(bw => bw.strike),
+    ];
+    const barLow = allBarStrikes.length > 0
+        ? Math.min(...allBarStrikes)
         : (d.putSummary.primary ? d.putSummary.primary.strike : d.maxPut.strike);
-    const barHigh = displayedCallWalls.length > 0
-        ? Math.max(...displayedCallWalls.map(w => w.strike))
+    const barHigh = allBarStrikes.length > 0
+        ? Math.max(...allBarStrikes)
         : (d.callSummary.primary ? d.callSummary.primary.strike : d.maxCall.strike);
     const barRange = barHigh - barLow || 1;
     const pricePct = Math.max(2, Math.min(98, ((d.uPrice - barLow) / barRange) * 100));
@@ -1450,6 +1581,22 @@ function renderAnalysisTab() {
         const isPrimary = w.tier === 'primary';
         wallLinesHtml += `<div style="position:absolute;left:${pct}%;top:0;height:100%;transform:translateX(-50%);z-index:1">
             <div style="position:absolute;left:50%;top:0;transform:translateX(-50%);width:${isPrimary ? 3 : 2}px;height:100%;background:var(--call-color);opacity:${isPrimary ? 0.9 : 0.4};border-radius:1px"></div>
+        </div>`;
+    }
+
+    // Broken wall lines (dashed orange — volume-confirmed broken levels)
+    for (const bw of displayedBrokenCalls) {
+        const pct = toPct(bw.strike);
+        const isStrong = bw.volumeConf === 'strong';
+        wallLinesHtml += `<div style="position:absolute;left:${pct}%;top:0;height:100%;transform:translateX(-50%);z-index:2">
+            <div style="position:absolute;left:50%;top:0;transform:translateX(-50%);width:0;height:100%;border-left:${isStrong ? 3 : 2}px dashed var(--orange);opacity:${isStrong ? 0.9 : 0.5}"></div>
+        </div>`;
+    }
+    for (const bw of displayedBrokenPuts) {
+        const pct = toPct(bw.strike);
+        const isStrong = bw.volumeConf === 'strong';
+        wallLinesHtml += `<div style="position:absolute;left:${pct}%;top:0;height:100%;transform:translateX(-50%);z-index:2">
+            <div style="position:absolute;left:50%;top:0;transform:translateX(-50%);width:0;height:100%;border-left:${isStrong ? 3 : 2}px dashed var(--orange);opacity:${isStrong ? 0.9 : 0.5}"></div>
         </div>`;
     }
 
@@ -1491,6 +1638,12 @@ function renderAnalysisTab() {
     if (d.mpStrike) labelsRow.push({ strike: d.mpStrike, color: 'var(--pink)', label: `MP`, sub: `$${d.mpStrike}`, primary: false });
     if (d.risk.gammaMean) labelsRow.push({ strike: d.risk.gammaMean, color: 'var(--cyan)', label: `GM`, sub: `$${d.risk.gammaMean.toFixed(0)}`, primary: false });
     if (d.gexResult.flipStrike) labelsRow.push({ strike: d.gexResult.flipStrike, color: 'var(--accent)', label: `⚡Flip`, sub: `$${d.gexResult.flipStrike}`, primary: false });
+    for (const bw of displayedBrokenCalls) {
+        labelsRow.push({ strike: bw.strike, color: 'var(--orange)', label: `🔥$${bw.strike}`, sub: 'Broken', primary: bw.volumeConf === 'strong' });
+    }
+    for (const bw of displayedBrokenPuts) {
+        labelsRow.push({ strike: bw.strike, color: 'var(--orange)', label: `🔥$${bw.strike}`, sub: 'Broken', primary: bw.volumeConf === 'strong' });
+    }
     for (const w of displayedCallWalls) {
         const oiK = w.oi >= 1000 ? (w.oi / 1000).toFixed(1) + 'K' : w.oi.toString();
         labelsRow.push({ strike: w.strike, color: 'var(--call-color)', label: `$${w.strike}`, sub: w.tier === 'primary' ? oiK : '', primary: w.tier === 'primary' });
@@ -1526,16 +1679,37 @@ function renderAnalysisTab() {
         </div>`;
     }).join('');
 
+    // ── Broken Wall Detection for action hints ──
+    const bestBrokenCall = (d.brokenCallWalls || []).find(bw => bw.volumeConf === 'strong' || bw.volumeConf === 'moderate');
+    const bestBrokenPut = (d.brokenPutWalls || []).find(bw => bw.volumeConf === 'strong' || bw.volumeConf === 'moderate');
+    const hasBrokenWall = bestBrokenCall || bestBrokenPut;
+
     // Action hint (single line, not on bar)
     let actionHint = '';
     if (d.isLongGamma) {
-        const sellAt = nearCallStrike && !d.priceAboveCallWall ? `<span style="color:var(--call-color);font-weight:700">SELL $${nearCallStrike}</span>` : '';
-        const buyAt = nearPutStrike && !d.priceBelowPutWall ? `<span style="color:var(--put-color);font-weight:700">BUY $${nearPutStrike}</span>` : '';
-        actionHint = [buyAt, sellAt].filter(Boolean).join(' <span style="color:var(--text-muted)">·····</span> ');
+        if (bestBrokenCall) {
+            const retestStr = `<span style="color:var(--orange);font-weight:700">BUY RETEST $${bestBrokenCall.strike}</span>`;
+            const tpStr = nearCallStrike ? `→ <span style="color:var(--call-color);font-weight:700">TP $${nearCallStrike}</span>` : '';
+            actionHint = `${retestStr} ${tpStr}`;
+        } else if (bestBrokenPut) {
+            const retestStr = `<span style="color:var(--orange);font-weight:700">SELL RETEST $${bestBrokenPut.strike}</span>`;
+            const tpStr = nearPutStrike ? `→ <span style="color:var(--put-color);font-weight:700">TP $${nearPutStrike}</span>` : '';
+            actionHint = `${retestStr} ${tpStr}`;
+        } else {
+            const sellAt = nearCallStrike && !d.priceAboveCallWall ? `<span style="color:var(--call-color);font-weight:700">SELL $${nearCallStrike}</span>` : '';
+            const buyAt = nearPutStrike && !d.priceBelowPutWall ? `<span style="color:var(--put-color);font-weight:700">BUY $${nearPutStrike}</span>` : '';
+            actionHint = [buyAt, sellAt].filter(Boolean).join(' <span style="color:var(--text-muted)">·····</span> ');
+        }
     } else {
-        const bko = nearCallStrike && !d.priceAboveCallWall ? `ทะลุ $${nearCallStrike} = <span style="color:var(--green);font-weight:700">BUY 🚀</span>` : '';
-        const bkd = nearPutStrike && !d.priceBelowPutWall ? `หลุด $${nearPutStrike} = <span style="color:var(--red);font-weight:700">SELL 💧</span>` : '';
-        actionHint = [bkd, bko].filter(Boolean).join(' <span style="color:var(--text-muted)">·····</span> ');
+        if (bestBrokenCall) {
+            actionHint = `<span style="color:var(--orange);font-weight:700">BUY RETEST $${bestBrokenCall.strike}</span> (Breakout confirmed)`;
+        } else if (bestBrokenPut) {
+            actionHint = `<span style="color:var(--orange);font-weight:700">SELL RETEST $${bestBrokenPut.strike}</span> (Breakdown confirmed)`;
+        } else {
+            const bko = nearCallStrike && !d.priceAboveCallWall ? `ทะลุ $${nearCallStrike} = <span style="color:var(--green);font-weight:700">BUY 🚀</span>` : '';
+            const bkd = nearPutStrike && !d.priceBelowPutWall ? `หลุด $${nearPutStrike} = <span style="color:var(--red);font-weight:700">SELL 💧</span>` : '';
+            actionHint = [bkd, bko].filter(Boolean).join(' <span style="color:var(--text-muted)">·····</span> ');
+        }
     }
 
     const rangeBarHtml = `
@@ -1671,7 +1845,98 @@ function renderAnalysisTab() {
         const nextCallWall = d.callWalls.length > 1 ? d.callWalls[1] : null;
         const nextPutWall = d.putWalls.length > 1 ? d.putWalls[1] : null;
 
-        if (nearCallZone && trendUp) {
+        if (hasBrokenWall) {
+            // ── SCENARIO 0: BROKEN WALL RETEST (Volume-Confirmed) ──
+            // Price has broken through a significant OI wall, intraday volume confirms
+            // The broken wall becomes new support/resistance → trade the retest
+            actionHtml = `<div style="display:flex;flex-direction:column;gap:12px">`;
+
+            if (bestBrokenCall) {
+                const bwStr = fmtC(bestBrokenCall.strike);
+                const confIcon = bestBrokenCall.volumeConf === 'strong' ? '🔥🔥' : '⚡';
+                const confPct = (bestBrokenCall.volRatio * 100).toFixed(0);
+                const confLabel = bestBrokenCall.volumeConf === 'strong' ? 'Vol แรงมาก!' : 'Vol พอใช้';
+                const tpTarget = nearCallStrike ? fmtC(nearCallStrike) : (d.callWalls.length > 0 ? fmtC(d.callWalls[0].strike) : fmtCyan(d.risk.gammaMean ? d.risk.gammaMean.toFixed(0) : '?'));
+                const tpDist = nearCallStrike ? (nearCallStrike - bestBrokenCall.strike) : 0;
+
+                actionHtml += `<div style="padding:16px 18px;background:linear-gradient(135deg,rgba(255,152,0,.08),rgba(38,166,154,.04));border-radius:12px;border:1px solid rgba(255,152,0,.35);border-left:5px solid var(--orange)">`;
+                actionHtml += `<div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">`;
+                actionHtml += `<span style="font-size:18px">${confIcon}</span>`;
+                actionHtml += `<span style="font-size:14px;font-weight:900;color:var(--orange);letter-spacing:.3px">BROKEN WALL DETECTED — Buy Retest!</span>`;
+                actionHtml += `<span style="font-size:11px;padding:2px 8px;background:rgba(255,152,0,.2);border-radius:10px;color:var(--orange);font-weight:700">${confLabel} (Vol/OI: ${confPct}%)</span>`;
+                actionHtml += `</div>`;
+                actionHtml += `<div style="font-size:13px;color:var(--text-secondary);line-height:1.7;margin-bottom:12px">`;
+                actionHtml += `ราคาทะลุ Call Wall ${bwStr} แล้ว +${bestBrokenCall.dist.toFixed(0)} pts — Intraday Volume ยืนยันว่า Wall ถูก absorb จริง`;
+                actionHtml += `<br>Wall เดิมกลายเป็น <span style="color:var(--green);font-weight:700">New Support</span> → Buy เมื่อราคา pullback กลับมา retest`;
+                actionHtml += `</div>`;
+
+                actionHtml += `<div style="padding:14px 16px;background:rgba(38,166,154,.06);border-radius:12px;border:1px solid rgba(38,166,154,.2)">`;
+                actionHtml += `<div style="font-size:12px;color:var(--green);font-weight:800;margin-bottom:8px">⬆️ BUY RETEST (Wall เดิมเป็น Support ใหม่)</div>`;
+                actionHtml += `<div style="font-size:13px;color:var(--text-primary);line-height:2.2">`;
+                actionHtml += `<span style="color:var(--text-muted);font-size:11px">❶ รอราคา Pullback:</span> กลับมาแตะ ${bwStr}<br>`;
+                actionHtml += `<span style="color:var(--text-muted);font-size:11px">❷ Confirm:</span> แท่งเขียว Reject / Pin Bar ที่ ${bwStr} (Wall เดิมต้านให้)<br>`;
+                actionHtml += `<span style="color:var(--text-muted);font-size:11px">❸ Entry:</span> Buy ที่ ${bwStr} หรือเหนือเล็กน้อย<br>`;
+                actionHtml += `<span style="color:var(--text-muted);font-size:11px">❹ SL:</span> <span style="color:var(--red);font-weight:700">$${(bestBrokenCall.strike - slBuffer).toFixed(0)}</span> (ใต้ Wall ${slBuffer} pts — ถ้าหลุดกลับแปลว่า fake break)<br>`;
+                actionHtml += `<span style="color:var(--text-muted);font-size:11px">❺ TP:</span> ${tpTarget}${tpDist > 0 ? ` <span style="color:var(--text-muted)">(+${tpDist.toFixed(0)} pts)</span>` : ''}`;
+                if (callChain) actionHtml += ` ${callChain}`;
+                actionHtml += `</div></div>`;
+
+                // ── Also show: if price doesn't pull back, follow momentum ──
+                actionHtml += `<div style="padding:12px 16px;background:rgba(255,255,255,.03);border-radius:10px;border:1px dashed rgba(255,255,255,.1);margin-top:4px">`;
+                actionHtml += `<div style="font-size:12px;color:var(--text-muted);line-height:1.8">`;
+                actionHtml += `💡 ถ้าราคาไม่ pullback กลับ ${bwStr} → ไม่ต้องไล่ตาม — รอ Wall ถัดไป ${tpTarget} แล้ว Fade ที่นั่นแทน<br>`;
+                actionHtml += `⚠️ ถ้าราคาหลุดกลับใต้ ${bwStr} = <span style="color:var(--red);font-weight:700">Fake Break</span> → ห้าม Buy, อาจ Short กลับในกรอบเดิม`;
+                actionHtml += `</div></div>`;
+            }
+
+            if (bestBrokenPut) {
+                const bwStr = fmtP(bestBrokenPut.strike);
+                const confIcon = bestBrokenPut.volumeConf === 'strong' ? '🔥🔥' : '⚡';
+                const confPct = (bestBrokenPut.volRatio * 100).toFixed(0);
+                const confLabel = bestBrokenPut.volumeConf === 'strong' ? 'Vol แรงมาก!' : 'Vol พอใช้';
+                const tpTarget = nearPutStrike ? fmtP(nearPutStrike) : (d.putWalls.length > 0 ? fmtP(d.putWalls[0].strike) : fmtCyan(d.risk.gammaMean ? d.risk.gammaMean.toFixed(0) : '?'));
+                const tpDist = nearPutStrike ? (bestBrokenPut.strike - nearPutStrike) : 0;
+
+                actionHtml += `<div style="padding:16px 18px;background:linear-gradient(135deg,rgba(255,152,0,.08),rgba(239,83,80,.04));border-radius:12px;border:1px solid rgba(255,152,0,.35);border-left:5px solid var(--orange)">`;
+                actionHtml += `<div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">`;
+                actionHtml += `<span style="font-size:18px">${confIcon}</span>`;
+                actionHtml += `<span style="font-size:14px;font-weight:900;color:var(--orange);letter-spacing:.3px">BROKEN WALL DETECTED — Sell Retest!</span>`;
+                actionHtml += `<span style="font-size:11px;padding:2px 8px;background:rgba(255,152,0,.2);border-radius:10px;color:var(--orange);font-weight:700">${confLabel} (Vol/OI: ${confPct}%)</span>`;
+                actionHtml += `</div>`;
+                actionHtml += `<div style="font-size:13px;color:var(--text-secondary);line-height:1.7;margin-bottom:12px">`;
+                actionHtml += `ราคาหลุด Put Wall ${bwStr} แล้ว -${bestBrokenPut.dist.toFixed(0)} pts — Intraday Volume ยืนยันว่า Wall ถูก absorb จริง`;
+                actionHtml += `<br>Wall เดิมกลายเป็น <span style="color:var(--red);font-weight:700">New Resistance</span> → Sell เมื่อราคา bounce กลับมา retest`;
+                actionHtml += `</div>`;
+
+                actionHtml += `<div style="padding:14px 16px;background:rgba(239,83,80,.06);border-radius:12px;border:1px solid rgba(239,83,80,.2)">`;
+                actionHtml += `<div style="font-size:12px;color:var(--red);font-weight:800;margin-bottom:8px">⬇️ SELL RETEST (Wall เดิมเป็น Resistance ใหม่)</div>`;
+                actionHtml += `<div style="font-size:13px;color:var(--text-primary);line-height:2.2">`;
+                actionHtml += `<span style="color:var(--text-muted);font-size:11px">❶ รอราคา Bounce:</span> กลับมาแตะ ${bwStr}<br>`;
+                actionHtml += `<span style="color:var(--text-muted);font-size:11px">❷ Confirm:</span> แท่งแดง Reject / Pin Bar ที่ ${bwStr} (Wall เดิมกดให้)<br>`;
+                actionHtml += `<span style="color:var(--text-muted);font-size:11px">❸ Entry:</span> Sell ที่ ${bwStr} หรือใต้เล็กน้อย<br>`;
+                actionHtml += `<span style="color:var(--text-muted);font-size:11px">❹ SL:</span> <span style="color:var(--red);font-weight:700">$${(bestBrokenPut.strike + slBuffer).toFixed(0)}</span> (เหนือ Wall ${slBuffer} pts — ถ้าทะลุกลับแปลว่า fake break)<br>`;
+                actionHtml += `<span style="color:var(--text-muted);font-size:11px">❺ TP:</span> ${tpTarget}${tpDist > 0 ? ` <span style="color:var(--text-muted)">(-${tpDist.toFixed(0)} pts)</span>` : ''}`;
+                if (putChain) actionHtml += ` ${putChain}`;
+                actionHtml += `</div></div>`;
+
+                actionHtml += `<div style="padding:12px 16px;background:rgba(255,255,255,.03);border-radius:10px;border:1px dashed rgba(255,255,255,.1);margin-top:4px">`;
+                actionHtml += `<div style="font-size:12px;color:var(--text-muted);line-height:1.8">`;
+                actionHtml += `💡 ถ้าราคาไม่ bounce กลับ ${bwStr} → ไม่ต้องไล่ตาม — รอ Wall ถัดไป ${tpTarget} แล้ว Fade ที่นั่นแทน<br>`;
+                actionHtml += `⚠️ ถ้าราคาทะลุกลับเหนือ ${bwStr} = <span style="color:var(--green);font-weight:700">Fake Break</span> → ห้าม Sell, อาจ Buy กลับในกรอบเดิม`;
+                actionHtml += `</div></div>`;
+            }
+
+            // ── Broken Wall Confidence Explanation ──
+            actionHtml += `<div style="padding:10px 14px;background:rgba(255,152,0,.04);border-radius:8px;border:1px solid rgba(255,152,0,.12)">`;
+            actionHtml += `<div style="font-size:11px;color:var(--text-muted);line-height:1.7">`;
+            actionHtml += `📊 <b>วิธีอ่าน Vol/OI:</b> Intraday Volume ÷ OI ที่ strike นั้น — ยิ่งสูง = ยิ่งยืนยันว่า Wall ถูก trade through จริง<br>`;
+            actionHtml += `🔥 Strong (>15%) = มั่นใจสูง | ⚡ Moderate (5-15%) = มั่นใจปานกลาง | 💤 Weak (<5%) = ไม่ค่อยมั่นใจ`;
+            actionHtml += `</div></div>`;
+
+            if (trStr) actionHtml += `<div style="margin-top:4px">${trStr}</div>`;
+            actionHtml += `</div>`;  // close flex column
+
+        } else if (nearCallZone && trendUp) {
             // ── SCENARIO A: ราคาใกล้ Call Wall + ขาขึ้น ──
             actionHtml = `<div style="display:flex;gap:12px;flex-wrap:wrap">`;
             // Breakout Long
@@ -1889,6 +2154,25 @@ function renderAnalysisTab() {
         }
 
         if (trStr) actionHtml += `<div style="margin-top:4px">${trStr}</div>`;
+
+        // ── Broken Wall Retest (Short Gamma) ──
+        if (hasBrokenWall) {
+            actionHtml += `<div style="padding:14px 18px;background:linear-gradient(135deg,rgba(255,152,0,.08),rgba(255,255,255,.02));border-radius:12px;border:1px solid rgba(255,152,0,.3);border-left:4px solid var(--orange)">`;
+            actionHtml += `<div style="font-size:13px;font-weight:800;color:var(--orange);margin-bottom:8px">🔥 BROKEN WALL RETEST — Volume ยืนยัน!</div>`;
+            actionHtml += `<div style="font-size:13px;color:var(--text-primary);line-height:2">`;
+            if (bestBrokenCall) {
+                const confPct = (bestBrokenCall.volRatio * 100).toFixed(0);
+                actionHtml += `📍 Call Wall <span style="color:var(--call-color);font-weight:700">$${bestBrokenCall.strike}</span> ถูกทะลุแล้ว (Vol/OI: ${confPct}%) → <span style="color:var(--green);font-weight:700">New Support = Buy Retest!</span><br>`;
+                actionHtml += `Entry: ถ้าราคา pullback มาแตะ $${bestBrokenCall.strike} → Buy | SL ใต้ $${(bestBrokenCall.strike - slBufShort).toFixed(0)}<br>`;
+            }
+            if (bestBrokenPut) {
+                const confPct = (bestBrokenPut.volRatio * 100).toFixed(0);
+                actionHtml += `📍 Put Wall <span style="color:var(--put-color);font-weight:700">$${bestBrokenPut.strike}</span> ถูกหลุดแล้ว (Vol/OI: ${confPct}%) → <span style="color:var(--red);font-weight:700">New Resistance = Sell Retest!</span><br>`;
+                actionHtml += `Entry: ถ้าราคา bounce มาแตะ $${bestBrokenPut.strike} → Sell | SL เหนือ $${(bestBrokenPut.strike + slBufShort).toFixed(0)}<br>`;
+            }
+            actionHtml += `<span style="color:var(--text-muted);font-size:12px">💡 Short γ + Broken Wall = Retest มีโอกาสสูง เพราะ Dealer hedge ตาม momentum</span>`;
+            actionHtml += `</div></div>`;
+        }
 
         // ── Anti-Sideway Rules ──
         actionHtml += `<div style="padding:12px 16px;background:rgba(255,23,68,.06);border-radius:10px;border:1px solid rgba(255,23,68,.2)">`;
