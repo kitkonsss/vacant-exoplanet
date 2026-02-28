@@ -1571,50 +1571,50 @@ function renderAnalysisTab() {
     const allWallOIs = [...displayedPutWalls, ...displayedCallWalls].map(w => w.oi);
     const maxWallOI = allWallOIs.length > 0 ? Math.max(...allWallOIs) : 1;
 
-    // Wall lines on bar (visual only — no text)
+    // Wall lines on bar (extend 6px below for label connection)
     let wallLinesHtml = '';
     for (const w of displayedPutWalls) {
         const pct = toPct(w.strike);
         const isPrimary = w.tier === 'primary';
-        wallLinesHtml += `<div style="position:absolute;left:${pct}%;top:0;height:100%;transform:translateX(-50%);z-index:1">
+        wallLinesHtml += `<div style="position:absolute;left:${pct}%;top:0;height:calc(100% + 6px);transform:translateX(-50%);z-index:1">
             <div style="width:${isPrimary ? 4 : 2}px;height:100%;background:var(--put-color);opacity:${isPrimary ? 0.9 : 0.4};border-radius:1px"></div>
         </div>`;
     }
     for (const w of displayedCallWalls) {
         const pct = toPct(w.strike);
         const isPrimary = w.tier === 'primary';
-        wallLinesHtml += `<div style="position:absolute;left:${pct}%;top:0;height:100%;transform:translateX(-50%);z-index:1">
+        wallLinesHtml += `<div style="position:absolute;left:${pct}%;top:0;height:calc(100% + 6px);transform:translateX(-50%);z-index:1">
             <div style="width:${isPrimary ? 4 : 2}px;height:100%;background:var(--call-color);opacity:${isPrimary ? 0.9 : 0.4};border-radius:1px"></div>
         </div>`;
     }
     for (const bw of displayedBrokenCalls) {
         const pct = toPct(bw.strike);
         const isStrong = bw.volumeConf === 'strong';
-        wallLinesHtml += `<div style="position:absolute;left:${pct}%;top:0;height:100%;transform:translateX(-50%);z-index:2">
+        wallLinesHtml += `<div style="position:absolute;left:${pct}%;top:0;height:calc(100% + 6px);transform:translateX(-50%);z-index:2">
             <div style="width:0;height:100%;border-left:2px dashed var(--orange);opacity:${isStrong ? 0.7 : 0.35}"></div>
         </div>`;
     }
     for (const bw of displayedBrokenPuts) {
         const pct = toPct(bw.strike);
         const isStrong = bw.volumeConf === 'strong';
-        wallLinesHtml += `<div style="position:absolute;left:${pct}%;top:0;height:100%;transform:translateX(-50%);z-index:2">
+        wallLinesHtml += `<div style="position:absolute;left:${pct}%;top:0;height:calc(100% + 6px);transform:translateX(-50%);z-index:2">
             <div style="width:0;height:100%;border-left:2px dashed var(--orange);opacity:${isStrong ? 0.7 : 0.35}"></div>
         </div>`;
     }
 
-    // Structural lines (thin dots)
+    // Structural lines (thin dots, extend 6px below bar)
     let structLinesHtml = '';
     if (d.mpStrike) {
         const pct = toPct(d.mpStrike);
-        structLinesHtml += `<div style="position:absolute;left:${pct}%;top:0;height:100%;width:0;border-left:1px dotted var(--pink);opacity:0.4;z-index:1"></div>`;
+        structLinesHtml += `<div style="position:absolute;left:${pct}%;top:0;height:calc(100% + 6px);width:0;border-left:1px dotted var(--pink);opacity:0.4;z-index:1"></div>`;
     }
     if (d.risk.gammaMean) {
         const pct = toPct(d.risk.gammaMean);
-        structLinesHtml += `<div style="position:absolute;left:${pct}%;top:0;height:100%;width:0;border-left:1px dotted var(--cyan);opacity:0.4;z-index:1"></div>`;
+        structLinesHtml += `<div style="position:absolute;left:${pct}%;top:0;height:calc(100% + 6px);width:0;border-left:1px dotted var(--cyan);opacity:0.4;z-index:1"></div>`;
     }
     if (d.gexResult.flipStrike) {
         const pct = toPct(d.gexResult.flipStrike);
-        structLinesHtml += `<div style="position:absolute;left:${pct}%;top:0;height:100%;width:0;border-left:1px dotted var(--accent);opacity:0.4;z-index:1"></div>`;
+        structLinesHtml += `<div style="position:absolute;left:${pct}%;top:0;height:calc(100% + 6px);width:0;border-left:1px dotted var(--accent);opacity:0.4;z-index:1"></div>`;
     }
 
     // Nearest walls
@@ -1624,55 +1624,86 @@ function renderAnalysisTab() {
     const nearCallDist = nearCallStrike ? Math.abs(nearCallStrike - d.uPrice) : 999;
     const tradeRangePts = d.tradeableRange < 999 ? d.tradeableRange.toFixed(0) : '—';
 
-    // ── Build level badges (flex-wrap row — NEVER overlaps) ──
-    const badges = [];
-    const badgeStyle = (type, primary) => {
-        const styles = {
-            put:    { bg: 'rgba(255,197,110,0.10)', bd: 'rgba(255,197,110,0.30)', c: 'var(--put-color)' },
-            call:   { bg: 'rgba(92,224,240,0.10)',  bd: 'rgba(92,224,240,0.30)',  c: 'var(--call-color)' },
-            broken: { bg: 'rgba(255,171,64,0.10)',  bd: 'rgba(255,171,64,0.35)',  c: 'var(--orange)' },
-            struct: { bg: 'rgba(255,255,255,0.04)', bd: 'rgba(255,255,255,0.12)', c: 'var(--text-muted)' },
-        };
-        const s = styles[type];
-        const bw = primary ? 2 : 1;
-        const bs = type === 'broken' ? 'dashed' : 'solid';
-        const fw = primary ? 700 : 500;
-        return `display:inline-flex;align-items:center;gap:3px;padding:2px 7px;border-radius:4px;font-size:10px;font-weight:${fw};background:${s.bg};border:${bw}px ${bs} ${s.bd};color:${s.c};white-space:nowrap`;
-    };
-    // Put walls (support side)
+    // ── Build bar labels (short tags under each line) ──
+    // Each label: { pct, text, color, bold }
+    const barLabels = [];
     for (const w of displayedPutWalls) {
         const isPrimary = w.tier === 'primary';
-        const oiK = w.oi >= 1000 ? (w.oi / 1000).toFixed(1) + 'K' : w.oi.toString();
-        const dist = Math.abs(d.uPrice - w.strike).toFixed(0);
-        badges.push({ strike: w.strike, style: badgeStyle('put', isPrimary),
-            html: `${isPrimary ? '▪ ' : ''}$${w.strike} S${isPrimary ? ` <span style="font-size:8px;opacity:0.6">${oiK} · ${dist}p</span>` : ''}` });
+        const oiK = isPrimary && w.oi >= 1000 ? ` ${(w.oi / 1000).toFixed(1)}K` : '';
+        barLabels.push({ pct: toPct(w.strike), text: `$${w.strike}`, tag: `S${oiK}`, color: 'var(--put-color)', bold: isPrimary });
     }
-    // Broken call walls (broken resistance → new support)
     for (const bw of displayedBrokenCalls) {
-        const tag = bw.volumeConf === 'strong' ? '🔥' : '⚡';
-        badges.push({ strike: bw.strike, style: badgeStyle('broken', bw.volumeConf === 'strong'),
-            html: `✕ $${bw.strike} → New S ${tag}` });
+        const icon = bw.volumeConf === 'strong' ? '🔥' : '⚡';
+        barLabels.push({ pct: toPct(bw.strike), text: `$${bw.strike}`, tag: `✕→S ${icon}`, color: 'var(--orange)', bold: bw.volumeConf === 'strong' });
     }
-    // Structural levels
-    if (d.mpStrike) badges.push({ strike: d.mpStrike, style: badgeStyle('struct', false), html: `<span style="color:var(--pink)">MP</span> $${d.mpStrike}` });
-    if (d.risk.gammaMean) badges.push({ strike: d.risk.gammaMean, style: badgeStyle('struct', false), html: `<span style="color:var(--cyan)">GM</span> $${d.risk.gammaMean.toFixed(0)}` });
-    if (d.gexResult.flipStrike) badges.push({ strike: d.gexResult.flipStrike, style: badgeStyle('struct', false), html: `<span style="color:var(--accent)">⚡Flip</span> $${d.gexResult.flipStrike}` });
-    // Broken put walls (broken support → new resistance)
+    if (d.mpStrike) barLabels.push({ pct: toPct(d.mpStrike), text: `$${d.mpStrike}`, tag: 'MP', color: 'var(--pink)', bold: false });
+    if (d.risk.gammaMean) barLabels.push({ pct: toPct(d.risk.gammaMean), text: `$${d.risk.gammaMean.toFixed(0)}`, tag: 'GM', color: 'var(--cyan)', bold: false });
+    if (d.gexResult.flipStrike) barLabels.push({ pct: toPct(d.gexResult.flipStrike), text: `$${d.gexResult.flipStrike}`, tag: 'Flip', color: 'var(--accent)', bold: false });
     for (const bw of displayedBrokenPuts) {
-        const tag = bw.volumeConf === 'strong' ? '🔥' : '⚡';
-        badges.push({ strike: bw.strike, style: badgeStyle('broken', bw.volumeConf === 'strong'),
-            html: `✕ $${bw.strike} → New R ${tag}` });
+        const icon = bw.volumeConf === 'strong' ? '🔥' : '⚡';
+        barLabels.push({ pct: toPct(bw.strike), text: `$${bw.strike}`, tag: `✕→R ${icon}`, color: 'var(--orange)', bold: bw.volumeConf === 'strong' });
     }
-    // Call walls (resistance side)
     for (const w of displayedCallWalls) {
         const isPrimary = w.tier === 'primary';
-        const oiK = w.oi >= 1000 ? (w.oi / 1000).toFixed(1) + 'K' : w.oi.toString();
-        const dist = Math.abs(w.strike - d.uPrice).toFixed(0);
-        badges.push({ strike: w.strike, style: badgeStyle('call', isPrimary),
-            html: `${isPrimary ? '▪ ' : ''}$${w.strike} R${isPrimary ? ` <span style="font-size:8px;opacity:0.6">${oiK} · ${dist}p</span>` : ''}` });
+        const oiK = isPrimary && w.oi >= 1000 ? ` ${(w.oi / 1000).toFixed(1)}K` : '';
+        barLabels.push({ pct: toPct(w.strike), text: `$${w.strike}`, tag: `R${oiK}`, color: 'var(--call-color)', bold: isPrimary });
     }
-    badges.sort((a, b) => a.strike - b.strike);
-    const badgesHtml = badges.map(b => `<span style="${b.style}">${b.html}</span>`).join('');
+    barLabels.sort((a, b) => a.pct - b.pct);
+
+    // Anti-overlap: estimate widths, stagger into 2 rows
+    const LABEL_CHAR_PX = 6;
+    const LABEL_PAD_PX = 12;
+    const BAR_WIDTH_PX = 900; // approximate
+    const labelRowH = 28; // px per label row (price line + tag line)
+    for (const lbl of barLabels) {
+        const maxChars = Math.max(lbl.text.length, lbl.tag.length);
+        lbl.widthPct = ((maxChars * LABEL_CHAR_PX + LABEL_PAD_PX) / BAR_WIDTH_PX) * 100;
+        lbl.row = 0;
+    }
+    // Hide labels too close to price needle (±1.5%)
+    for (const lbl of barLabels) {
+        if (Math.abs(lbl.pct - pricePct) < 1.5 && !lbl.bold) lbl.hidden = true;
+    }
+    // Dedup: if two labels within 1.5%, hide the less important
+    for (let i = 0; i < barLabels.length; i++) {
+        if (barLabels[i].hidden) continue;
+        for (let j = i + 1; j < barLabels.length; j++) {
+            if (barLabels[j].hidden) continue;
+            if (Math.abs(barLabels[i].pct - barLabels[j].pct) < 1.5) {
+                if (barLabels[j].bold && !barLabels[i].bold) barLabels[i].hidden = true;
+                else barLabels[j].hidden = true;
+            }
+        }
+    }
+    // 2-row stagger: check bounding boxes
+    const visibleLabels = barLabels.filter(l => !l.hidden);
+    const rowOcc = [[], []]; // track occupied ranges per row
+    for (const lbl of visibleLabels) {
+        const halfW = lbl.widthPct / 2 + 0.5;
+        const L = lbl.pct - halfW, R = lbl.pct + halfW;
+        const overlapR0 = rowOcc[0].some(o => L < o.r && R > o.l);
+        if (!overlapR0) {
+            lbl.row = 0;
+            rowOcc[0].push({ l: L, r: R });
+        } else {
+            lbl.row = 1;
+            rowOcc[1].push({ l: L, r: R });
+        }
+    }
+    const maxLabelRow = visibleLabels.reduce((mx, l) => Math.max(mx, l.row), 0);
+    const labelZoneHeight = (maxLabelRow + 1) * labelRowH + 2;
+
+    // Build label HTML
+    const barLabelsHtml = visibleLabels.map(l => {
+        let align;
+        if (l.pct < 4) align = `left:${l.pct}%;text-align:left`;
+        else if (l.pct > 96) align = `left:${l.pct}%;transform:translateX(-100%);text-align:right`;
+        else align = `left:${l.pct}%;transform:translateX(-50%);text-align:center`;
+        return `<div style="position:absolute;${align};top:${l.row * labelRowH}px;white-space:nowrap">
+            <div style="font-size:${l.bold ? 10 : 9}px;font-weight:${l.bold ? 800 : 600};color:${l.color};opacity:${l.bold ? 1 : 0.8};line-height:1.1">${l.text}</div>
+            <div style="font-size:8px;color:${l.color};opacity:0.5;line-height:1.1">${l.tag}</div>
+        </div>`;
+    }).join('');
 
     // ── Action hint ──
     const bestBrokenCall = (d.brokenCallWalls || []).find(bw => bw.volumeConf === 'strong' || bw.volumeConf === 'moderate');
@@ -1736,36 +1767,38 @@ function renderAnalysisTab() {
             </div>
         </div>
 
-        <!-- Row 2: Support ← BAR → Resistance -->
-        <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
+        <!-- Row 2: Support ← BAR + labels → Resistance -->
+        <div style="display:flex;align-items:flex-start;gap:10px;margin-bottom:10px">
             <!-- Support box -->
-            <div style="text-align:center;min-width:52px">
+            <div style="text-align:center;min-width:52px;padding-top:2px">
                 <div style="font-size:7px;color:var(--put-color);text-transform:uppercase;letter-spacing:0.5px;opacity:0.7">◀ Support</div>
                 <div style="font-size:14px;font-weight:800;color:var(--put-color)">$${nearPutStrike || '—'}</div>
                 <div style="font-size:9px;color:var(--text-muted)">${nearPutDist < 999 ? nearPutDist.toFixed(0) + 'p' : ''}</div>
             </div>
 
-            <!-- THE BAR (visual only — no text labels) -->
-            <div style="flex:1;position:relative;height:20px;background:${regimeGrad};border-radius:4px;overflow:visible;border:1px solid rgba(255,255,255,.06)">
-                ${wallLinesHtml}
-                ${structLinesHtml}
-                <div style="position:absolute;left:${pricePct}%;top:-2px;bottom:-2px;width:3px;background:white;transform:translateX(-50%);z-index:6;border-radius:2px;box-shadow:0 0 6px rgba(255,255,255,.4)"></div>
+            <!-- BAR + Label zone -->
+            <div style="flex:1;position:relative">
+                <!-- The bar -->
+                <div style="position:relative;height:20px;background:${regimeGrad};border-radius:4px;overflow:visible;border:1px solid rgba(255,255,255,.06)">
+                    ${wallLinesHtml}
+                    ${structLinesHtml}
+                    <div style="position:absolute;left:${pricePct}%;top:-2px;bottom:-2px;width:3px;background:white;transform:translateX(-50%);z-index:6;border-radius:2px;box-shadow:0 0 6px rgba(255,255,255,.4)"></div>
+                </div>
+                <!-- Labels below bar (aligned to lines) -->
+                <div style="position:relative;height:${labelZoneHeight}px;margin-top:3px">
+                    ${barLabelsHtml}
+                </div>
             </div>
 
             <!-- Resistance box -->
-            <div style="text-align:center;min-width:52px">
+            <div style="text-align:center;min-width:52px;padding-top:2px">
                 <div style="font-size:7px;color:var(--call-color);text-transform:uppercase;letter-spacing:0.5px;opacity:0.7">Resist ▶</div>
                 <div style="font-size:14px;font-weight:800;color:var(--call-color)">$${nearCallStrike || '—'}</div>
                 <div style="font-size:9px;color:var(--text-muted)">${nearCallDist < 999 ? nearCallDist.toFixed(0) + 'p' : ''}</div>
             </div>
         </div>
 
-        <!-- Row 3: Level badges (flex-wrap — NEVER overlaps) -->
-        <div style="display:flex;flex-wrap:wrap;gap:4px 5px;margin-bottom:10px">
-            ${badgesHtml}
-        </div>
-
-        <!-- Row 4: Action card -->
+        <!-- Row 3: Action card -->
         <div style="padding:6px 12px;background:${actionBgColor};border-radius:6px;border-left:3px solid ${actionBorderColor}">
             <div style="font-size:12px;font-weight:700;color:white">${actionEntry || '<span style="color:var(--text-muted)">No clear setup</span>'}</div>
             ${actionMeta ? `<div style="font-size:10px;color:var(--text-muted);margin-top:2px">${actionMeta}</div>` : ''}
