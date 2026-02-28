@@ -1540,11 +1540,13 @@ function renderAnalysisTab() {
         </div>`;
     }
 
-    // ── BATTLE MAP BAR (Redesigned — visual centerpiece) ──
+    // ── BATTLE MAP BAR ──
     const displayedPutWalls = d.putWalls.slice(0, 3);
     const displayedCallWalls = d.callWalls.slice(0, 3);
     const displayedBrokenCalls = (d.brokenCallWalls || []).filter(bw => bw.volumeConf !== 'none').slice(0, 2);
     const displayedBrokenPuts = (d.brokenPutWalls || []).filter(bw => bw.volumeConf !== 'none').slice(0, 2);
+
+    // Bar range
     const allBarStrikes = [
         ...displayedPutWalls.map(w => w.strike),
         ...displayedCallWalls.map(w => w.strike),
@@ -1557,341 +1559,176 @@ function renderAnalysisTab() {
     const rawBarHigh = allBarStrikes.length > 0
         ? Math.max(...allBarStrikes)
         : (d.callSummary.primary ? d.callSummary.primary.strike : d.maxCall.strike);
-    // Add 5% padding on each side so edge labels don't get clipped
     const rawRange = rawBarHigh - rawBarLow || 1;
-    const barPad = rawRange * 0.05;
+    const barPad = rawRange * 0.07;
     const barLow = rawBarLow - barPad;
     const barHigh = rawBarHigh + barPad;
     const barRange = barHigh - barLow || 1;
     const pricePct = Math.max(2, Math.min(98, ((d.uPrice - barLow) / barRange) * 100));
+    const toPct = (val) => Math.max(1, Math.min(99, ((val - barLow) / barRange) * 100));
 
-    // Compute helper pct for structural levels
-    const toPct = (val) => Math.max(0, Math.min(100, ((val - barLow) / barRange) * 100));
-
-    // OI density per wall (for glow width)
-    const allWallOIs = [...displayedPutWalls, ...displayedCallWalls].map(w => w.oi);
-    const maxWallOI = allWallOIs.length > 0 ? Math.max(...allWallOIs) : 1;
-
-    // Build wall line markers (lines only — labels go in the row below)
-    let wallLinesHtml = '';
-    for (const w of displayedPutWalls) {
-        const pct = toPct(w.strike);
-        const isPrimary = w.tier === 'primary';
-        const oiRatio = w.oi / maxWallOI;  // 0-1 scale for visual weight
-        const glowSize = isPrimary ? 12 : 6;
-        wallLinesHtml += `<div style="position:absolute;left:${pct}%;top:0;height:100%;transform:translateX(-50%);z-index:1">
-            <div style="position:absolute;left:50%;top:0;transform:translateX(-50%);width:${isPrimary ? 3 : 2}px;height:100%;background:var(--put-color);opacity:${isPrimary ? 0.9 : 0.4};border-radius:1px;box-shadow:0 0 ${glowSize}px rgba(255,197,110,${(oiRatio * 0.5).toFixed(2)})"></div>
-        </div>`;
-    }
-    for (const w of displayedCallWalls) {
-        const pct = toPct(w.strike);
-        const isPrimary = w.tier === 'primary';
-        const oiRatio = w.oi / maxWallOI;
-        const glowSize = isPrimary ? 12 : 6;
-        wallLinesHtml += `<div style="position:absolute;left:${pct}%;top:0;height:100%;transform:translateX(-50%);z-index:1">
-            <div style="position:absolute;left:50%;top:0;transform:translateX(-50%);width:${isPrimary ? 3 : 2}px;height:100%;background:var(--call-color);opacity:${isPrimary ? 0.9 : 0.4};border-radius:1px;box-shadow:0 0 ${glowSize}px rgba(92,224,240,${(oiRatio * 0.5).toFixed(2)})"></div>
-        </div>`;
-    }
-
-    // Broken walls: "conquered territory" zone + ✕ marker
-    // Shade the area between broken wall and price to show territory gained
-    for (const bw of displayedBrokenCalls) {
-        const bwPct = toPct(bw.strike);
-        const isStrong = bw.volumeConf === 'strong';
-        const zoneWidth = pricePct - bwPct; // broken call wall is BELOW price
-        if (zoneWidth > 0) {
-            // Conquered territory: gradient from broken wall to price
-            wallLinesHtml += `<div style="position:absolute;left:${bwPct}%;top:0;height:100%;width:${zoneWidth}%;z-index:0;background:linear-gradient(90deg,rgba(255,171,64,${isStrong ? 0.15 : 0.08}),rgba(255,171,64,0.02));pointer-events:none"></div>`;
-        }
-        // ✕ broken wall marker
-        wallLinesHtml += `<div style="position:absolute;left:${bwPct}%;top:0;height:100%;transform:translateX(-50%);z-index:3;display:flex;align-items:center;justify-content:center">
-            <div style="width:0;height:100%;border-left:2px dashed var(--orange);opacity:${isStrong ? 0.7 : 0.35}"></div>
-            <div style="position:absolute;font-size:10px;font-weight:900;color:var(--orange);text-shadow:0 0 ${isStrong ? 8 : 4}px rgba(255,171,64,${isStrong ? 0.8 : 0.4});opacity:${isStrong ? 1 : 0.7}">✕</div>
-        </div>`;
-    }
-    for (const bw of displayedBrokenPuts) {
-        const bwPct = toPct(bw.strike);
-        const isStrong = bw.volumeConf === 'strong';
-        const zoneWidth = bwPct - pricePct; // broken put wall is ABOVE price
-        if (zoneWidth > 0) {
-            wallLinesHtml += `<div style="position:absolute;left:${pricePct}%;top:0;height:100%;width:${zoneWidth}%;z-index:0;background:linear-gradient(90deg,rgba(255,171,64,0.02),rgba(255,171,64,${isStrong ? 0.15 : 0.08}));pointer-events:none"></div>`;
-        }
-        wallLinesHtml += `<div style="position:absolute;left:${bwPct}%;top:0;height:100%;transform:translateX(-50%);z-index:3;display:flex;align-items:center;justify-content:center">
-            <div style="width:0;height:100%;border-left:2px dashed var(--orange);opacity:${isStrong ? 0.7 : 0.35}"></div>
-            <div style="position:absolute;font-size:10px;font-weight:900;color:var(--orange);text-shadow:0 0 ${isStrong ? 8 : 4}px rgba(255,171,64,${isStrong ? 0.8 : 0.4});opacity:${isStrong ? 1 : 0.7}">✕</div>
-        </div>`;
-    }
-
-    // Structural level lines (dashed — no labels on bar, shown in row below)
-    let structLinesHtml = '';
-    if (d.mpStrike) {
-        const mpPct = toPct(d.mpStrike);
-        structLinesHtml += `<div style="position:absolute;left:${mpPct}%;top:0;height:100%;width:0;border-left:2px dashed var(--pink);opacity:0.5;z-index:2"></div>`;
-    }
-    if (d.risk.gammaMean) {
-        const gmPct = toPct(d.risk.gammaMean);
-        structLinesHtml += `<div style="position:absolute;left:${gmPct}%;top:0;height:100%;width:0;border-left:2px dashed var(--cyan);opacity:0.5;z-index:2"></div>`;
-    }
-    if (d.gexResult.flipStrike) {
-        const flipPct = toPct(d.gexResult.flipStrike);
-        structLinesHtml += `<div style="position:absolute;left:${flipPct}%;top:0;height:100%;width:0;border-left:2px dashed var(--accent);opacity:0.6;z-index:2"></div>`;
-    }
-
-    // Nearest walls for distance display
+    // Nearest walls
     const nearPutStrike = d.nearestPut ? d.nearestPut.strike : (displayedPutWalls[0] ? displayedPutWalls[0].strike : null);
     const nearCallStrike = d.nearestCall ? d.nearestCall.strike : (displayedCallWalls[0] ? displayedCallWalls[0].strike : null);
     const nearPutDist = nearPutStrike ? Math.abs(d.uPrice - nearPutStrike) : 999;
     const nearCallDist = nearCallStrike ? Math.abs(nearCallStrike - d.uPrice) : 999;
-
-    // Regime gradient
-    const regimeGrad = d.isLongGamma
-        ? 'linear-gradient(90deg, rgba(255,197,110,.08) 0%, rgba(86,181,250,.04) 50%, rgba(92,224,240,.08) 100%)'
-        : 'linear-gradient(90deg, rgba(244,88,102,.08) 0%, rgba(255,255,255,.03) 50%, rgba(46,216,164,.08) 100%)';
-
-    // Tradeable range
     const tradeRangePts = d.tradeableRange < 999 ? d.tradeableRange.toFixed(0) : '—';
 
-    // Build labels row BELOW bar — clean separated row, no overlap
-    let labelsRow = [];
-    for (const w of displayedPutWalls) {
-        const oiK = w.oi >= 1000 ? (w.oi / 1000).toFixed(1) + 'K' : w.oi.toString();
-        labelsRow.push({ strike: w.strike, color: 'var(--put-color)', label: `$${w.strike}`, sub: w.tier === 'primary' ? oiK : '', primary: w.tier === 'primary' });
-    }
-    if (d.mpStrike) labelsRow.push({ strike: d.mpStrike, color: 'var(--pink)', label: `MP`, sub: `$${d.mpStrike}`, primary: false });
-    if (d.risk.gammaMean) labelsRow.push({ strike: d.risk.gammaMean, color: 'var(--cyan)', label: `GM`, sub: `$${d.risk.gammaMean.toFixed(0)}`, primary: false });
-    if (d.gexResult.flipStrike) labelsRow.push({ strike: d.gexResult.flipStrike, color: 'var(--accent)', label: `⚡Flip`, sub: `$${d.gexResult.flipStrike}`, primary: false });
-    for (const bw of displayedBrokenCalls) {
-        const confTag = bw.volumeConf === 'strong' ? '🔥' : '⚡';
-        labelsRow.push({ strike: bw.strike, color: 'var(--orange)', label: `✕ $${bw.strike}`, sub: `New S ${confTag}`, primary: bw.volumeConf === 'strong' });
-    }
-    for (const bw of displayedBrokenPuts) {
-        const confTag = bw.volumeConf === 'strong' ? '🔥' : '⚡';
-        labelsRow.push({ strike: bw.strike, color: 'var(--orange)', label: `✕ $${bw.strike}`, sub: `New R ${confTag}`, primary: bw.volumeConf === 'strong' });
-    }
-    for (const w of displayedCallWalls) {
-        const oiK = w.oi >= 1000 ? (w.oi / 1000).toFixed(1) + 'K' : w.oi.toString();
-        labelsRow.push({ strike: w.strike, color: 'var(--call-color)', label: `$${w.strike}`, sub: w.tier === 'primary' ? oiK : '', primary: w.tier === 'primary' });
-    }
-    labelsRow.sort((a, b) => a.strike - b.strike);
-
-    // ── Anti-overlap: width-aware collision detection with dedup ──
-    // Estimate label width in % of bar based on character count
-    const estLabelWidthPct = (label, sub) => {
-        const clean = (s) => s.replace(/[✕⚡🔥◀▶]/g, 'xx').length; // emoji ≈ 2 chars
-        const mainLen = clean(label);
-        const subLen = sub ? clean(sub) : 0;
-        const charPx = 7; // avg px per character at 9-11px font
-        const widthPx = Math.max(mainLen, subLen) * charPx + 16; // +padding
-        return (widthPx / 1000) * 100; // assume ~1000px bar width, conservative
-    };
-
-    let labelPcts = labelsRow.map(l => ({
-        ...l,
-        pct: toPct(l.strike),
-        widthPct: estLabelWidthPct(l.label, l.sub),
-        offsetY: 0,
-        hidden: false,
-    }));
-
-    // 1) Hide labels too close to price (price badge already visible on bar)
-    const PRICE_EXCLUSION_PCT = 2;
-    for (const lbl of labelPcts) {
-        if (Math.abs(lbl.pct - pricePct) < PRICE_EXCLUSION_PCT && !lbl.primary) {
-            lbl.hidden = true;
-        }
-    }
-
-    // 2) Deduplicate labels within 2% — keep higher priority (primary > secondary)
-    const DEDUP_PCT = 2;
-    for (let i = 0; i < labelPcts.length; i++) {
-        if (labelPcts[i].hidden) continue;
-        for (let j = i + 1; j < labelPcts.length; j++) {
-            if (labelPcts[j].hidden) continue;
-            if (Math.abs(labelPcts[i].pct - labelPcts[j].pct) < DEDUP_PCT) {
-                // Hide the less important one
-                if (labelPcts[j].primary && !labelPcts[i].primary) {
-                    labelPcts[i].hidden = true;
-                } else {
-                    labelPcts[j].hidden = true;
-                }
-            }
-        }
-    }
-
-    // 3) Multi-row placement with bounding-box collision detection
-    const ROW_H = 20; // px per row
-    const MAX_LABEL_ROWS = 4;
-    const rowOccupied = Array.from({ length: MAX_LABEL_ROWS }, () => []); // [{left, right}]
-    let maxRowUsed = 0;
-    const visible = labelPcts.filter(l => !l.hidden);
-
-    for (const lbl of visible) {
-        const halfW = lbl.widthPct / 2 + 1; // +1% safety margin
-        const lblL = lbl.pct - halfW;
-        const lblR = lbl.pct + halfW;
-        let placed = false;
-        for (let r = 0; r < MAX_LABEL_ROWS; r++) {
-            const overlap = rowOccupied[r].some(o => lblL < o.right && lblR > o.left);
-            if (!overlap) {
-                lbl.offsetY = r * ROW_H;
-                rowOccupied[r].push({ left: lblL, right: lblR });
-                maxRowUsed = Math.max(maxRowUsed, r);
-                placed = true;
-                break;
-            }
-        }
-        if (!placed) {
-            // Force last row
-            lbl.offsetY = (MAX_LABEL_ROWS - 1) * ROW_H;
-            rowOccupied[MAX_LABEL_ROWS - 1].push({ left: lblL, right: lblR });
-            maxRowUsed = MAX_LABEL_ROWS - 1;
-        }
-    }
-    const labelsRowHeight = (maxRowUsed + 1) * ROW_H + 12; // dynamic height
-
-    const labelsRowHtml = visible.map(l => {
-        // Edge alignment: left-align near 0%, right-align near 100%, center otherwise
-        let alignStyle;
-        if (l.pct < 5) {
-            alignStyle = `left:${l.pct}%;text-align:left`;
-        } else if (l.pct > 95) {
-            alignStyle = `left:${l.pct}%;transform:translateX(-100%);text-align:right`;
-        } else {
-            alignStyle = `left:${l.pct}%;transform:translateX(-50%);text-align:center`;
-        }
-        return `<div style="position:absolute;${alignStyle};white-space:nowrap;top:${l.offsetY}px">
-            <div style="font-size:${l.primary ? 11 : 9}px;font-weight:${l.primary ? 800 : 600};color:${l.color};opacity:${l.primary ? 1 : 0.7}">${l.label}</div>
-            ${l.sub ? `<div style="font-size:8px;color:${l.color};opacity:0.6">${l.sub}</div>` : ''}
-        </div>`;
-    }).join('');
-
-    // ── Broken Wall Detection for action hints ──
+    // Broken wall detection
     const bestBrokenCall = (d.brokenCallWalls || []).find(bw => bw.volumeConf === 'strong' || bw.volumeConf === 'moderate');
     const bestBrokenPut = (d.brokenPutWalls || []).find(bw => bw.volumeConf === 'strong' || bw.volumeConf === 'moderate');
     const hasBrokenWall = bestBrokenCall || bestBrokenPut;
 
-    // Action hint (single line, not on bar)
-    let actionHint = '';
-    if (d.isLongGamma) {
-        if (bestBrokenCall) {
-            const retestStr = `<span style="color:var(--orange);font-weight:700">BUY RETEST $${bestBrokenCall.strike}</span>`;
-            const tpStr = nearCallStrike ? `→ <span style="color:var(--call-color);font-weight:700">TP $${nearCallStrike}</span>` : '';
-            actionHint = `${retestStr} ${tpStr}`;
-        } else if (bestBrokenPut) {
-            const retestStr = `<span style="color:var(--orange);font-weight:700">SELL RETEST $${bestBrokenPut.strike}</span>`;
-            const tpStr = nearPutStrike ? `→ <span style="color:var(--put-color);font-weight:700">TP $${nearPutStrike}</span>` : '';
-            actionHint = `${retestStr} ${tpStr}`;
-        } else {
-            const sellAt = nearCallStrike && !d.priceAboveCallWall ? `<span style="color:var(--call-color);font-weight:700">SELL $${nearCallStrike}</span>` : '';
-            const buyAt = nearPutStrike && !d.priceBelowPutWall ? `<span style="color:var(--put-color);font-weight:700">BUY $${nearPutStrike}</span>` : '';
-            actionHint = [buyAt, sellAt].filter(Boolean).join(' <span style="color:var(--text-muted)">·····</span> ');
-        }
-    } else {
-        if (bestBrokenCall) {
-            actionHint = `<span style="color:var(--orange);font-weight:700">BUY RETEST $${bestBrokenCall.strike}</span> (Breakout confirmed)`;
-        } else if (bestBrokenPut) {
-            actionHint = `<span style="color:var(--orange);font-weight:700">SELL RETEST $${bestBrokenPut.strike}</span> (Breakdown confirmed)`;
-        } else {
-            const bko = nearCallStrike && !d.priceAboveCallWall ? `ทะลุ $${nearCallStrike} = <span style="color:var(--green);font-weight:700">BUY 🚀</span>` : '';
-            const bkd = nearPutStrike && !d.priceBelowPutWall ? `หลุด $${nearPutStrike} = <span style="color:var(--red);font-weight:700">SELL 💧</span>` : '';
-            actionHint = [bkd, bko].filter(Boolean).join(' <span style="color:var(--text-muted)">·····</span> ');
+    // ─── Bar elements: wall blocks + price ───
+    let barElHtml = '';
+
+    // Put walls — solid colored blocks
+    for (const w of displayedPutWalls) {
+        const pct = toPct(w.strike);
+        const isPri = w.tier === 'primary';
+        barElHtml += `<div style="position:absolute;left:${pct}%;top:${isPri ? 2 : 6}px;bottom:${isPri ? 2 : 6}px;width:${isPri ? 5 : 3}px;background:var(--put-color);opacity:${isPri ? .85 : .4};border-radius:2px;transform:translateX(-50%);z-index:2"></div>`;
+    }
+    // Call walls — solid colored blocks
+    for (const w of displayedCallWalls) {
+        const pct = toPct(w.strike);
+        const isPri = w.tier === 'primary';
+        barElHtml += `<div style="position:absolute;left:${pct}%;top:${isPri ? 2 : 6}px;bottom:${isPri ? 2 : 6}px;width:${isPri ? 5 : 3}px;background:var(--call-color);opacity:${isPri ? .85 : .4};border-radius:2px;transform:translateX(-50%);z-index:2"></div>`;
+    }
+    // Broken walls — dashed/faded blocks
+    for (const bw of [...displayedBrokenCalls, ...displayedBrokenPuts]) {
+        const pct = toPct(bw.strike);
+        const strong = bw.volumeConf === 'strong';
+        barElHtml += `<div style="position:absolute;left:${pct}%;top:4px;bottom:4px;width:4px;transform:translateX(-50%);z-index:1;border-radius:1px;background:repeating-linear-gradient(180deg,var(--orange) 0px,var(--orange) 3px,transparent 3px,transparent 6px);opacity:${strong ? .45 : .2}"></div>`;
+    }
+
+    // ─── Labels: minimal, width-aware anti-overlap ───
+    let labelItems = [];
+    for (const w of displayedPutWalls) {
+        labelItems.push({ strike: w.strike, text: `${w.strike}`, tag: w.tier === 'primary' ? 'S' : '', color: 'var(--put-color)', pri: w.tier === 'primary' ? 3 : 1, faded: false });
+    }
+    for (const w of displayedCallWalls) {
+        labelItems.push({ strike: w.strike, text: `${w.strike}`, tag: w.tier === 'primary' ? 'R' : '', color: 'var(--call-color)', pri: w.tier === 'primary' ? 3 : 1, faded: false });
+    }
+    for (const bw of displayedBrokenCalls) {
+        labelItems.push({ strike: bw.strike, text: `${bw.strike}`, tag: bw.volumeConf === 'strong' ? '×S' : '×', color: 'var(--orange)', pri: bw.volumeConf === 'strong' ? 2 : 0, faded: true });
+    }
+    for (const bw of displayedBrokenPuts) {
+        labelItems.push({ strike: bw.strike, text: `${bw.strike}`, tag: bw.volumeConf === 'strong' ? '×R' : '×', color: 'var(--orange)', pri: bw.volumeConf === 'strong' ? 2 : 0, faded: true });
+    }
+    labelItems.sort((a, b) => a.strike - b.strike);
+
+    const lbls = labelItems.map(l => ({ ...l, pct: toPct(l.strike), widthPct: (l.text.length * 0.7 + (l.tag ? 1.2 : 0) + 1), row: 0, hidden: false }));
+
+    // Hide low-priority labels overlapping price needle
+    for (const l of lbls) { if (Math.abs(l.pct - pricePct) < 2.5 && l.pri < 2) l.hidden = true; }
+
+    // Dedup within 3%
+    for (let i = 0; i < lbls.length; i++) {
+        if (lbls[i].hidden) continue;
+        for (let j = i + 1; j < lbls.length; j++) {
+            if (lbls[j].hidden) continue;
+            if (Math.abs(lbls[i].pct - lbls[j].pct) < 3) {
+                if (lbls[j].pri > lbls[i].pri) lbls[i].hidden = true;
+                else lbls[j].hidden = true;
+            }
         }
     }
 
+    // Place in max 2 rows
+    const LBL_ROW_H = 18;
+    const lblRows = [[], []];
+    const visLbls = lbls.filter(l => !l.hidden);
+    for (const l of visLbls) {
+        const hw = l.widthPct / 2 + 1.5;
+        const lL = l.pct - hw, lR = l.pct + hw;
+        let placed = false;
+        for (let r = 0; r < 2; r++) {
+            if (!lblRows[r].some(o => lL < o.r && lR > o.l)) {
+                l.row = r; lblRows[r].push({ l: lL, r: lR }); placed = true; break;
+            }
+        }
+        if (!placed) { l.row = 1; lblRows[1].push({ l: lL, r: lR }); }
+    }
+    const maxLblRow = visLbls.reduce((m, l) => Math.max(m, l.row), 0);
+    const lblAreaH = (maxLblRow + 1) * LBL_ROW_H + 4;
+
+    const lblsHtml = visLbls.map(l => {
+        let align;
+        if (l.pct < 6) align = `left:${l.pct}%`;
+        else if (l.pct > 94) align = `right:${100 - l.pct}%`;
+        else align = `left:${l.pct}%;transform:translateX(-50%)`;
+        const op = l.faded ? 0.45 : (l.pri >= 2 ? 1 : 0.65);
+        const fs = l.pri >= 3 ? 10 : 9;
+        const fw = l.pri >= 2 ? 700 : 600;
+        const tdeco = l.faded ? 'text-decoration:line-through;' : '';
+        const tagH = l.tag ? `<span style="font-size:7px;opacity:.5;margin-left:2px;font-weight:600;vertical-align:middle">${l.tag}</span>` : '';
+        return `<div style="position:absolute;${align};top:${l.row * LBL_ROW_H}px;white-space:nowrap"><span style="font-size:${fs}px;font-weight:${fw};color:${l.color};opacity:${op};${tdeco}">${l.text}</span>${tagH}</div>`;
+    }).join('');
+
+    // ─── Action hint ───
+    let actionHint = '';
+    if (d.isLongGamma) {
+        if (bestBrokenCall) {
+            actionHint = `<span style="color:var(--orange);font-weight:800">BUY RETEST $${bestBrokenCall.strike}</span> → <span style="color:var(--call-color);font-weight:800">TP $${nearCallStrike || '?'}</span>`;
+        } else if (bestBrokenPut) {
+            actionHint = `<span style="color:var(--orange);font-weight:800">SELL RETEST $${bestBrokenPut.strike}</span> → <span style="color:var(--put-color);font-weight:800">TP $${nearPutStrike || '?'}</span>`;
+        } else {
+            const parts = [];
+            if (nearPutStrike && !d.priceBelowPutWall) parts.push(`<span style="color:var(--put-color);font-weight:700">BUY $${nearPutStrike}</span>`);
+            if (nearCallStrike && !d.priceAboveCallWall) parts.push(`<span style="color:var(--call-color);font-weight:700">SELL $${nearCallStrike}</span>`);
+            actionHint = parts.join(' <span style="color:var(--text-muted);opacity:.4">|</span> ');
+        }
+    } else {
+        if (bestBrokenCall) {
+            actionHint = `<span style="color:var(--orange);font-weight:800">BUY RETEST $${bestBrokenCall.strike}</span> <span style="color:var(--text-muted);font-size:10px">(breakout confirmed)</span>`;
+        } else if (bestBrokenPut) {
+            actionHint = `<span style="color:var(--orange);font-weight:800">SELL RETEST $${bestBrokenPut.strike}</span> <span style="color:var(--text-muted);font-size:10px">(breakdown confirmed)</span>`;
+        } else {
+            const parts = [];
+            if (nearCallStrike && !d.priceAboveCallWall) parts.push(`ทะลุ $${nearCallStrike} = <span style="color:var(--green);font-weight:700">BUY</span>`);
+            if (nearPutStrike && !d.priceBelowPutWall) parts.push(`หลุด $${nearPutStrike} = <span style="color:var(--red);font-weight:700">SELL</span>`);
+            actionHint = parts.join(' <span style="color:var(--text-muted);opacity:.4">|</span> ');
+        }
+    }
+
+    // ─── Assemble HTML ───
     const rangeBarHtml = `
-    <div style="padding:6px 0 8px 0;margin:4px 0 8px">
-        <!-- 3-col header: Support | Range | Resistance -->
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
-            <div style="text-align:left">
-                <div style="font-size:9px;color:var(--put-color);font-weight:600;text-transform:uppercase;letter-spacing:.5px">◀ Support</div>
-                <div style="font-size:20px;font-weight:900;color:var(--put-color)">$${nearPutStrike || barLow}</div>
-                <div style="font-size:11px;color:var(--text-muted);font-weight:600">${nearPutDist < 999 ? nearPutDist.toFixed(0) + ' pts' : ''}</div>
+    <div style="padding:4px 0 6px">
+        <!-- Header: Support — Price — Resistance -->
+        <div style="display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:10px">
+            <div>
+                <div style="font-size:8px;color:var(--put-color);font-weight:600;text-transform:uppercase;letter-spacing:.5px;opacity:.65">Support</div>
+                <div style="font-size:18px;font-weight:800;color:var(--put-color)">$${nearPutStrike || rawBarLow}</div>
+                <div style="font-size:10px;color:var(--text-muted)">${nearPutDist < 999 ? nearPutDist.toFixed(0) + ' pts' : ''}</div>
             </div>
             <div style="text-align:center">
-                <div style="font-size:24px;font-weight:900;color:white">$${d.uPrice.toFixed(1)}</div>
-                <div style="font-size:11px;color:${d.tradeableRange < 30 ? 'var(--red)' : d.tradeableRange < 60 ? 'var(--orange)' : 'var(--text-muted)'};font-weight:700">Range: ${tradeRangePts} pts</div>
+                <div style="font-size:22px;font-weight:900;color:#fff">$${d.uPrice.toFixed(1)}</div>
+                <div style="font-size:10px;color:${d.tradeableRange < 30 ? 'var(--red)' : d.tradeableRange < 60 ? 'var(--orange)' : 'var(--text-muted)'};font-weight:600">${tradeRangePts} pts range</div>
             </div>
             <div style="text-align:right">
-                <div style="font-size:9px;color:var(--call-color);font-weight:600;text-transform:uppercase;letter-spacing:.5px">Resistance ▶</div>
-                <div style="font-size:20px;font-weight:900;color:var(--call-color)">$${nearCallStrike || barHigh}</div>
-                <div style="font-size:11px;color:var(--text-muted);font-weight:600">${nearCallDist < 999 ? nearCallDist.toFixed(0) + ' pts' : ''}</div>
+                <div style="font-size:8px;color:var(--call-color);font-weight:600;text-transform:uppercase;letter-spacing:.5px;opacity:.65">Resistance</div>
+                <div style="font-size:18px;font-weight:800;color:var(--call-color)">$${nearCallStrike || rawBarHigh}</div>
+                <div style="font-size:10px;color:var(--text-muted)">${nearCallDist < 999 ? nearCallDist.toFixed(0) + ' pts' : ''}</div>
             </div>
         </div>
 
-        <!-- THE BAR (clean — lines only, no text) -->
-        <div style="position:relative;height:32px;background:${regimeGrad};border-radius:6px;overflow:visible;border:1px solid rgba(255,255,255,.08)">
-            <div style="position:absolute;left:0;top:0;height:100%;width:${pricePct}%;background:linear-gradient(to right,rgba(255,197,110,.05),rgba(255,255,255,.03));border-radius:6px 0 0 6px"></div>
-            ${wallLinesHtml}
-            ${structLinesHtml}
-            <!-- Price needle with futures label -->
-            <div style="position:absolute;left:${pricePct}%;top:-4px;bottom:-4px;width:3px;background:white;transform:translateX(-50%);z-index:6;border-radius:2px;box-shadow:0 0 8px rgba(255,255,255,.5)"></div>
-            <div style="position:absolute;left:${pricePct}%;top:-22px;transform:translateX(-50%);z-index:7;white-space:nowrap">
-                <div style="font-size:11px;font-weight:800;color:white;background:rgba(30,30,40,.85);padding:1px 6px;border-radius:4px;border:1px solid rgba(255,255,255,.3);text-shadow:0 0 4px rgba(255,255,255,.4)">$${d.uPrice.toFixed(1)}</div>
-            </div>
+        <!-- The Bar -->
+        <div style="position:relative;height:36px;background:rgba(255,255,255,.025);border-radius:6px;border:1px solid rgba(255,255,255,.06);overflow:visible">
+            <div style="position:absolute;left:0;top:0;height:100%;width:${pricePct}%;background:linear-gradient(to right,rgba(255,197,110,.03),rgba(255,255,255,.01));border-radius:6px 0 0 6px"></div>
+            ${barElHtml}
+            <!-- Price needle -->
+            <div style="position:absolute;left:${pricePct}%;top:-2px;bottom:-2px;width:2px;background:#fff;transform:translateX(-50%);z-index:5;border-radius:1px;box-shadow:0 0 8px rgba(255,255,255,.5)"></div>
         </div>
 
-        <!-- Labels row (below bar, dynamic height) -->
-        <div style="position:relative;height:${labelsRowHeight}px;margin-top:4px">
-            ${labelsRowHtml}
-        </div>
+        <!-- Labels -->
+        <div style="position:relative;height:${lblAreaH}px;margin-top:3px">${lblsHtml}</div>
 
-        <!-- Trade Flow Arrow (shows retest → TP path when broken wall exists) -->
-        ${(displayedBrokenCalls.length > 0 || displayedBrokenPuts.length > 0) ? (() => {
-            // Collect flow labels, then de-overlap them
-            const flowLabels = [];
-            let flowLinesHtml = '';
-            for (const bw of displayedBrokenCalls) {
-                const bwPct = toPct(bw.strike);
-                const isStrong = bw.volumeConf === 'strong';
-                const nextWall = displayedCallWalls.length > 0 ? displayedCallWalls[0] : null;
-                const tpPct = nextWall ? toPct(nextWall.strike) : null;
-                flowLinesHtml += `<div style="position:absolute;left:${bwPct}%;top:8px;width:${Math.max(0, pricePct - bwPct)}%;height:0;border-bottom:2px dotted rgba(255,171,64,${isStrong ? 0.6 : 0.3});z-index:1"></div>`;
-                flowLabels.push({ pct: bwPct, text: '↩ Retest', color: 'var(--orange)', opacity: isStrong ? 1 : 0.7 });
-                if (tpPct && tpPct > pricePct) {
-                    flowLinesHtml += `<div style="position:absolute;left:${pricePct}%;top:8px;width:${tpPct - pricePct}%;height:0;border-bottom:2px solid rgba(92,224,240,0.4);z-index:1"></div>`;
-                    flowLabels.push({ pct: tpPct, text: 'TP →', color: 'var(--call-color)', opacity: 0.8 });
-                }
-            }
-            for (const bw of displayedBrokenPuts) {
-                const bwPct = toPct(bw.strike);
-                const isStrong = bw.volumeConf === 'strong';
-                const nextWall = displayedPutWalls.length > 0 ? displayedPutWalls[0] : null;
-                const tpPct = nextWall ? toPct(nextWall.strike) : null;
-                flowLinesHtml += `<div style="position:absolute;left:${pricePct}%;top:8px;width:${Math.max(0, bwPct - pricePct)}%;height:0;border-bottom:2px dotted rgba(255,171,64,${isStrong ? 0.6 : 0.3});z-index:1"></div>`;
-                flowLabels.push({ pct: bwPct, text: '↩ Retest', color: 'var(--orange)', opacity: isStrong ? 1 : 0.7 });
-                if (tpPct && tpPct < pricePct) {
-                    flowLinesHtml += `<div style="position:absolute;left:${tpPct}%;top:8px;width:${Math.max(0, pricePct - tpPct)}%;height:0;border-bottom:2px solid rgba(255,197,110,0.4);z-index:1"></div>`;
-                    flowLabels.push({ pct: tpPct, text: '← TP', color: 'var(--put-color)', opacity: 0.8 });
-                }
-            }
-            // De-overlap flow labels: if two labels are within 8%, nudge the second one down
-            flowLabels.sort((a, b) => a.pct - b.pct);
-            const flowRowOcc = [[]]; // row 0
-            for (const fl of flowLabels) {
-                fl.topPx = 1;
-                const halfW = 5; // ~5% estimated width
-                const flL = fl.pct - halfW;
-                const flR = fl.pct + halfW;
-                const overlapR0 = flowRowOcc[0].some(o => flL < o.right && flR > o.left);
-                if (overlapR0) {
-                    fl.topPx = 12; // second row
-                }
-                flowRowOcc[0].push({ left: flL, right: flR });
-            }
-            const flowLabelsHtml = flowLabels.map(fl =>
-                `<div style="position:absolute;left:${fl.pct}%;top:${fl.topPx}px;font-size:9px;font-weight:700;color:${fl.color};transform:translateX(-50%);white-space:nowrap;opacity:${fl.opacity}">${fl.text}</div>`
-            ).join('');
-            return `<div style="position:relative;height:22px;margin-top:2px;margin-bottom:4px">${flowLinesHtml}${flowLabelsHtml}</div>`;
-        })() : ''}
-
-        <!-- Action hint + regime -->
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-top:2px">
-            <div style="font-size:11px">
-                ${d.isLongGamma
-            ? '<span style="color:var(--green);font-weight:700">🔄 Long γ</span> <span style="color:var(--text-muted)">Wall = Fade</span>'
-            : '<span style="color:var(--red);font-weight:700">🌊 Short γ</span> <span style="color:var(--text-muted)">Wall = Breakout</span>'
-        }
-            </div>
+        <!-- Footer: regime + action -->
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-top:2px;padding-top:4px;border-top:1px solid rgba(255,255,255,.04)">
+            <div style="font-size:10px">${d.isLongGamma
+                ? '<span style="color:var(--green);font-weight:700">🔄 Long γ</span> <span style="color:var(--text-muted)">· Fade</span>'
+                : '<span style="color:var(--red);font-weight:700">🌊 Short γ</span> <span style="color:var(--text-muted)">· Breakout</span>'
+            }</div>
             <div style="font-size:12px">${actionHint}</div>
         </div>
     </div>`;
