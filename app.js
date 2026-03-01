@@ -82,6 +82,7 @@ const CONFIG = {
 let state = {
     activeAsset: 'gc',            // 'gc' | 'nq'
     activeTab: 'analysis',
+    tradingStyle: 'daytrade',     // 'daytrade' | 'swing' | 'position'
     data: { current: {}, friday: {}, monthly: {}, analysis: {}, chart: {} },
     refreshTimer: null,
     chartInitialized: false,
@@ -1080,6 +1081,22 @@ async function switchTab(tabKey) {
     renderActiveTab();
 }
 
+// ========== TRADING STYLE SWITCH ==========
+const STYLE_CONFIG = {
+    daytrade: { key: 'current', label: 'Daytrade', icon: '⚡', slMul: 0.4, erScale: 1, wallSlice: 3, desc: 'Intraday — SL/TP แคบ, ใช้สัญญาใกล้สุด' },
+    swing: { key: 'friday', label: 'Swing', icon: '🔄', slMul: 0.8, erScale: 2.2, wallSlice: 5, desc: 'ข้ามวัน — SL กว้างขึ้น, ใช้สัญญา Friday' },
+    position: { key: 'monthly', label: 'Position', icon: '📊', slMul: 1.5, erScale: 5.2, wallSlice: 7, desc: 'สัปดาห์+ — SL กว้างสุด, ใช้สัญญา Monthly' },
+};
+
+function switchTradingStyle(style) {
+    if (!STYLE_CONFIG[style] || style === state.tradingStyle) return;
+    state.tradingStyle = style;
+    document.querySelectorAll('.style-btn').forEach(b => {
+        b.classList.toggle('active', b.dataset.style === style);
+    });
+    if (state.activeTab === 'analysis') renderAnalysisTab();
+}
+
 let chartInstance = null;
 let candleSeries = null;
 let wallLines = []; // multi-wall lines
@@ -1246,8 +1263,13 @@ function renderAnalysisTab() {
         // ── Multi-Wall Detection ──
         const sourceStrikes2 = intraday?.strikes?.length > 0 ? intraday.strikes : null;
         const atm2 = data.strikes.reduce((p, c) => Math.abs(c.strike - uPrice) < Math.abs(p.strike - uPrice) ? c : p);
-        const er1Day = atm2.volSettle > 0 ? uPrice * atm2.volSettle * Math.sqrt(1 / 365) : 50;
+        const er1DayBase = atm2.volSettle > 0 ? uPrice * atm2.volSettle * Math.sqrt(1 / 365) : 50;
 
+        // Scale ER by trading style: swing ~sqrt(5), position ~sqrt(27)
+        const erScale = STYLE_CONFIG[state.tradingStyle].erScale;
+        const er1Day = er1DayBase * (tf.key === STYLE_CONFIG[state.tradingStyle].key ? erScale : 1);
+
+        const wallSliceCount = tf.key === STYLE_CONFIG[state.tradingStyle].key ? STYLE_CONFIG[state.tradingStyle].wallSlice : 3;
         const callWalls = findSignificantWalls(data.strikes, uPrice, 'call', er1Day * 2);
         const putWalls = findSignificantWalls(data.strikes, uPrice, 'put', er1Day * 2);
         const callSummary = getWallSummary(callWalls);
@@ -1305,7 +1327,7 @@ function renderAnalysisTab() {
         // Use NEAREST wall for proximity detection (dynamic threshold = 1-day ER)
         const distToNearestCall = nearestCall ? nearestCall.dist : (maxCall.strike - uPrice);
         const distToNearestPut = nearestPut ? nearestPut.dist : (uPrice - maxPut.strike);
-        const proximityThreshold = Math.max(er1Day * 0.8, 20); // dynamic, min 20
+        const proximityThreshold = Math.max(er1Day * 0.8, 20); // dynamic, min 20, scales with trading style via er1Day
         const nearCallWall = distToNearestCall < proximityThreshold;
         const nearPutWall = distToNearestPut < proximityThreshold;
 
@@ -1346,16 +1368,19 @@ function renderAnalysisTab() {
             nearCallWall, nearPutWall,
             nearestCall, nearestPut, callWalls, putWalls, callSummary, putSummary,
             brokenCallWalls, brokenPutWalls,
-            tradeableRange, er1Day, sourceStrikes2,
+            tradeableRange, er1Day, sourceStrikes2, wallSliceCount,
             risk, vannaExp, charmExp, vommaExp, hedgeLabel, itmPct, dte: data.dte,
             longDteWarning: data.dte > 60 // Greeks less accurate at long DTE (r=0 assumption)
         };
     }
 
-    // ── Primary = Daily ──
-    const d = tfData.current;
+    // ── Primary = based on trading style ──
+    const styleCfg = STYLE_CONFIG[state.tradingStyle];
+    const d = tfData[styleCfg.key] || tfData.current;
+    const primaryKey = tfData[styleCfg.key] ? styleCfg.key : 'current';
+    const styleFallback = !tfData[styleCfg.key] && styleCfg.key !== 'current';
     if (!d) {
-        header.innerHTML = `<div class="placeholder-msg" style="padding:40px"><div class="icon">📊</div><div class="title">No Data</div><div class="desc">Loading or no daily data available.</div></div>`;
+        header.innerHTML = `<div class="placeholder-msg" style="padding:40px"><div class="icon">📊</div><div class="title">No Data</div><div class="desc">Loading or no ${styleCfg.label} data available.</div></div>`;
         container.innerHTML = '';
         return;
     }
@@ -1450,7 +1475,7 @@ function renderAnalysisTab() {
     if (d.priceBelowPutWall) {
         levels.push({ price: d.structPutWall.strike, label: '💔 Broken Put Wall', color: 'var(--orange)', icon: '💔', dist: d.structPutWall.strike - d.uPrice, oi: 0, tier: '', action: 'ราคาหลุดแล้ว → กลายเป็น Resistance (SL zone)' });
     }
-    for (const w of d.putWalls.slice(0, 3)) {
+    for (const w of d.putWalls.slice(0, d.wallSliceCount || 3)) {
         const tierBadge = tierLabel(w.tier);
         const clusterInfo = w.clusterCount > 1 ? ` [${w.clusterCount} strikes, ${w.clusterOI.toLocaleString()} total]` : '';
         const migrationTag = checkWallMigration(w.strike, 'put', w.oi, d.sourceStrikes2);
@@ -1485,7 +1510,7 @@ function renderAnalysisTab() {
     if (d.priceAboveCallWall) {
         levels.push({ price: d.structCallWall.strike, label: '💔 Broken Call Wall', color: 'var(--orange)', icon: '💔', dist: d.structCallWall.strike - d.uPrice, oi: 0, tier: '', action: 'ราคาทะลุแล้ว → กลายเป็น Support (SL zone)' });
     }
-    for (const w of d.callWalls.slice(0, 3)) {
+    for (const w of d.callWalls.slice(0, d.wallSliceCount || 3)) {
         const tierBadge = tierLabel(w.tier);
         const clusterInfo = w.clusterCount > 1 ? ` [${w.clusterCount} strikes, ${w.clusterOI.toLocaleString()} total]` : '';
         const migrationTag = checkWallMigration(w.strike, 'call', w.oi, d.sourceStrikes2);
@@ -1540,9 +1565,7 @@ function renderAnalysisTab() {
         </div>`;
     }
 
-    // ── BATTLE MAP (Clean — No Overlap Design) ──
-    // The bar is VISUAL ONLY (lines + needle).
-    // All text info goes into flex-wrap badges that never overlap.
+    // ── BATTLE MAP BAR (Redesigned — visual centerpiece) ──
     const displayedPutWalls = d.putWalls.slice(0, 3);
     const displayedCallWalls = d.callWalls.slice(0, 3);
     const displayedBrokenCalls = (d.brokenCallWalls || []).filter(bw => bw.volumeConf !== 'none').slice(0, 2);
@@ -1553,255 +1576,213 @@ function renderAnalysisTab() {
         ...displayedBrokenCalls.map(bw => bw.strike),
         ...displayedBrokenPuts.map(bw => bw.strike),
     ];
-    const rawBarLow = allBarStrikes.length > 0
+    const barLow = allBarStrikes.length > 0
         ? Math.min(...allBarStrikes)
         : (d.putSummary.primary ? d.putSummary.primary.strike : d.maxPut.strike);
-    const rawBarHigh = allBarStrikes.length > 0
+    const barHigh = allBarStrikes.length > 0
         ? Math.max(...allBarStrikes)
         : (d.callSummary.primary ? d.callSummary.primary.strike : d.maxCall.strike);
-    const rawRange = rawBarHigh - rawBarLow || 1;
-    const barPad = rawRange * 0.08;
-    const barLow = rawBarLow - barPad;
-    const barHigh = rawBarHigh + barPad;
     const barRange = barHigh - barLow || 1;
     const pricePct = Math.max(2, Math.min(98, ((d.uPrice - barLow) / barRange) * 100));
+
+    // Compute helper pct for structural levels
     const toPct = (val) => Math.max(0, Math.min(100, ((val - barLow) / barRange) * 100));
 
-    // OI density
+    // OI density per wall (for glow width)
     const allWallOIs = [...displayedPutWalls, ...displayedCallWalls].map(w => w.oi);
     const maxWallOI = allWallOIs.length > 0 ? Math.max(...allWallOIs) : 1;
 
-    // Wall lines on bar (extend 6px below for label connection)
+    // Build wall line markers (lines only — labels go in the row below)
     let wallLinesHtml = '';
     for (const w of displayedPutWalls) {
         const pct = toPct(w.strike);
         const isPrimary = w.tier === 'primary';
-        wallLinesHtml += `<div style="position:absolute;left:${pct}%;top:0;height:calc(100% + 6px);transform:translateX(-50%);z-index:1">
-            <div style="width:${isPrimary ? 4 : 2}px;height:100%;background:var(--put-color);opacity:${isPrimary ? 0.9 : 0.4};border-radius:1px"></div>
+        wallLinesHtml += `<div style="position:absolute;left:${pct}%;top:0;height:100%;transform:translateX(-50%);z-index:1">
+            <div style="position:absolute;left:50%;top:0;transform:translateX(-50%);width:${isPrimary ? 3 : 2}px;height:100%;background:var(--put-color);opacity:${isPrimary ? 0.9 : 0.4};border-radius:1px"></div>
         </div>`;
     }
     for (const w of displayedCallWalls) {
         const pct = toPct(w.strike);
         const isPrimary = w.tier === 'primary';
-        wallLinesHtml += `<div style="position:absolute;left:${pct}%;top:0;height:calc(100% + 6px);transform:translateX(-50%);z-index:1">
-            <div style="width:${isPrimary ? 4 : 2}px;height:100%;background:var(--call-color);opacity:${isPrimary ? 0.9 : 0.4};border-radius:1px"></div>
+        wallLinesHtml += `<div style="position:absolute;left:${pct}%;top:0;height:100%;transform:translateX(-50%);z-index:1">
+            <div style="position:absolute;left:50%;top:0;transform:translateX(-50%);width:${isPrimary ? 3 : 2}px;height:100%;background:var(--call-color);opacity:${isPrimary ? 0.9 : 0.4};border-radius:1px"></div>
         </div>`;
     }
+
+    // Broken wall lines (dashed orange — volume-confirmed broken levels)
     for (const bw of displayedBrokenCalls) {
         const pct = toPct(bw.strike);
         const isStrong = bw.volumeConf === 'strong';
-        wallLinesHtml += `<div style="position:absolute;left:${pct}%;top:0;height:calc(100% + 6px);transform:translateX(-50%);z-index:2">
-            <div style="width:0;height:100%;border-left:2px dashed var(--orange);opacity:${isStrong ? 0.7 : 0.35}"></div>
+        wallLinesHtml += `<div style="position:absolute;left:${pct}%;top:0;height:100%;transform:translateX(-50%);z-index:2">
+            <div style="position:absolute;left:50%;top:0;transform:translateX(-50%);width:0;height:100%;border-left:${isStrong ? 3 : 2}px dashed var(--orange);opacity:${isStrong ? 0.9 : 0.5}"></div>
         </div>`;
     }
     for (const bw of displayedBrokenPuts) {
         const pct = toPct(bw.strike);
         const isStrong = bw.volumeConf === 'strong';
-        wallLinesHtml += `<div style="position:absolute;left:${pct}%;top:0;height:calc(100% + 6px);transform:translateX(-50%);z-index:2">
-            <div style="width:0;height:100%;border-left:2px dashed var(--orange);opacity:${isStrong ? 0.7 : 0.35}"></div>
+        wallLinesHtml += `<div style="position:absolute;left:${pct}%;top:0;height:100%;transform:translateX(-50%);z-index:2">
+            <div style="position:absolute;left:50%;top:0;transform:translateX(-50%);width:0;height:100%;border-left:${isStrong ? 3 : 2}px dashed var(--orange);opacity:${isStrong ? 0.9 : 0.5}"></div>
         </div>`;
     }
 
-    // Structural lines (thin dots, extend 6px below bar)
+    // Structural level lines (dashed — no labels on bar, shown in row below)
     let structLinesHtml = '';
     if (d.mpStrike) {
-        const pct = toPct(d.mpStrike);
-        structLinesHtml += `<div style="position:absolute;left:${pct}%;top:0;height:calc(100% + 6px);width:0;border-left:1px dotted var(--pink);opacity:0.4;z-index:1"></div>`;
+        const mpPct = toPct(d.mpStrike);
+        structLinesHtml += `<div style="position:absolute;left:${mpPct}%;top:0;height:100%;width:0;border-left:2px dashed var(--pink);opacity:0.5;z-index:2"></div>`;
     }
     if (d.risk.gammaMean) {
-        const pct = toPct(d.risk.gammaMean);
-        structLinesHtml += `<div style="position:absolute;left:${pct}%;top:0;height:calc(100% + 6px);width:0;border-left:1px dotted var(--cyan);opacity:0.4;z-index:1"></div>`;
+        const gmPct = toPct(d.risk.gammaMean);
+        structLinesHtml += `<div style="position:absolute;left:${gmPct}%;top:0;height:100%;width:0;border-left:2px dashed var(--cyan);opacity:0.5;z-index:2"></div>`;
     }
     if (d.gexResult.flipStrike) {
-        const pct = toPct(d.gexResult.flipStrike);
-        structLinesHtml += `<div style="position:absolute;left:${pct}%;top:0;height:calc(100% + 6px);width:0;border-left:1px dotted var(--accent);opacity:0.4;z-index:1"></div>`;
+        const flipPct = toPct(d.gexResult.flipStrike);
+        structLinesHtml += `<div style="position:absolute;left:${flipPct}%;top:0;height:100%;width:0;border-left:2px dashed var(--accent);opacity:0.6;z-index:2"></div>`;
     }
 
-    // Nearest walls
+    // Nearest walls for distance display
     const nearPutStrike = d.nearestPut ? d.nearestPut.strike : (displayedPutWalls[0] ? displayedPutWalls[0].strike : null);
     const nearCallStrike = d.nearestCall ? d.nearestCall.strike : (displayedCallWalls[0] ? displayedCallWalls[0].strike : null);
     const nearPutDist = nearPutStrike ? Math.abs(d.uPrice - nearPutStrike) : 999;
     const nearCallDist = nearCallStrike ? Math.abs(nearCallStrike - d.uPrice) : 999;
+
+    // Regime gradient
+    const regimeGrad = d.isLongGamma
+        ? 'linear-gradient(90deg, rgba(255,197,110,.08) 0%, rgba(86,181,250,.04) 50%, rgba(92,224,240,.08) 100%)'
+        : 'linear-gradient(90deg, rgba(244,88,102,.08) 0%, rgba(255,255,255,.03) 50%, rgba(46,216,164,.08) 100%)';
+
+    // Tradeable range
     const tradeRangePts = d.tradeableRange < 999 ? d.tradeableRange.toFixed(0) : '—';
 
-    // ── Build bar labels (short tags under each line) ──
-    // Each label: { pct, text, color, bold }
-    const barLabels = [];
+    // Build labels row BELOW bar — clean separated row, no overlap
+    let labelsRow = [];
     for (const w of displayedPutWalls) {
-        const isPrimary = w.tier === 'primary';
-        const oiK = isPrimary && w.oi >= 1000 ? ` ${(w.oi / 1000).toFixed(1)}K` : '';
-        barLabels.push({ pct: toPct(w.strike), text: `$${w.strike}`, tag: `S${oiK}`, color: 'var(--put-color)', bold: isPrimary });
+        const oiK = w.oi >= 1000 ? (w.oi / 1000).toFixed(1) + 'K' : w.oi.toString();
+        labelsRow.push({ strike: w.strike, color: 'var(--put-color)', label: `$${w.strike}`, sub: w.tier === 'primary' ? oiK : '', primary: w.tier === 'primary' });
     }
+    if (d.mpStrike) labelsRow.push({ strike: d.mpStrike, color: 'var(--pink)', label: `MP`, sub: `$${d.mpStrike}`, primary: false });
+    if (d.risk.gammaMean) labelsRow.push({ strike: d.risk.gammaMean, color: 'var(--cyan)', label: `GM`, sub: `$${d.risk.gammaMean.toFixed(0)}`, primary: false });
+    if (d.gexResult.flipStrike) labelsRow.push({ strike: d.gexResult.flipStrike, color: 'var(--accent)', label: `⚡Flip`, sub: `$${d.gexResult.flipStrike}`, primary: false });
     for (const bw of displayedBrokenCalls) {
-        const icon = bw.volumeConf === 'strong' ? '🔥' : '⚡';
-        barLabels.push({ pct: toPct(bw.strike), text: `$${bw.strike}`, tag: `✕→S ${icon}`, color: 'var(--orange)', bold: bw.volumeConf === 'strong' });
+        labelsRow.push({ strike: bw.strike, color: 'var(--orange)', label: `🔥$${bw.strike}`, sub: 'Broken', primary: bw.volumeConf === 'strong' });
     }
-    if (d.mpStrike) barLabels.push({ pct: toPct(d.mpStrike), text: `$${d.mpStrike}`, tag: 'MP', color: 'var(--pink)', bold: false });
-    if (d.risk.gammaMean) barLabels.push({ pct: toPct(d.risk.gammaMean), text: `$${d.risk.gammaMean.toFixed(0)}`, tag: 'GM', color: 'var(--cyan)', bold: false });
-    if (d.gexResult.flipStrike) barLabels.push({ pct: toPct(d.gexResult.flipStrike), text: `$${d.gexResult.flipStrike}`, tag: 'Flip', color: 'var(--accent)', bold: false });
     for (const bw of displayedBrokenPuts) {
-        const icon = bw.volumeConf === 'strong' ? '🔥' : '⚡';
-        barLabels.push({ pct: toPct(bw.strike), text: `$${bw.strike}`, tag: `✕→R ${icon}`, color: 'var(--orange)', bold: bw.volumeConf === 'strong' });
+        labelsRow.push({ strike: bw.strike, color: 'var(--orange)', label: `🔥$${bw.strike}`, sub: 'Broken', primary: bw.volumeConf === 'strong' });
     }
     for (const w of displayedCallWalls) {
-        const isPrimary = w.tier === 'primary';
-        const oiK = isPrimary && w.oi >= 1000 ? ` ${(w.oi / 1000).toFixed(1)}K` : '';
-        barLabels.push({ pct: toPct(w.strike), text: `$${w.strike}`, tag: `R${oiK}`, color: 'var(--call-color)', bold: isPrimary });
+        const oiK = w.oi >= 1000 ? (w.oi / 1000).toFixed(1) + 'K' : w.oi.toString();
+        labelsRow.push({ strike: w.strike, color: 'var(--call-color)', label: `$${w.strike}`, sub: w.tier === 'primary' ? oiK : '', primary: w.tier === 'primary' });
     }
-    barLabels.sort((a, b) => a.pct - b.pct);
-
-    // Anti-overlap: estimate widths, stagger into 2 rows
-    const LABEL_CHAR_PX = 6;
-    const LABEL_PAD_PX = 12;
-    const BAR_WIDTH_PX = 900; // approximate
-    const labelRowH = 28; // px per label row (price line + tag line)
-    for (const lbl of barLabels) {
-        const maxChars = Math.max(lbl.text.length, lbl.tag.length);
-        lbl.widthPct = ((maxChars * LABEL_CHAR_PX + LABEL_PAD_PX) / BAR_WIDTH_PX) * 100;
-        lbl.row = 0;
-    }
-    // Hide labels too close to price needle (±1.5%)
-    for (const lbl of barLabels) {
-        if (Math.abs(lbl.pct - pricePct) < 1.5 && !lbl.bold) lbl.hidden = true;
-    }
-    // Dedup: if two labels within 1.5%, hide the less important
-    for (let i = 0; i < barLabels.length; i++) {
-        if (barLabels[i].hidden) continue;
-        for (let j = i + 1; j < barLabels.length; j++) {
-            if (barLabels[j].hidden) continue;
-            if (Math.abs(barLabels[i].pct - barLabels[j].pct) < 1.5) {
-                if (barLabels[j].bold && !barLabels[i].bold) barLabels[i].hidden = true;
-                else barLabels[j].hidden = true;
+    labelsRow.sort((a, b) => a.strike - b.strike);
+    // Anti-overlap: multi-row greedy placement
+    // Each label has an estimated width in % units (~5% for short labels)
+    const MIN_PCT_GAP = 5;
+    const ROWS = [0, 18, 36]; // 3 possible vertical offsets
+    const rowLastPct = [[-999], [-999], [-999]]; // track last placed pct per row
+    const labelPcts = labelsRow.map(l => ({ ...l, pct: toPct(l.strike), offsetY: 0 }));
+    for (const lbl of labelPcts) {
+        let placed = false;
+        for (let r = 0; r < ROWS.length; r++) {
+            const lastPct = rowLastPct[r][rowLastPct[r].length - 1];
+            if (lbl.pct - lastPct >= MIN_PCT_GAP) {
+                lbl.offsetY = ROWS[r];
+                rowLastPct[r].push(lbl.pct);
+                placed = true;
+                break;
             }
         }
-    }
-    // 2-row stagger: check bounding boxes
-    const visibleLabels = barLabels.filter(l => !l.hidden);
-    const rowOcc = [[], []]; // track occupied ranges per row
-    for (const lbl of visibleLabels) {
-        const halfW = lbl.widthPct / 2 + 0.5;
-        const L = lbl.pct - halfW, R = lbl.pct + halfW;
-        const overlapR0 = rowOcc[0].some(o => L < o.r && R > o.l);
-        if (!overlapR0) {
-            lbl.row = 0;
-            rowOcc[0].push({ l: L, r: R });
-        } else {
-            lbl.row = 1;
-            rowOcc[1].push({ l: L, r: R });
+        if (!placed) {
+            // Force into least-congested row
+            lbl.offsetY = ROWS[2];
+            rowLastPct[2].push(lbl.pct);
         }
     }
-    const maxLabelRow = visibleLabels.reduce((mx, l) => Math.max(mx, l.row), 0);
-    const labelZoneHeight = (maxLabelRow + 1) * labelRowH + 2;
-
-    // Build label HTML
-    const barLabelsHtml = visibleLabels.map(l => {
-        let align;
-        if (l.pct < 4) align = `left:${l.pct}%;text-align:left`;
-        else if (l.pct > 96) align = `left:${l.pct}%;transform:translateX(-100%);text-align:right`;
-        else align = `left:${l.pct}%;transform:translateX(-50%);text-align:center`;
-        return `<div style="position:absolute;${align};top:${l.row * labelRowH}px;white-space:nowrap">
-            <div style="font-size:${l.bold ? 10 : 9}px;font-weight:${l.bold ? 800 : 600};color:${l.color};opacity:${l.bold ? 1 : 0.8};line-height:1.1">${l.text}</div>
-            <div style="font-size:8px;color:${l.color};opacity:0.5;line-height:1.1">${l.tag}</div>
+    const labelsRowHtml = labelPcts.map(l => {
+        return `<div style="position:absolute;left:${l.pct}%;transform:translateX(-50%);text-align:center;white-space:nowrap;top:${l.offsetY}px">
+            <div style="font-size:${l.primary ? 11 : 9}px;font-weight:${l.primary ? 800 : 600};color:${l.color};opacity:${l.primary ? 1 : 0.7}">${l.label}</div>
+            ${l.sub ? `<div style="font-size:8px;color:${l.color};opacity:0.6">${l.sub}</div>` : ''}
         </div>`;
     }).join('');
 
-    // ── Action hint ──
+    // ── Broken Wall Detection for action hints ──
     const bestBrokenCall = (d.brokenCallWalls || []).find(bw => bw.volumeConf === 'strong' || bw.volumeConf === 'moderate');
     const bestBrokenPut = (d.brokenPutWalls || []).find(bw => bw.volumeConf === 'strong' || bw.volumeConf === 'moderate');
     const hasBrokenWall = bestBrokenCall || bestBrokenPut;
 
-    let actionEntry = '', actionMeta = '';
+    // Action hint (single line, not on bar)
+    let actionHint = '';
     if (d.isLongGamma) {
         if (bestBrokenCall) {
-            actionEntry = `<span style="color:var(--green)">BUY</span> Retest <span style="color:var(--orange);font-weight:800">$${bestBrokenCall.strike}</span>`;
-            actionMeta = nearCallStrike ? `TP $${nearCallStrike}` : '';
-            if (bestBrokenCall.strike) actionMeta += ` · SL below $${bestBrokenCall.strike}`;
+            const retestStr = `<span style="color:var(--orange);font-weight:700">BUY RETEST $${bestBrokenCall.strike}</span>`;
+            const tpStr = nearCallStrike ? `→ <span style="color:var(--call-color);font-weight:700">TP $${nearCallStrike}</span>` : '';
+            actionHint = `${retestStr} ${tpStr}`;
         } else if (bestBrokenPut) {
-            actionEntry = `<span style="color:var(--red)">SELL</span> Retest <span style="color:var(--orange);font-weight:800">$${bestBrokenPut.strike}</span>`;
-            actionMeta = nearPutStrike ? `TP $${nearPutStrike}` : '';
-            if (bestBrokenPut.strike) actionMeta += ` · SL above $${bestBrokenPut.strike}`;
+            const retestStr = `<span style="color:var(--orange);font-weight:700">SELL RETEST $${bestBrokenPut.strike}</span>`;
+            const tpStr = nearPutStrike ? `→ <span style="color:var(--put-color);font-weight:700">TP $${nearPutStrike}</span>` : '';
+            actionHint = `${retestStr} ${tpStr}`;
         } else {
-            const parts = [];
-            if (nearPutStrike && !d.priceBelowPutWall) parts.push(`<span style="color:var(--green)">BUY</span> $${nearPutStrike}`);
-            if (nearCallStrike && !d.priceAboveCallWall) parts.push(`<span style="color:var(--red)">SELL</span> $${nearCallStrike}`);
-            actionEntry = parts.join(' <span style="color:var(--text-muted);opacity:0.4">│</span> ');
-            actionMeta = 'Fade between walls';
+            const sellAt = nearCallStrike && !d.priceAboveCallWall ? `<span style="color:var(--call-color);font-weight:700">SELL $${nearCallStrike}</span>` : '';
+            const buyAt = nearPutStrike && !d.priceBelowPutWall ? `<span style="color:var(--put-color);font-weight:700">BUY $${nearPutStrike}</span>` : '';
+            actionHint = [buyAt, sellAt].filter(Boolean).join(' <span style="color:var(--text-muted)">·····</span> ');
         }
     } else {
         if (bestBrokenCall) {
-            actionEntry = `<span style="color:var(--green)">BUY</span> Retest <span style="color:var(--orange);font-weight:800">$${bestBrokenCall.strike}</span> <span style="font-size:9px;opacity:0.7">(Breakout confirmed)</span>`;
-            actionMeta = nearCallStrike ? `TP $${nearCallStrike} · SL below $${bestBrokenCall.strike}` : '';
+            actionHint = `<span style="color:var(--orange);font-weight:700">BUY RETEST $${bestBrokenCall.strike}</span> (Breakout confirmed)`;
         } else if (bestBrokenPut) {
-            actionEntry = `<span style="color:var(--red)">SELL</span> Retest <span style="color:var(--orange);font-weight:800">$${bestBrokenPut.strike}</span> <span style="font-size:9px;opacity:0.7">(Breakdown confirmed)</span>`;
-            actionMeta = nearPutStrike ? `TP $${nearPutStrike} · SL above $${bestBrokenPut.strike}` : '';
+            actionHint = `<span style="color:var(--orange);font-weight:700">SELL RETEST $${bestBrokenPut.strike}</span> (Breakdown confirmed)`;
         } else {
-            const parts = [];
-            if (nearCallStrike && !d.priceAboveCallWall) parts.push(`ทะลุ $${nearCallStrike} → <span style="color:var(--green);font-weight:700">BUY 🚀</span>`);
-            if (nearPutStrike && !d.priceBelowPutWall) parts.push(`หลุด $${nearPutStrike} → <span style="color:var(--red);font-weight:700">SELL 💧</span>`);
-            actionEntry = parts.join(' <span style="color:var(--text-muted);opacity:0.4">│</span> ');
-            actionMeta = 'Wait for breakout';
+            const bko = nearCallStrike && !d.priceAboveCallWall ? `ทะลุ $${nearCallStrike} = <span style="color:var(--green);font-weight:700">BUY 🚀</span>` : '';
+            const bkd = nearPutStrike && !d.priceBelowPutWall ? `หลุด $${nearPutStrike} = <span style="color:var(--red);font-weight:700">SELL 💧</span>` : '';
+            actionHint = [bkd, bko].filter(Boolean).join(' <span style="color:var(--text-muted)">·····</span> ');
         }
     }
 
-    // Regime colors
-    const regimeGrad = d.isLongGamma
-        ? 'linear-gradient(90deg, rgba(255,197,110,.06) 0%, rgba(86,181,250,.03) 50%, rgba(92,224,240,.06) 100%)'
-        : 'linear-gradient(90deg, rgba(244,88,102,.06) 0%, rgba(255,255,255,.02) 50%, rgba(46,216,164,.06) 100%)';
-    const regimeBadge = d.isLongGamma
-        ? '<span style="color:var(--green);font-weight:700;font-size:11px">🔄 Long γ</span> <span style="color:var(--text-muted);font-size:10px">Fade</span>'
-        : '<span style="color:var(--red);font-weight:700;font-size:11px">🌊 Short γ</span> <span style="color:var(--text-muted);font-size:10px">Breakout</span>';
-    const actionBorderColor = (bestBrokenCall || bestBrokenPut) ? 'var(--orange)' : d.isLongGamma ? 'var(--green)' : 'var(--red)';
-    const actionBgColor = (bestBrokenCall || bestBrokenPut) ? 'rgba(255,171,64,0.06)' : d.isLongGamma ? 'rgba(46,216,164,0.06)' : 'rgba(244,88,102,0.06)';
-
     const rangeBarHtml = `
     <div style="padding:6px 0 8px 0;margin:4px 0 8px">
-        <!-- Row 1: Regime + Price + Range -->
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
-            <div>${regimeBadge}</div>
+        <!-- 3-col header: Support | Range | Resistance -->
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+            <div style="text-align:left">
+                <div style="font-size:9px;color:var(--put-color);font-weight:600;text-transform:uppercase;letter-spacing:.5px">◀ Support</div>
+                <div style="font-size:20px;font-weight:900;color:var(--put-color)">$${nearPutStrike || barLow}</div>
+                <div style="font-size:11px;color:var(--text-muted);font-weight:600">${nearPutDist < 999 ? nearPutDist.toFixed(0) + ' pts' : ''}</div>
+            </div>
             <div style="text-align:center">
-                <span style="font-size:20px;font-weight:900;color:white">$${d.uPrice.toFixed(1)}</span>
-                <span style="font-size:10px;color:var(--text-muted);margin-left:6px">Range: ${tradeRangePts} pts</span>
+                <div style="font-size:24px;font-weight:900;color:white">$${d.uPrice.toFixed(1)}</div>
+                <div style="font-size:11px;color:${d.tradeableRange < 30 ? 'var(--red)' : d.tradeableRange < 60 ? 'var(--orange)' : 'var(--text-muted)'};font-weight:700">Range: ${tradeRangePts} pts</div>
             </div>
-            <div style="font-size:9px;color:var(--text-muted)">
-                ${displayedPutWalls.length} Put · ${displayedCallWalls.length} Call
-            </div>
-        </div>
-
-        <!-- Row 2: Support ← BAR + labels → Resistance -->
-        <div style="display:flex;align-items:flex-start;gap:10px;margin-bottom:10px">
-            <!-- Support box -->
-            <div style="text-align:center;min-width:52px;padding-top:2px">
-                <div style="font-size:7px;color:var(--put-color);text-transform:uppercase;letter-spacing:0.5px;opacity:0.7">◀ Support</div>
-                <div style="font-size:14px;font-weight:800;color:var(--put-color)">$${nearPutStrike || '—'}</div>
-                <div style="font-size:9px;color:var(--text-muted)">${nearPutDist < 999 ? nearPutDist.toFixed(0) + 'p' : ''}</div>
-            </div>
-
-            <!-- BAR + Label zone -->
-            <div style="flex:1;position:relative">
-                <!-- The bar -->
-                <div style="position:relative;height:20px;background:${regimeGrad};border-radius:4px;overflow:visible;border:1px solid rgba(255,255,255,.06)">
-                    ${wallLinesHtml}
-                    ${structLinesHtml}
-                    <div style="position:absolute;left:${pricePct}%;top:-2px;bottom:-2px;width:3px;background:white;transform:translateX(-50%);z-index:6;border-radius:2px;box-shadow:0 0 6px rgba(255,255,255,.4)"></div>
-                </div>
-                <!-- Labels below bar (aligned to lines) -->
-                <div style="position:relative;height:${labelZoneHeight}px;margin-top:3px">
-                    ${barLabelsHtml}
-                </div>
-            </div>
-
-            <!-- Resistance box -->
-            <div style="text-align:center;min-width:52px;padding-top:2px">
-                <div style="font-size:7px;color:var(--call-color);text-transform:uppercase;letter-spacing:0.5px;opacity:0.7">Resist ▶</div>
-                <div style="font-size:14px;font-weight:800;color:var(--call-color)">$${nearCallStrike || '—'}</div>
-                <div style="font-size:9px;color:var(--text-muted)">${nearCallDist < 999 ? nearCallDist.toFixed(0) + 'p' : ''}</div>
+            <div style="text-align:right">
+                <div style="font-size:9px;color:var(--call-color);font-weight:600;text-transform:uppercase;letter-spacing:.5px">Resistance ▶</div>
+                <div style="font-size:20px;font-weight:900;color:var(--call-color)">$${nearCallStrike || barHigh}</div>
+                <div style="font-size:11px;color:var(--text-muted);font-weight:600">${nearCallDist < 999 ? nearCallDist.toFixed(0) + ' pts' : ''}</div>
             </div>
         </div>
 
-        <!-- Row 3: Action card -->
-        <div style="padding:6px 12px;background:${actionBgColor};border-radius:6px;border-left:3px solid ${actionBorderColor}">
-            <div style="font-size:12px;font-weight:700;color:white">${actionEntry || '<span style="color:var(--text-muted)">No clear setup</span>'}</div>
-            ${actionMeta ? `<div style="font-size:10px;color:var(--text-muted);margin-top:2px">${actionMeta}</div>` : ''}
+        <!-- THE BAR (clean — lines only, no text) -->
+        <div style="position:relative;height:32px;background:${regimeGrad};border-radius:6px;overflow:visible;border:1px solid rgba(255,255,255,.08)">
+            <div style="position:absolute;left:0;top:0;height:100%;width:${pricePct}%;background:linear-gradient(to right,rgba(255,197,110,.05),rgba(255,255,255,.03));border-radius:6px 0 0 6px"></div>
+            ${wallLinesHtml}
+            ${structLinesHtml}
+            <!-- Price needle with futures label -->
+            <div style="position:absolute;left:${pricePct}%;top:-4px;bottom:-4px;width:3px;background:white;transform:translateX(-50%);z-index:6;border-radius:2px;box-shadow:0 0 8px rgba(255,255,255,.5)"></div>
+            <div style="position:absolute;left:${pricePct}%;top:-22px;transform:translateX(-50%);z-index:7;white-space:nowrap">
+                <div style="font-size:11px;font-weight:800;color:white;background:rgba(30,30,40,.85);padding:1px 6px;border-radius:4px;border:1px solid rgba(255,255,255,.3);text-shadow:0 0 4px rgba(255,255,255,.4)">$${d.uPrice.toFixed(1)}</div>
+            </div>
+        </div>
+
+        <!-- Labels row (below bar, clean horizontal) -->
+        <div style="position:relative;height:56px;margin-top:4px">
+            ${labelsRowHtml}
+        </div>
+
+        <!-- Action hint + regime -->
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-top:2px">
+            <div style="font-size:11px">
+                ${d.isLongGamma
+            ? '<span style="color:var(--green);font-weight:700">🔄 Long γ</span> <span style="color:var(--text-muted)">Wall = Fade</span>'
+            : '<span style="color:var(--red);font-weight:700">🌊 Short γ</span> <span style="color:var(--text-muted)">Wall = Breakout</span>'
+        }
+            </div>
+            <div style="font-size:12px">${actionHint}</div>
         </div>
     </div>`;
 
@@ -1821,8 +1802,9 @@ function renderAnalysisTab() {
     const gmStr = d.risk.gammaMean ? fmtCyan(d.risk.gammaMean.toFixed(0)) : '';
 
     // Build wall chain: "→ $5250 (234) → $5300 (1,139)"
-    const callChain = d.callWalls.slice(1, 3).map(w => `→ ${fmtC(w.strike)} (${w.oi.toLocaleString()})`).join(' ');
-    const putChain = d.putWalls.slice(1, 3).map(w => `→ ${fmtP(w.strike)} (${w.oi.toLocaleString()})`).join(' ');
+    const wsc = d.wallSliceCount || 3;
+    const callChain = d.callWalls.slice(1, wsc).map(w => `→ ${fmtC(w.strike)} (${w.oi.toLocaleString()})`).join(' ');
+    const putChain = d.putWalls.slice(1, wsc).map(w => `→ ${fmtP(w.strike)} (${w.oi.toLocaleString()})`).join(' ');
 
     // Tradeable range info
     const trStr = d.tradeableRange < 999 ? `<span style="font-size:12px;color:var(--text-muted)">📊 Tradeable Range: ${d.tradeableRange.toFixed(0)} pts</span>` : '';
@@ -1836,6 +1818,28 @@ function renderAnalysisTab() {
     const noEdgeZone = callProx > 0.7 && putProx > 0.7;
     const trendUp = d.biasScore > 0 || d.priceBelowMP;
     const trendDown = d.biasScore < 0 || d.priceAboveMP;
+
+    // ── STYLE-AWARE CONTEXT ──
+    const styleCtx = {
+        daytrade: {
+            scalpLabel: 'SCALP', holdWarn: '❌ ห้ามถือข้ามคืน!',
+            sizeHint: 'Size เล็ก — scalp เท่านั้น', confirmTf: 'แท่ง 5m/15m',
+            holdDuration: 'ภายในวัน', entryMethod: 'Pin Bar / Reject ที่ Wall',
+            noChase: 'ถ้าตั้ง TP ที่กลางแล้วราคายังไม่ถึง → ปิด อย่าโลภ',
+        },
+        swing: {
+            scalpLabel: 'SWING', holdWarn: '⏳ ถือ 2-5 วัน ได้ — ใช้ Daily Close ยืนยัน',
+            sizeHint: 'Size ปกติ — ถือ 2-5 วัน', confirmTf: 'Daily Close',
+            holdDuration: '2-5 วัน', entryMethod: 'Daily Close เหนือ/ใต้ Wall',
+            noChase: 'TP ที่ Wall ถัดไป — ไม่ต้องรีบปิด ถ้า Daily ยังไม่ Reject',
+        },
+        position: {
+            scalpLabel: 'POSITION', holdWarn: '📅 ถือ 1-4 สัปดาห์ — ใช้ Weekly Close ยืนยัน',
+            sizeHint: 'Full size — ถือ 1-4 สัปดาห์', confirmTf: 'Weekly Close',
+            holdDuration: '1-4 สัปดาห์', entryMethod: 'Weekly Close เหนือ/ใต้ Major Wall',
+            noChase: 'TP ที่ Major Wall ถัดไป — ถือยาว ปิดเมื่อ Weekly Reject',
+        },
+    }[state.tradingStyle];
 
     let actionHtml;
     if (d.risk.noMansLand) {
@@ -1881,8 +1885,9 @@ function renderAnalysisTab() {
         if (d.putWalls.length > 0) actionHtml += ` | TP ที่ ${fmtP(d.putWalls[0].strike)} ${putChain}`;
         actionHtml += `<div style="font-size:12px;color:var(--text-muted);margin-top:6px">🔥 Wall ถูกทะลุแล้ว — Put Wall เดิมกลายเป็น Resistance | ห้าม Buy สวนทาง!</div>`;
     } else if (d.isLongGamma) {
-        // SL buffer scales with volatility: ~40% of 1-day Expected Range, min $10
-        const slBuffer = Math.max(10, Math.round(erRef * 0.4));
+        // SL buffer scales with volatility and trading style
+        const slMul = STYLE_CONFIG[state.tradingStyle].slMul;
+        const slBuffer = Math.max(10, Math.round(erRef * slMul));
         const nrStrike = d.nearestCall ? d.nearestCall.strike : d.maxCall.strike;
         const nsStrike = d.nearestPut ? d.nearestPut.strike : d.maxPut.strike;
         // Next walls beyond nearest (for breakout TP targets)
@@ -1918,7 +1923,7 @@ function renderAnalysisTab() {
                 actionHtml += `<div style="font-size:12px;color:var(--green);font-weight:800;margin-bottom:8px">⬆️ BUY RETEST (Wall เดิมเป็น Support ใหม่)</div>`;
                 actionHtml += `<div style="font-size:13px;color:var(--text-primary);line-height:2.2">`;
                 actionHtml += `<span style="color:var(--text-muted);font-size:11px">❶ รอราคา Pullback:</span> กลับมาแตะ ${bwStr}<br>`;
-                actionHtml += `<span style="color:var(--text-muted);font-size:11px">❷ Confirm:</span> แท่งเขียว Reject / Pin Bar ที่ ${bwStr} (Wall เดิมต้านให้)<br>`;
+                actionHtml += `<span style="color:var(--text-muted);font-size:11px">❷ Confirm:</span> ${styleCtx.entryMethod} ที่ ${bwStr} (Wall เดิมต้านให้)<br>`;
                 actionHtml += `<span style="color:var(--text-muted);font-size:11px">❸ Entry:</span> Buy ที่ ${bwStr} หรือเหนือเล็กน้อย<br>`;
                 actionHtml += `<span style="color:var(--text-muted);font-size:11px">❹ SL:</span> <span style="color:var(--red);font-weight:700">$${(bestBrokenCall.strike - slBuffer).toFixed(0)}</span> (ใต้ Wall ${slBuffer} pts — ถ้าหลุดกลับแปลว่า fake break)<br>`;
                 actionHtml += `<span style="color:var(--text-muted);font-size:11px">❺ TP:</span> ${tpTarget}${tpDist > 0 ? ` <span style="color:var(--text-muted)">(+${tpDist.toFixed(0)} pts)</span>` : ''}`;
@@ -1956,7 +1961,7 @@ function renderAnalysisTab() {
                 actionHtml += `<div style="font-size:12px;color:var(--red);font-weight:800;margin-bottom:8px">⬇️ SELL RETEST (Wall เดิมเป็น Resistance ใหม่)</div>`;
                 actionHtml += `<div style="font-size:13px;color:var(--text-primary);line-height:2.2">`;
                 actionHtml += `<span style="color:var(--text-muted);font-size:11px">❶ รอราคา Bounce:</span> กลับมาแตะ ${bwStr}<br>`;
-                actionHtml += `<span style="color:var(--text-muted);font-size:11px">❷ Confirm:</span> แท่งแดง Reject / Pin Bar ที่ ${bwStr} (Wall เดิมกดให้)<br>`;
+                actionHtml += `<span style="color:var(--text-muted);font-size:11px">❷ Confirm:</span> ${styleCtx.entryMethod} ที่ ${bwStr} (Wall เดิมกดให้)<br>`;
                 actionHtml += `<span style="color:var(--text-muted);font-size:11px">❸ Entry:</span> Sell ที่ ${bwStr} หรือใต้เล็กน้อย<br>`;
                 actionHtml += `<span style="color:var(--text-muted);font-size:11px">❹ SL:</span> <span style="color:var(--red);font-weight:700">$${(bestBrokenPut.strike + slBuffer).toFixed(0)}</span> (เหนือ Wall ${slBuffer} pts — ถ้าทะลุกลับแปลว่า fake break)<br>`;
                 actionHtml += `<span style="color:var(--text-muted);font-size:11px">❺ TP:</span> ${tpTarget}${tpDist > 0 ? ` <span style="color:var(--text-muted)">(-${tpDist.toFixed(0)} pts)</span>` : ''}`;
@@ -1987,7 +1992,7 @@ function renderAnalysisTab() {
             actionHtml += `<div style="flex:1;min-width:200px;padding:12px 14px;background:rgba(38,166,154,.08);border-radius:10px;border:1px solid rgba(38,166,154,.25)">`;
             actionHtml += `<div style="font-size:11px;color:var(--green);font-weight:800;margin-bottom:6px">🚀 BREAKOUT LONG <span style="font-size:10px;color:var(--text-muted);font-weight:400">(รอทะลุก่อนเข้า)</span></div>`;
             actionHtml += `<div style="font-size:13px;color:var(--text-primary);line-height:2">`;
-            actionHtml += `Trigger: ราคาทะลุ + ยืนเหนือ ${nrStr}<br>`;
+            actionHtml += `Trigger: ราคาทะลุ + ${styleCtx.confirmTf} เหนือ ${nrStr}<br>`;
             actionHtml += `Entry: Retest ${nrStr} เป็น Support<br>`;
             actionHtml += `SL: $${(nrStrike - slBuffer).toFixed(0)} (ใต้ Wall)<br>`;
             actionHtml += `TP₁: ${nextCallWall ? fmtC(nextCallWall.strike) : (d.callWalls.length > 0 ? fmtC(d.callWalls[d.callWalls.length - 1].strike) : nrStr)}`;
@@ -1997,17 +2002,17 @@ function renderAnalysisTab() {
             actionHtml += `</div>`;
             // Scalp Short (fade the wall)
             actionHtml += `<div style="flex:1;min-width:200px;padding:12px 14px;background:rgba(239,83,80,.06);border-radius:10px;border:1px solid rgba(239,83,80,.15)">`;
-            actionHtml += `<div style="font-size:11px;color:var(--red);font-weight:800;margin-bottom:6px">🎯 SCALP SHORT <span style="font-size:10px;color:var(--text-muted);font-weight:400">(ชน Wall แล้วเด้ง)</span></div>`;
+            actionHtml += `<div style="font-size:11px;color:var(--red);font-weight:800;margin-bottom:6px">🎯 ${styleCtx.scalpLabel} SHORT <span style="font-size:10px;color:var(--text-muted);font-weight:400">(ชน Wall แล้วเด้ง)</span></div>`;
             actionHtml += `<div style="font-size:13px;color:var(--text-primary);line-height:2">`;
             actionHtml += `Entry: ${nrStr} (ที่ Wall)<br>`;
             actionHtml += `SL: $${(nrStrike + slBuffer).toFixed(0)}<br>`;
             // Short TP ต้องต่ำกว่า Entry (nrStrike)
             const scalpShortTP = (d.mpStrike && d.mpStrike < nrStrike) ? mpStr
                 : (d.risk.gammaMean && d.risk.gammaMean < nrStrike) ? gmStr
-                : nsStr;
+                    : nsStr;
             actionHtml += `TP: ${scalpShortTP}`;
             actionHtml += `</div>`;
-            actionHtml += `<div style="font-size:11px;color:var(--orange);margin-top:6px;font-weight:600">⚠️ Size เล็ก — สวนเทรน scalp เท่านั้น</div>`;
+            actionHtml += `<div style="font-size:11px;color:var(--orange);margin-top:6px;font-weight:600">⚠️ ${styleCtx.sizeHint}</div>`;
             actionHtml += `</div></div>`;
             if (trStr) actionHtml += `<div style="margin-top:6px">${trStr}</div>`;
 
@@ -2018,7 +2023,7 @@ function renderAnalysisTab() {
             actionHtml += `<div style="flex:1;min-width:200px;padding:12px 14px;background:rgba(239,83,80,.08);border-radius:10px;border:1px solid rgba(239,83,80,.25)">`;
             actionHtml += `<div style="font-size:11px;color:var(--red);font-weight:800;margin-bottom:6px">💧 BREAKDOWN SHORT <span style="font-size:10px;color:var(--text-muted);font-weight:400">(รอหลุดก่อนเข้า)</span></div>`;
             actionHtml += `<div style="font-size:13px;color:var(--text-primary);line-height:2">`;
-            actionHtml += `Trigger: ราคาหลุด + อยู่ใต้ ${nsStr}<br>`;
+            actionHtml += `Trigger: ราคาหลุด + ${styleCtx.confirmTf} ใต้ ${nsStr}<br>`;
             actionHtml += `Entry: Retest ${nsStr} เป็น Resistance<br>`;
             actionHtml += `SL: $${(nsStrike + slBuffer).toFixed(0)} (เหนือ Wall)<br>`;
             actionHtml += `TP₁: ${nextPutWall ? fmtP(nextPutWall.strike) : (d.putWalls.length > 0 ? fmtP(d.putWalls[d.putWalls.length - 1].strike) : nsStr)}`;
@@ -2028,17 +2033,17 @@ function renderAnalysisTab() {
             actionHtml += `</div>`;
             // Scalp Long (bounce from wall)
             actionHtml += `<div style="flex:1;min-width:200px;padding:12px 14px;background:rgba(38,166,154,.06);border-radius:10px;border:1px solid rgba(38,166,154,.15)">`;
-            actionHtml += `<div style="font-size:11px;color:var(--green);font-weight:800;margin-bottom:6px">🎯 SCALP LONG <span style="font-size:10px;color:var(--text-muted);font-weight:400">(ชน Wall แล้วเด้ง)</span></div>`;
+            actionHtml += `<div style="font-size:11px;color:var(--green);font-weight:800;margin-bottom:6px">🎯 ${styleCtx.scalpLabel} LONG <span style="font-size:10px;color:var(--text-muted);font-weight:400">(ชน Wall แล้วเด้ง)</span></div>`;
             actionHtml += `<div style="font-size:13px;color:var(--text-primary);line-height:2">`;
             actionHtml += `Entry: ${nsStr} (ที่ Wall)<br>`;
             actionHtml += `SL: $${(nsStrike - slBuffer).toFixed(0)}<br>`;
             // Long TP ต้องสูงกว่า Entry (nsStrike)
             const scalpLongTP = (d.mpStrike && d.mpStrike > nsStrike) ? mpStr
                 : (d.risk.gammaMean && d.risk.gammaMean > nsStrike) ? gmStr
-                : nrStr;
+                    : nrStr;
             actionHtml += `TP: ${scalpLongTP}`;
             actionHtml += `</div>`;
-            actionHtml += `<div style="font-size:11px;color:var(--orange);margin-top:6px;font-weight:600">⚠️ Size เล็ก — สวนเทรน scalp เท่านั้น</div>`;
+            actionHtml += `<div style="font-size:11px;color:var(--orange);margin-top:6px;font-weight:600">⚠️ ${styleCtx.sizeHint}</div>`;
             actionHtml += `</div></div>`;
             if (trStr) actionHtml += `<div style="margin-top:6px">${trStr}</div>`;
 
@@ -2076,13 +2081,13 @@ function renderAnalysisTab() {
             actionHtml += `<div style="font-size:12px;color:var(--red);font-weight:800;margin-bottom:8px">⬇️ SELL ที่ Call Wall (ถึงข้างบน → ขาย)</div>`;
             actionHtml += `<div style="font-size:13px;color:var(--text-primary);line-height:2.2">`;
             actionHtml += `<span style="color:var(--text-muted);font-size:11px">❶ รอราคาแตะ:</span> ${nrStr}<br>`;
-            actionHtml += `<span style="color:var(--text-muted);font-size:11px">❷ Confirm:</span> แท่งแดง Reject / Pin Bar / Doji ที่ Wall<br>`;
+            actionHtml += `<span style="color:var(--text-muted);font-size:11px">❷ Confirm:</span> ${styleCtx.entryMethod}<br>`;
             actionHtml += `<span style="color:var(--text-muted);font-size:11px">❸ Entry:</span> Sell ที่ ${nrStr} (หรือรอ Reject ก่อน)<br>`;
             actionHtml += `<span style="color:var(--text-muted);font-size:11px">❹ SL:</span> <span style="color:var(--red);font-weight:700">$${(nrStrike + slBuffer).toFixed(0)}</span> (เหนือ Wall ${slBuffer} pts)<br>`;
             // Fade Short TP ต้องต่ำกว่า Entry (nrStrike)
             const fadeShortTP = (d.mpStrike && d.mpStrike < nrStrike) ? mpStr
                 : (d.risk.gammaMean && d.risk.gammaMean < nrStrike) ? gmStr
-                : nsStr;
+                    : nsStr;
             actionHtml += `<span style="color:var(--text-muted);font-size:11px">❺ TP₁:</span> ${fadeShortTP} <span style="color:var(--text-muted)">(กลาง Range)</span>`;
             actionHtml += ` | <span style="color:var(--text-muted);font-size:11px">TP₂:</span> ${nsStr} <span style="color:var(--text-muted)">(Wall ล่าง)</span>`;
             actionHtml += `</div></div>`;
@@ -2092,13 +2097,13 @@ function renderAnalysisTab() {
             actionHtml += `<div style="font-size:12px;color:var(--green);font-weight:800;margin-bottom:8px">⬆️ BUY ที่ Put Wall (ถึงข้างล่าง → ซื้อ)</div>`;
             actionHtml += `<div style="font-size:13px;color:var(--text-primary);line-height:2.2">`;
             actionHtml += `<span style="color:var(--text-muted);font-size:11px">❶ รอราคาแตะ:</span> ${nsStr}<br>`;
-            actionHtml += `<span style="color:var(--text-muted);font-size:11px">❷ Confirm:</span> แท่งเขียว Reject / Pin Bar / Doji ที่ Wall<br>`;
+            actionHtml += `<span style="color:var(--text-muted);font-size:11px">❷ Confirm:</span> ${styleCtx.entryMethod}<br>`;
             actionHtml += `<span style="color:var(--text-muted);font-size:11px">❸ Entry:</span> Buy ที่ ${nsStr} (หรือรอ Reject ก่อน)<br>`;
             actionHtml += `<span style="color:var(--text-muted);font-size:11px">❹ SL:</span> <span style="color:var(--red);font-weight:700">$${(nsStrike - slBuffer).toFixed(0)}</span> (ใต้ Wall ${slBuffer} pts)<br>`;
             // Fade Long TP ต้องสูงกว่า Entry (nsStrike)
             const fadeLongTP = (d.mpStrike && d.mpStrike > nsStrike) ? mpStr
                 : (d.risk.gammaMean && d.risk.gammaMean > nsStrike) ? gmStr
-                : nrStr;
+                    : nrStr;
             actionHtml += `<span style="color:var(--text-muted);font-size:11px">❺ TP₁:</span> ${fadeLongTP} <span style="color:var(--text-muted)">(กลาง Range)</span>`;
             actionHtml += ` | <span style="color:var(--text-muted);font-size:11px">TP₂:</span> ${nrStr} <span style="color:var(--text-muted)">(Wall บน)</span>`;
             actionHtml += `</div></div></div>`;
@@ -2111,7 +2116,7 @@ function renderAnalysisTab() {
             actionHtml += `✅ <b>รอแท่ง Reject</b> ก่อนเข้า — Pin Bar / Doji / Volume Spike ที่ Wall<br>`;
             actionHtml += `✅ TP กลาง Range (หรือ Max Pain) ก่อน แล้วค่อยเลื่อนไป Wall ตรงข้าม<br>`;
             actionHtml += `<span style="color:var(--red);font-weight:700">❌ ห้ามไล่ตามฆาก Breakout!</span> Long γ = Fake Breakout สูง ราคาจะเด้งกลับ<br>`;
-            actionHtml += `<span style="color:var(--red);font-weight:700">❌ ห้ามถือข้ามคืน!</span> ถ้าตั้ง TP ที่กลางแล้วราคายังไม่ถึง → ปิด อย่าโลภ`;
+            actionHtml += `<span style="color:var(--red);font-weight:700">${styleCtx.holdWarn}</span> ${styleCtx.noChase}`;
             actionHtml += `</div></div>`;
 
             if (trStr) actionHtml += `<div style="margin-top:6px">${trStr}</div>`;
@@ -2121,7 +2126,7 @@ function renderAnalysisTab() {
         const dir = d.priceBelowMP ? 'ลง' : d.priceAboveMP ? 'ขึ้น' : '';
         const nrStrikeShort = d.nearestCall ? d.nearestCall.strike : d.maxCall.strike;
         const nsStrikeShort = d.nearestPut ? d.nearestPut.strike : d.maxPut.strike;
-        const slBufShort = Math.max(10, Math.round(erRef * 0.4));
+        const slBufShort = Math.max(10, Math.round(erRef * STYLE_CONFIG[state.tradingStyle].slMul));
         const biasUp = d.biasScore > 0 || d.priceBelowMP;
         const biasDown = d.biasScore < 0 || d.priceAboveMP;
 
@@ -2159,7 +2164,7 @@ function renderAnalysisTab() {
         actionHtml += `<div style="flex:1;min-width:220px;padding:14px 16px;background:rgba(38,166,154,.06);border-radius:12px;border:1px solid rgba(38,166,154,.2)">`;
         actionHtml += `<div style="font-size:12px;color:var(--green);font-weight:800;margin-bottom:8px">🚀 BREAKOUT LONG</div>`;
         actionHtml += `<div style="font-size:13px;color:var(--text-primary);line-height:2">`;
-        actionHtml += `<span style="color:var(--text-muted);font-size:11px">❶ Trigger:</span> ราคาทะลุ + <b>ปิดแท่งเหนือ</b> ${nrStr}<br>`;
+        actionHtml += `<span style="color:var(--text-muted);font-size:11px">❶ Trigger:</span> ราคาทะลุ + <b>${styleCtx.confirmTf} เหนือ</b> ${nrStr}<br>`;
         actionHtml += `<span style="color:var(--text-muted);font-size:11px">❷ Confirm:</span> Volume แท่ง Breakout > ค่าเฉลี่ย<br>`;
         actionHtml += `<span style="color:var(--text-muted);font-size:11px">❸ Entry:</span> Buy ที่ Retest ${nrStr} เป็น Support<br>`;
         actionHtml += `<span style="color:var(--text-muted);font-size:11px">❹ SL:</span> <span style="color:var(--red)">$${(nrStrikeShort - slBufShort).toFixed(0)}</span> (ใต้ Wall ${slBufShort} pts)<br>`;
@@ -2175,7 +2180,7 @@ function renderAnalysisTab() {
         actionHtml += `<div style="flex:1;min-width:220px;padding:14px 16px;background:rgba(239,83,80,.06);border-radius:12px;border:1px solid rgba(239,83,80,.2)">`;
         actionHtml += `<div style="font-size:12px;color:var(--red);font-weight:800;margin-bottom:8px">💧 BREAKDOWN SHORT</div>`;
         actionHtml += `<div style="font-size:13px;color:var(--text-primary);line-height:2">`;
-        actionHtml += `<span style="color:var(--text-muted);font-size:11px">❶ Trigger:</span> ราคาหลุด + <b>ปิดแท่งใต้</b> ${nsStr}<br>`;
+        actionHtml += `<span style="color:var(--text-muted);font-size:11px">❶ Trigger:</span> ราคาหลุด + <b>${styleCtx.confirmTf} ใต้</b> ${nsStr}<br>`;
         actionHtml += `<span style="color:var(--text-muted);font-size:11px">❷ Confirm:</span> Volume แท่ง Breakdown > ค่าเฉลี่ย<br>`;
         actionHtml += `<span style="color:var(--text-muted);font-size:11px">❸ Entry:</span> Sell ที่ Retest ${nsStr} เป็น Resistance<br>`;
         actionHtml += `<span style="color:var(--text-muted);font-size:11px">❹ SL:</span> <span style="color:var(--red)">$${(nsStrikeShort + slBufShort).toFixed(0)}</span> (เหนือ Wall ${slBufShort} pts)<br>`;
@@ -2561,6 +2566,7 @@ function renderAnalysisTab() {
                 <div style="display:inline-flex;padding:6px 16px;border-radius:20px;font-size:15px;font-weight:900;letter-spacing:.5px;background:${bColor}1a;border:1px solid ${bColor}55;color:${bColor}">${bText}</div>
                 <div style="font-size:26px;font-weight:900;color:#ffffff">$${d.uPrice.toFixed(1)}</div>
                 <div style="font-size:13px;color:var(--text-secondary);font-weight:700">${d.dte.toFixed(1)} DTE</div>
+                <div style="display:inline-flex;padding:3px 10px;border-radius:12px;font-size:11px;font-weight:700;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);color:var(--text-muted)">${styleCfg.icon} ${styleCfg.label}${styleFallback ? ' <span style="color:var(--orange)">⚠ Fallback</span>' : ''}</div>
                 <div style="margin-left:auto;font-size:14px;font-weight:800;color:${d.risk.riskColor}">${d.risk.riskIcon} Risk ${d.risk.totalScore}/100</div>
             </div>
             <div style="font-size:14px;color:var(--text-secondary);margin-bottom:4px;line-height:1.6">${bDesc}</div>
