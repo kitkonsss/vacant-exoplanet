@@ -526,6 +526,85 @@ function buildBrokenEntry(clusterStrikes, rep, oiKey, side, dist, intradayStrike
     };
 }
 
+// ========== TRADE SETUP BUILDER (R:R Engine) ==========
+// Builds a proper trade setup with directional TP filtering, volatility-scaled SL, and R:R grading
+// direction: 'long' or 'short'
+// entryStrike: the wall/level for entry
+// allLevels: array of { strike, label, type } — all relevant levels (walls, maxpain, gamma mean, etc.)
+// er1Day: expected 1-day range in $ terms
+// dte: days to expiration (for SL scaling)
+// walls: the put/call walls arrays for SL placement behind next wall
+function buildTradeSetup(direction, entryStrike, allLevels, er1Day, dte, putWalls, callWalls) {
+    const isLong = direction === 'long';
+
+    // ── SL: place behind the next significant wall on the WRONG side ──
+    // For LONG: SL = nearest put wall BELOW entry - buffer
+    // For SHORT: SL = nearest call wall ABOVE entry + buffer
+    const slBuffer = Math.max(er1Day * 0.3, 8); // volatility-scaled, min $8
+
+    let slStrike;
+    if (isLong) {
+        // Find the nearest put wall BELOW entry (not AT entry)
+        const wallsBelow = putWalls.filter(w => w.strike < entryStrike - 5).sort((a, b) => b.strike - a.strike);
+        if (wallsBelow.length > 0) {
+            slStrike = wallsBelow[0].strike - slBuffer;
+        } else {
+            // Fallback: use ER-based SL
+            const slRange = Math.max(er1Day * 0.7, 15);
+            slStrike = entryStrike - slRange;
+        }
+    } else {
+        // Find the nearest call wall ABOVE entry (not AT entry)
+        const wallsAbove = callWalls.filter(w => w.strike > entryStrike + 5).sort((a, b) => a.strike - b.strike);
+        if (wallsAbove.length > 0) {
+            slStrike = wallsAbove[0].strike + slBuffer;
+        } else {
+            const slRange = Math.max(er1Day * 0.7, 15);
+            slStrike = entryStrike + slRange;
+        }
+    }
+    slStrike = Math.round(slStrike);
+
+    // ── TP: collect all levels on the CORRECT side, sorted by distance ──
+    const tpCandidates = [];
+    for (const lv of allLevels) {
+        if (isLong && lv.strike > entryStrike + 3) {
+            tpCandidates.push({ ...lv, dist: lv.strike - entryStrike });
+        } else if (!isLong && lv.strike < entryStrike - 3) {
+            tpCandidates.push({ ...lv, dist: entryStrike - lv.strike });
+        }
+    }
+    tpCandidates.sort((a, b) => a.dist - b.dist);
+
+    // Take top 3 TPs
+    const tps = tpCandidates.slice(0, 3);
+
+    // ── R:R Calculation ──
+    const risk = Math.abs(entryStrike - slStrike);
+    const reward = tps.length > 0 ? tps[0].dist : 0;
+    const rr = risk > 0 ? reward / risk : 0;
+
+    // ── Quality Grade ──
+    let grade, gradeColor, gradeIcon, gradeLabel;
+    if (rr >= 2.0) { grade = 'A'; gradeColor = 'var(--green)'; gradeIcon = '🟢'; gradeLabel = 'ดี'; }
+    else if (rr >= 1.5) { grade = 'B'; gradeColor = '#ffd54f'; gradeIcon = '🟡'; gradeLabel = 'OK'; }
+    else if (rr >= 1.0) { grade = 'C'; gradeColor = 'var(--orange)'; gradeIcon = '🟠'; gradeLabel = 'ระวัง'; }
+    else { grade = 'F'; gradeColor = 'var(--red)'; gradeIcon = '🔴'; gradeLabel = 'ข้าม'; }
+
+    // ── Trade Type Label by DTE ──
+    let tradeType, tradeTypeIcon;
+    if (dte <= 2) { tradeType = 'DAY TRADE'; tradeTypeIcon = '🎯'; }
+    else if (dte <= 10) { tradeType = 'SWING'; tradeTypeIcon = '🌟'; }
+    else { tradeType = 'POSITION'; tradeTypeIcon = '📈'; }
+
+    return {
+        direction, entryStrike, slStrike, tps, risk, reward, rr,
+        grade, gradeColor, gradeIcon, gradeLabel,
+        tradeType, tradeTypeIcon,
+        isViable: rr >= 1.0
+    };
+}
+
 // ========== BREAKDOWN RISK SCORE (0-100) ==========
 function calcBreakdownRisk(oiStrikes, intradayStrikes, uPrice, dte, gexFlipStrike, er1Day) {
     const components = {
@@ -1786,7 +1865,7 @@ function renderAnalysisTab() {
         </div>
     </div>`;
 
-    // ── ACTION LINE (Day-Trade Calibrated, Multi-Wall) ──
+    // ── ACTION LINE (R:R Engine, Multi-Wall) ──
     // Helper: format wall strike colored
     const fmtC = (strike) => `<span style="color:var(--call-color);font-weight:700">$${strike}</span>`;
     const fmtP = (strike) => `<span style="color:var(--put-color);font-weight:700">$${strike}</span>`;
@@ -1798,8 +1877,6 @@ function renderAnalysisTab() {
     const nsStr = d.nearestPut ? fmtP(d.nearestPut.strike) : fmtP(d.maxPut.strike);
     const nrDist = d.nearestCall ? d.nearestCall.dist : d.distToCallWall;
     const nsDist = d.nearestPut ? d.nearestPut.dist : d.distToPutWall;
-    const mpStr = d.mpStrike ? fmtPink(d.mpStrike) : '';
-    const gmStr = d.risk.gammaMean ? fmtCyan(d.risk.gammaMean.toFixed(0)) : '';
 
     // Build wall chain: "→ $5250 (234) → $5300 (1,139)"
     const wsc = d.wallSliceCount || 3;
@@ -1841,6 +1918,80 @@ function renderAnalysisTab() {
         },
     }[state.tradingStyle];
 
+    // ── Collect ALL levels for TP candidate pool ──
+    const allSetupLevels = [];
+    // Call walls as levels
+    for (const w of d.callWalls) {
+        allSetupLevels.push({ strike: w.strike, label: `Call Wall (${w.oi.toLocaleString()})`, type: 'call-wall' });
+    }
+    // Put walls as levels
+    for (const w of d.putWalls) {
+        allSetupLevels.push({ strike: w.strike, label: `Put Wall (${w.oi.toLocaleString()})`, type: 'put-wall' });
+    }
+    // Max Pain
+    if (d.mpStrike) {
+        allSetupLevels.push({ strike: d.mpStrike, label: 'Max Pain', type: 'maxpain' });
+    }
+    // Gamma Mean
+    if (d.risk.gammaMean) {
+        allSetupLevels.push({ strike: +d.risk.gammaMean.toFixed(0), label: 'Gamma Mean', type: 'gamma-mean' });
+    }
+    // GEX Flip
+    if (d.gexResult.flipStrike) {
+        allSetupLevels.push({ strike: d.gexResult.flipStrike, label: 'GEX Flip', type: 'gex-flip' });
+    }
+
+    // ── Render helper for a single setup card ──
+    const renderSetupCard = (setup, borderColor, bgColor) => {
+        const isLong = setup.direction === 'long';
+        const dirLabel = isLong ? 'LONG' : 'SHORT';
+        const dirColor = isLong ? 'var(--green)' : 'var(--red)';
+        const dirBg = isLong ? 'rgba(38,166,154,.06)' : 'rgba(239,83,80,.06)';
+        const dirBorder = isLong ? 'rgba(38,166,154,.15)' : 'rgba(239,83,80,.15)';
+
+        let html = `<div style="flex:1;min-width:240px;padding:12px 16px;background:${dirBg};border-radius:10px;border:1px solid ${dirBorder}">`;
+
+        // Header with trade type + R:R badge
+        html += `<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">`;
+        html += `<div style="font-size:11px;color:var(--text-muted);font-weight:700">${setup.tradeTypeIcon} ${setup.tradeType} ${dirLabel}</div>`;
+        html += `<div style="font-size:11px;font-weight:800;color:${setup.gradeColor};background:${setup.gradeColor}15;padding:2px 8px;border-radius:10px;border:1px solid ${setup.gradeColor}40">${setup.gradeIcon} R:R ${setup.rr.toFixed(1)} ${setup.gradeLabel}</div>`;
+        html += `</div>`;
+
+        // Entry
+        const entryFmt = isLong ? fmtP(setup.entryStrike) : fmtC(setup.entryStrike);
+        html += `<div style="font-size:13px;color:var(--text-primary);line-height:2.0">`;
+        html += `<b>Entry:</b> ${entryFmt} (${isLong ? 'ที่ Support' : 'ที่ Resistance'})<br>`;
+
+        // SL with risk in $
+        html += `<b>SL:</b> <span style="color:var(--red)">$${setup.slStrike}</span> <span style="font-size:11px;color:var(--text-muted)">(${isLong ? '' : '+'}${isLong ? '-' : ''}$${setup.risk.toFixed(0)} risk)</span><br>`;
+
+        // TP chain with distances
+        if (setup.tps.length > 0) {
+            const tpParts = setup.tps.map((tp, i) => {
+                const tpFmt = tp.type === 'call-wall' || tp.type === 'gex-flip' ? fmtC(tp.strike) : tp.type === 'put-wall' ? fmtP(tp.strike) : tp.type === 'maxpain' ? fmtPink(tp.strike) : fmtCyan(tp.strike);
+                const dist = isLong ? tp.strike - setup.entryStrike : setup.entryStrike - tp.strike;
+                return `TP${i + 1}: ${tpFmt} (${isLong ? '+' : ''}${isLong ? '' : '-'}${dist.toFixed(0)})`;
+            });
+            html += `<b>Target:</b> ${tpParts.join(' → ')}<br>`;
+        } else {
+            html += `<b>Target:</b> <span style="color:var(--text-muted)">ไม่มี TP ที่เหมาะสม</span><br>`;
+        }
+
+        html += `</div>`;
+
+        // Warning for bad R:R
+        if (!setup.isViable) {
+            html += `<div style="font-size:11px;color:var(--red);margin-top:4px;padding:4px 8px;background:rgba(239,83,80,.08);border-radius:6px">⚠️ R:R ต่ำเกิน — ไม่แนะนำเทรด</div>`;
+        }
+        // DTE warning for swing
+        if (setup.tradeType === 'SWING') {
+            html += `<div style="font-size:11px;color:var(--orange);margin-top:4px">⚠️ Size เบาๆ — กิน 2-5 วัน</div>`;
+        }
+
+        html += `</div>`;
+        return html;
+    };
+
     let actionHtml;
     if (d.risk.noMansLand) {
         const isUp = d.risk.noMansLandSide === 'above';
@@ -1865,24 +2016,35 @@ function renderAnalysisTab() {
         const vannaMeaningfulAct = vannaContractsAct / getProfile().defaultADV > 0.005;
         const vannaConfirm = d.vannaExp < 0 && vannaMeaningfulAct;
         const swStr = fmtC(d.structCallWall.strike);
+        // Build breakout long setup with buildTradeSetup
+        const breakoutSetup = buildTradeSetup('long', d.structCallWall.strike, allSetupLevels, d.er1Day, d.dte, d.putWalls, d.callWalls);
         actionHtml = `<b style="color:var(--green)">Buy / Follow Long!</b> ราคาทะลุ Call Wall ${swStr} ไปแล้ว +${d.callWallBreakoutDist.toFixed(0)} pts`;
         if (vannaConfirm) actionHtml += `<br>✅ Vanna ยืนยัน — Dealers ต้อง Buy = ดัน squeeze ต่อ`;
         else if (!vannaMeaningfulAct) actionHtml += `<br>⚠️ Vanna แรงน้อย — ไม่มีนัยสำคัญ pullback ได้`;
         else actionHtml += `<br>⚠️ Vanna ยังไม่ยืนยัน — ถ้า IV ลดราคาอาจ pullback กลับ`;
-        actionHtml += `<br>SL ใต้ Call Wall เดิม ${swStr}`;
-        if (d.callWalls.length > 0) actionHtml += ` | TP ที่ ${fmtC(d.callWalls[0].strike)} ${callChain}`;
+        actionHtml += `<br><b>SL:</b> <span style="color:var(--red)">$${breakoutSetup.slStrike}</span> ใต้ Call Wall เดิม`;
+        if (breakoutSetup.tps.length > 0) {
+            const tpParts = breakoutSetup.tps.map((tp, i) => `TP${i + 1}: ${fmtC(tp.strike)} (+${tp.dist.toFixed(0)})`);
+            actionHtml += ` | ${tpParts.join(' → ')}`;
+        }
+        actionHtml += `<br><span style="font-size:12px;color:${breakoutSetup.gradeColor};font-weight:700">${breakoutSetup.gradeIcon} R:R ${breakoutSetup.rr.toFixed(1)} ${breakoutSetup.gradeLabel}</span>`;
         actionHtml += `<div style="font-size:12px;color:var(--text-muted);margin-top:6px">🔥 Wall ถูกทะลุแล้ว — Call Wall เดิมกลายเป็น Support | ห้าม Short สวนทาง!</div>`;
     } else if (d.priceBelowPutWall) {
         const vannaContractsAct = Math.abs(d.vannaExp / (d.uPrice * 100));
         const vannaMeaningfulAct = vannaContractsAct / getProfile().defaultADV > 0.005;
         const vannaConfirm = d.vannaExp > 0 && vannaMeaningfulAct;
         const swStr = fmtP(d.structPutWall.strike);
+        const breakdownSetup = buildTradeSetup('short', d.structPutWall.strike, allSetupLevels, d.er1Day, d.dte, d.putWalls, d.callWalls);
         actionHtml = `<b style="color:var(--red)">Sell / Follow Short!</b> ราคาหลุด Put Wall ${swStr} ไปแล้ว -${d.putWallBreakdownDist.toFixed(0)} pts`;
         if (vannaConfirm) actionHtml += `<br>✅ Vanna ยืนยัน — Dealers ต้อง Sell = กดลงต่อ`;
         else if (!vannaMeaningfulAct) actionHtml += `<br>⚠️ Vanna แรงน้อย — ไม่มีนัยสำคัญ bounce ได้`;
         else actionHtml += `<br>⚠️ Vanna ยังไม่ยืนยัน — ถ้า IV ลดราคาอาจ bounce กลับ`;
-        actionHtml += `<br>SL เหนือ Put Wall เดิม ${swStr}`;
-        if (d.putWalls.length > 0) actionHtml += ` | TP ที่ ${fmtP(d.putWalls[0].strike)} ${putChain}`;
+        actionHtml += `<br><b>SL:</b> <span style="color:var(--red)">$${breakdownSetup.slStrike}</span> เหนือ Put Wall เดิม`;
+        if (breakdownSetup.tps.length > 0) {
+            const tpParts = breakdownSetup.tps.map((tp, i) => `TP${i + 1}: ${fmtP(tp.strike)} (-${tp.dist.toFixed(0)})`);
+            actionHtml += ` | ${tpParts.join(' → ')}`;
+        }
+        actionHtml += `<br><span style="font-size:12px;color:${breakdownSetup.gradeColor};font-weight:700">${breakdownSetup.gradeIcon} R:R ${breakdownSetup.rr.toFixed(1)} ${breakdownSetup.gradeLabel}</span>`;
         actionHtml += `<div style="font-size:12px;color:var(--text-muted);margin-top:6px">🔥 Wall ถูกทะลุแล้ว — Put Wall เดิมกลายเป็น Resistance | ห้าม Buy สวนทาง!</div>`;
     } else if (d.isLongGamma) {
         // SL buffer scales with volatility and trading style
@@ -2122,7 +2284,64 @@ function renderAnalysisTab() {
             if (trStr) actionHtml += `<div style="margin-top:6px">${trStr}</div>`;
         }
     } else {
-        // Short gamma: trend following with nearest walls
+        // ── Short gamma: trend following — Breakout/Breakdown ──
+        const breakoutEntry = d.nearestCall ? d.nearestCall.strike : d.maxCall.strike;
+        const breakdownEntry = d.nearestPut ? d.nearestPut.strike : d.maxPut.strike;
+
+        const breakoutSetup = buildTradeSetup('long', breakoutEntry, allSetupLevels, d.er1Day, d.dte, d.putWalls, d.callWalls);
+        const breakdownSetup = buildTradeSetup('short', breakdownEntry, allSetupLevels, d.er1Day, d.dte, d.putWalls, d.callWalls);
+
+        // Override labels for breakout/breakdown
+        const renderBreakoutCard = (setup, label, emoji) => {
+            const isLong = setup.direction === 'long';
+            const dirColor = isLong ? 'var(--green)' : 'var(--red)';
+            const dirBg = isLong ? 'rgba(38,166,154,.06)' : 'rgba(239,83,80,.06)';
+            const dirBorder = isLong ? 'rgba(38,166,154,.15)' : 'rgba(239,83,80,.15)';
+
+            let html = `<div style="flex:1;min-width:240px;padding:12px 16px;background:${dirBg};border-radius:10px;border:1px solid ${dirBorder}">`;
+            html += `<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">`;
+            html += `<div style="font-size:11px;color:var(--text-muted);font-weight:700">${emoji} ${label}</div>`;
+            html += `<div style="font-size:11px;font-weight:800;color:${setup.gradeColor};background:${setup.gradeColor}15;padding:2px 8px;border-radius:10px;border:1px solid ${setup.gradeColor}40">${setup.gradeIcon} R:R ${setup.rr.toFixed(1)} ${setup.gradeLabel}</div>`;
+            html += `</div>`;
+
+            const entryFmt = isLong ? fmtC(setup.entryStrike) : fmtP(setup.entryStrike);
+            html += `<div style="font-size:13px;color:var(--text-primary);line-height:2.0">`;
+            html += `<b>Trigger:</b> ${isLong ? 'ทะลุ' : 'หลุด'} ${entryFmt}<br>`;
+            html += `<b>SL:</b> <span style="color:var(--red)">$${setup.slStrike}</span> <span style="font-size:11px;color:var(--text-muted)">($${setup.risk.toFixed(0)} risk)</span><br>`;
+
+            if (setup.tps.length > 0) {
+                const tpParts = setup.tps.map((tp, i) => {
+                    const tpFmt = tp.type === 'call-wall' ? fmtC(tp.strike) : tp.type === 'put-wall' ? fmtP(tp.strike) : tp.type === 'maxpain' ? fmtPink(tp.strike) : fmtCyan(tp.strike);
+                    return `TP${i + 1}: ${tpFmt} (${tp.dist.toFixed(0)})`;
+                });
+                html += `<b>Target:</b> ${tpParts.join(' → ')}`;
+            }
+            html += `</div>`;
+
+            if (!setup.isViable) {
+                html += `<div style="font-size:11px;color:var(--red);margin-top:4px;padding:4px 8px;background:rgba(239,83,80,.08);border-radius:6px">⚠️ R:R ต่ำเกิน — ไม่แนะนำเทรด</div>`;
+            }
+            if (setup.tradeType === 'SWING') {
+                html += `<div style="font-size:11px;color:var(--orange);margin-top:4px">⚠️ Size เบาๆ — กิน 2-5 วัน</div>`;
+            }
+            html += `</div>`;
+            return html;
+        };
+
+        actionHtml = `<div style="display:flex;gap:16px;flex-wrap:wrap">`;
+        actionHtml += renderBreakoutCard(breakdownSetup, 'BREAKDOWN SHORT', '🔥');
+        actionHtml += renderBreakoutCard(breakoutSetup, 'BREAKOUT LONG', '🚀');
+        actionHtml += `</div>`;
+
+        // PATIENCE GUARD
+        if (!breakoutSetup.isViable && !breakdownSetup.isViable) {
+            actionHtml += `<div style="margin-top:10px;padding:10px 14px;background:rgba(255,23,68,.08);border:1px solid rgba(255,23,68,.25);border-radius:10px;display:flex;align-items:center;gap:10px">`;
+            actionHtml += `<span style="font-size:18px">🚫</span>`;
+            actionHtml += `<div><div style="font-size:13px;font-weight:800;color:#ff1744">PATIENCE GUARD — Long ↔ ราคากลาง Range → รอ!</div>`;
+            actionHtml += `<div style="font-size:12px;color:var(--text-secondary)">Dealer ค้ำทั้ง 2 ทิศ → รอลากไปทาง Wall → โดย Stop ทั้งนั้น</div>`;
+            actionHtml += `</div></div>`;
+        }
+
         const dir = d.priceBelowMP ? 'ลง' : d.priceAboveMP ? 'ขึ้น' : '';
         const nrStrikeShort = d.nearestCall ? d.nearestCall.strike : d.maxCall.strike;
         const nsStrikeShort = d.nearestPut ? d.nearestPut.strike : d.maxPut.strike;
