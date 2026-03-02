@@ -360,7 +360,13 @@ function findSignificantWalls(strikes, uPrice, side, proximityRange) {
         ? strikes.filter(s => s.strike > uPrice && s[oiKey] > 0)
         : strikes.filter(s => s.strike < uPrice && s[oiKey] > 0);
 
-    if (filtered.length === 0) return [];
+    if (filtered.length === 0) {
+        // Absolute fallback if no strikes exist above/below uPrice
+        const fallbackStrike = strikes.reduce((p, c) => (c[oiKey] || 0) > (p[oiKey] || 0) ? c : p, strikes[0]);
+        if (!fallbackStrike) return []; // Truly empty
+        const dist = Math.abs(fallbackStrike.strike - uPrice);
+        return [{ strike: fallbackStrike.strike, oi: fallbackStrike[oiKey], tier: 'primary', dist, clusterOI: fallbackStrike[oiKey], clusterStrikes: [fallbackStrike.strike], isNearby: dist <= proximityRange }];
+    }
 
     // Step 1: Find max OI for threshold calculations
     const maxOI = Math.max(...filtered.map(s => s[oiKey]));
@@ -1331,7 +1337,7 @@ function renderAnalysisTab() {
         const intraday = state.data[tf.key]?.intraday;
         if (!data || !data.strikes || data.strikes.length === 0) continue;
 
-        const uPrice = globalUnderlying > 0 ? globalUnderlying : data.underlying;
+        const uPrice = data.underlying > 0 ? data.underlying : (globalUnderlying > 0 ? globalUnderlying : 0);
         let tc = data.totalCall !== undefined ? data.totalCall : data.strikes.reduce((sum, s) => sum + s.call, 0);
         let tp = data.totalPut !== undefined ? data.totalPut : data.strikes.reduce((sum, s) => sum + s.put, 0);
         const pcr = tc > 0 ? (tp / tc) : 1;
