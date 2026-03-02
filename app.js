@@ -818,6 +818,236 @@ function calcBreakdownRisk(oiStrikes, intradayStrikes, uPrice, dte, gexFlipStrik
     return { totalScore, riskLevel, riskColor, riskIcon, positionAdv, components, noMansLand, noMansLandSide, gammaMean, gammaZoneHigh, gammaZoneLow };
 }
 
+// ========== MARKET BIAS ENGINE (-100 to +100) ==========
+// Synthesizes 10 quantitative signals into a single directional bias score
+// Positive = Bullish, Negative = Bearish
+function calcMarketBias(d) {
+    const signals = [];
+    let totalWeight = 0;
+    let weightedSum = 0;
+    let agreeCount = 0;
+    let disagreeCount = 0;
+
+    // Helper: add a signal
+    const addSignal = (name, score, maxWeight, detail, icon) => {
+        // score: -1 to +1 (bearish to bullish), scaled by maxWeight
+        const weighted = score * maxWeight;
+        signals.push({ name, score: weighted, max: maxWeight, rawScore: score, detail, icon, direction: score > 0 ? 'bullish' : score < 0 ? 'bearish' : 'neutral' });
+        totalWeight += maxWeight;
+        weightedSum += weighted;
+        if (score > 0.1) agreeCount++;
+        else if (score < -0.1) disagreeCount++;
+    };
+
+    // ── 1. GEX Regime + Price Position (Weight: 20) ──
+    // Long γ + below MP = bullish magnet pull / Long γ + above MP = bearish pull
+    // Short γ = trend, bias depends on current momentum
+    if (d.isLongGamma !== undefined) {
+        let gexScore = 0;
+        if (d.isLongGamma) {
+            // Long γ = mean reversion → bias toward Max Pain
+            if (d.priceBelowMP) gexScore = 0.7;       // below MP → pulled UP
+            else if (d.priceAboveMP) gexScore = -0.7;  // above MP → pulled DOWN
+            else gexScore = 0;                          // at MP = neutral
+            // Dampening zone override
+            if (d.priceAboveCallWall && d.isLongGamma) gexScore = -0.5; // dampening = bearish pressure
+        } else {
+            // Short γ = trend following → check broken walls + proximity
+            if (d.priceAboveCallWall) gexScore = 0.8;    // breakout = bullish momentum
+            else if (d.priceBelowPutWall) gexScore = -0.8; // breakdown = bearish momentum
+            else if (d.biasScore > 0) gexScore = 0.3;    // weak momentum bias
+            else if (d.biasScore < 0) gexScore = -0.3;
+        }
+        const gexDetail = d.isLongGamma
+            ? `Long γ — ${d.priceBelowMP ? 'ราคาต่ำกว่า MP ดึงขึ้น' : d.priceAboveMP ? 'ราคาเหนือ MP ดึงลง' : 'ราคาที่ MP สมดุล'}`
+            : `Short γ — ${d.priceAboveCallWall ? 'Breakout ขึ้น' : d.priceBelowPutWall ? 'Breakdown ลง' : 'รอ Trigger'}`;
+        addSignal('GEX Regime', gexScore, 20, gexDetail, '🌊');
+    }
+
+    // ── 2. Vanna Direction (Weight: 15) ──
+    // vannaExp < 0 → IV↑ causes dealers to BUY = bullish
+    // vannaExp > 0 → IV↑ causes dealers to SELL = bearish
+    if (d.vannaExp !== undefined && d.vannaExp !== 0) {
+        const vannaContracts = Math.abs(d.vannaExp / (d.uPrice * 100));
+        const adv = getProfile().defaultADV;
+        const vannaPctAdv = vannaContracts / adv;
+        // Scale: meaningful if > 0.5% ADV
+        const magnitude = Math.min(1, vannaPctAdv / 0.03); // caps at 3% ADV
+        const vannaScore = d.vannaExp < 0 ? magnitude : -magnitude;
+        const vannaDir = d.vannaExp < 0 ? 'Dealers Buy (Bullish)' : 'Dealers Sell (Bearish)';
+        addSignal('Vanna', vannaScore, 15, `IV↑ → ${vannaDir} ~${(vannaPctAdv * 100).toFixed(1)}% ADV`, '⚡');
+    }
+
+    // ── 3. Charm Direction (Weight: 10) ──
+    // charmExp < 0 → time decay causes dealers to BUY = bullish
+    // charmExp > 0 → time decay causes dealers to SELL = bearish
+    if (d.charmExp !== undefined && d.charmExp !== 0) {
+        const charmContracts = Math.abs(d.charmExp / (d.uPrice * 100));
+        const adv = getProfile().defaultADV;
+        const charmPctAdv = charmContracts / adv;
+        const magnitude = Math.min(1, charmPctAdv / 0.02);
+        const charmScore = d.charmExp < 0 ? magnitude : -magnitude;
+        const charmDir = d.charmExp < 0 ? 'Dealers Buy (Bullish)' : 'Dealers Sell (Bearish)';
+        addSignal('Charm', charmScore, 10, `Theta → ${charmDir} ~${(charmPctAdv * 100).toFixed(1)}% ADV`, '⏱️');
+    }
+
+    // ── 4. P/C Ratio (Weight: 10) ──
+    if (d.pcr !== undefined && d.pcr > 0) {
+        let pcrScore = 0;
+        let pcrDetail = '';
+        if (d.pcr < 0.6) { pcrScore = 1.0; pcrDetail = `PCR ${d.pcr.toFixed(2)} — Call dominant สุดขั้ว`; }
+        else if (d.pcr < 0.8) { pcrScore = 0.6; pcrDetail = `PCR ${d.pcr.toFixed(2)} — Call dominant`; }
+        else if (d.pcr < 0.95) { pcrScore = 0.2; pcrDetail = `PCR ${d.pcr.toFixed(2)} — เอียง Call เล็กน้อย`; }
+        else if (d.pcr <= 1.05) { pcrScore = 0; pcrDetail = `PCR ${d.pcr.toFixed(2)} — สมดุล`; }
+        else if (d.pcr <= 1.2) { pcrScore = -0.2; pcrDetail = `PCR ${d.pcr.toFixed(2)} — เอียง Put เล็กน้อย`; }
+        else if (d.pcr <= 1.5) { pcrScore = -0.6; pcrDetail = `PCR ${d.pcr.toFixed(2)} — Put dominant`; }
+        else { pcrScore = -1.0; pcrDetail = `PCR ${d.pcr.toFixed(2)} — Put dominant สุดขั้ว`; }
+        addSignal('P/C Ratio', pcrScore, 10, pcrDetail, '📊');
+    }
+
+    // ── 5. Price vs Max Pain (Weight: 10) ──
+    if (d.mpStrike && d.uPrice > 0 && d.er1Day > 0) {
+        const distToMP = d.uPrice - d.mpStrike;
+        const distRatio = distToMP / d.er1Day; // normalized by ER
+        // Below MP = bullish (magnet pull up), above = bearish
+        let mpScore = 0;
+        if (distRatio < -1.5) mpScore = 1.0;
+        else if (distRatio < -0.5) mpScore = 0.6;
+        else if (distRatio < -0.1) mpScore = 0.2;
+        else if (distRatio <= 0.1) mpScore = 0;
+        else if (distRatio <= 0.5) mpScore = -0.2;
+        else if (distRatio <= 1.5) mpScore = -0.6;
+        else mpScore = -1.0;
+        const mpDir = distToMP > 0 ? `เหนือ MP +${distToMP.toFixed(0)} (ดึงลง)` : `ต่ำกว่า MP ${distToMP.toFixed(0)} (ดึงขึ้น)`;
+        addSignal('Max Pain', mpScore, 10, `$${d.mpStrike} — ${mpDir}`, '🎯');
+    }
+
+    // ── 6. Volume GEX Confirmation (Weight: 10) ──
+    if (d.volGEXResult && d.volGEXResult.confidence !== 'NO_DATA') {
+        let volScore = 0;
+        const vg = d.volGEXResult;
+        if (vg.confidence === 'CONFIRMED') {
+            // Intraday confirms OI regime
+            volScore = vg.volumeGEX >= 0 ? 0.6 : -0.6; // Call-dominant intraday = bullish
+        } else if (vg.confidence === 'DIVERGING') {
+            // Intraday contradicts OI — future regime shift signal
+            volScore = vg.volumeGEX >= 0 ? 0.4 : -0.4;
+        } else if (vg.confidence === 'LOW_VOLUME') {
+            volScore = 0; // no signal
+        }
+        const volDetail = vg.detail || `Vol/OI: ${(vg.volOIRatio * 100).toFixed(0)}%`;
+        addSignal('Volume Flow', volScore, 10, volDetail, '📈');
+    }
+
+    // ── 7. Broken Walls (Weight: 10) ──
+    const bestBrokenCall = (d.brokenCallWalls || []).find(bw => bw.volumeConf === 'strong' || bw.volumeConf === 'moderate');
+    const bestBrokenPut = (d.brokenPutWalls || []).find(bw => bw.volumeConf === 'strong' || bw.volumeConf === 'moderate');
+    if (bestBrokenCall || bestBrokenPut) {
+        let brokenScore = 0;
+        let brokenDetail = '';
+        if (bestBrokenCall && !bestBrokenPut) {
+            brokenScore = bestBrokenCall.volumeConf === 'strong' ? 1.0 : 0.6;
+            brokenDetail = `Call Wall $${bestBrokenCall.strike} ทะลุแล้ว → New Support (${bestBrokenCall.volumeConf})`;
+        } else if (bestBrokenPut && !bestBrokenCall) {
+            brokenScore = bestBrokenPut.volumeConf === 'strong' ? -1.0 : -0.6;
+            brokenDetail = `Put Wall $${bestBrokenPut.strike} หลุดแล้ว → New Resistance (${bestBrokenPut.volumeConf})`;
+        } else {
+            // Both broken — net out
+            const callStr = bestBrokenCall.volumeConf === 'strong' ? 1.0 : 0.6;
+            const putStr = bestBrokenPut.volumeConf === 'strong' ? 1.0 : 0.6;
+            brokenScore = (callStr - putStr) * 0.5;
+            brokenDetail = `ทั้ง Call ($${bestBrokenCall.strike}) และ Put ($${bestBrokenPut.strike}) ถูกทะลุ`;
+        }
+        addSignal('Broken Walls', brokenScore, 10, brokenDetail, '🔥');
+    } else {
+        addSignal('Broken Walls', 0, 10, 'ไม่มี Wall ถูกทะลุ', '🔥');
+    }
+
+    // ── 8. Wall Asymmetry (Weight: 5) ──
+    // Stronger put walls (support) = bullish, stronger call walls (resistance) = bearish  
+    if (d.putWalls && d.callWalls && d.putWalls.length > 0 && d.callWalls.length > 0) {
+        const putOI = d.putWalls.reduce((sum, w) => sum + w.clusterOI, 0);
+        const callOI = d.callWalls.reduce((sum, w) => sum + w.clusterOI, 0);
+        const totalOI = putOI + callOI;
+        if (totalOI > 0) {
+            const putPct = putOI / totalOI;
+            // putPct > 0.5 = more support = bullish; < 0.5 = more resistance = bearish
+            const asymScore = (putPct - 0.5) * 4; // scale: 0.5 → 0, 0.75 → 1, 0.25 → -1
+            const clampedScore = Math.max(-1, Math.min(1, asymScore));
+            const wallDetail = putPct > 0.55 ? `Support หนากว่า (Put ${(putPct * 100).toFixed(0)}%)` :
+                putPct < 0.45 ? `Resistance หนากว่า (Call ${((1 - putPct) * 100).toFixed(0)}%)` : 'สมดุล';
+            addSignal('Wall Asymmetry', clampedScore, 5, wallDetail, '🧱');
+        }
+    }
+
+    // ── 9. IV Skew (Weight: 5) ──
+    // High put skew = fear = bearish tail risk → bearish bias
+    // High call skew = upside demand → bullish bias
+    if (d.risk && d.risk.components && d.risk.components.skew) {
+        const skewDetail = d.risk.components.skew.detail || '';
+        let skewScore = 0;
+        if (skewDetail.includes('Put Skew')) {
+            skewScore = d.risk.components.skew.score > 12 ? -0.8 : d.risk.components.skew.score > 5 ? -0.4 : -0.1;
+        } else if (skewDetail.includes('Call Skew')) {
+            skewScore = d.risk.components.skew.score > 12 ? 0.8 : d.risk.components.skew.score > 5 ? 0.4 : 0.1;
+        }
+        addSignal('IV Skew', skewScore, 5, skewDetail || 'Flat', '📐');
+    }
+
+    // ── 10. Gamma Zone Position (Weight: 5) ──
+    if (d.risk && d.risk.gammaMean && d.uPrice > 0) {
+        const distFromCenter = d.uPrice - d.risk.gammaMean;
+        const er = d.er1Day || 50;
+        const normDist = distFromCenter / er;
+        // Below center = revert up = bullish, above = revert down = bearish
+        let gammaScore = 0;
+        if (d.risk.noMansLand) {
+            // Outside gamma zone = strong directional signal
+            gammaScore = d.risk.noMansLandSide === 'above' ? 0.8 : -0.8; // above = momentum UP, below = momentum DOWN
+            // In no-man's-land, mean reversion doesn't work, so momentum wins
+        } else {
+            gammaScore = Math.max(-1, Math.min(1, -normDist * 0.8)); // below center = positive
+        }
+        const gammaDetail = d.risk.noMansLand
+            ? `No Man's Land — ${d.risk.noMansLandSide === 'above' ? 'เหนือ Gamma Zone' : 'ต่ำกว่า Gamma Zone'}`
+            : `${distFromCenter > 0 ? 'เหนือ' : 'ต่ำกว่า'} Gamma Mean ${Math.abs(distFromCenter).toFixed(0)} pts`;
+        addSignal('Gamma Zone', gammaScore, 5, gammaDetail, '🔵');
+    }
+
+    // ── Aggregate ──
+    const finalScore = totalWeight > 0 ? Math.round((weightedSum / totalWeight) * 100) : 0;
+    const clampedFinal = Math.max(-100, Math.min(100, finalScore));
+
+    // Count direction agreement
+    const bullishCount = signals.filter(s => s.rawScore > 0.1).length;
+    const bearishCount = signals.filter(s => s.rawScore < -0.1).length;
+    const neutralCount = signals.filter(s => Math.abs(s.rawScore) <= 0.1).length;
+    const dominantCount = Math.max(bullishCount, bearishCount);
+    const activeSignals = bullishCount + bearishCount;
+
+    let confidence, confColor, confIcon;
+    if (dominantCount >= 7) { confidence = 'HIGH'; confColor = 'var(--green)'; confIcon = '🟢'; }
+    else if (dominantCount >= 5) { confidence = 'MEDIUM'; confColor = 'var(--accent)'; confIcon = '🟡'; }
+    else { confidence = 'LOW'; confColor = 'var(--text-muted)'; confIcon = '⚪'; }
+
+    // Label + color + icon
+    let label, color, icon;
+    if (clampedFinal >= 50) { label = 'STRONG BUY'; color = '#00e676'; icon = '🟢'; }
+    else if (clampedFinal >= 20) { label = 'BUY'; color = 'var(--green)'; icon = '🔼'; }
+    else if (clampedFinal >= 5) { label = 'LEAN BUY'; color = '#66bb6a'; icon = '↗️'; }
+    else if (clampedFinal >= -5) { label = 'NEUTRAL'; color = 'var(--text-secondary)'; icon = '➖'; }
+    else if (clampedFinal >= -20) { label = 'LEAN SELL'; color = '#ef9a9a'; icon = '↘️'; }
+    else if (clampedFinal >= -50) { label = 'SELL'; color = 'var(--red)'; icon = '🔽'; }
+    else { label = 'STRONG SELL'; color = '#ff1744'; icon = '🔴'; }
+
+    return {
+        score: clampedFinal, label, color, icon,
+        confidence, confColor, confIcon,
+        bullishCount, bearishCount, neutralCount,
+        signals
+    };
+}
+
 // ========== PARSE ==========
 function parseVol2VolData(text) {
     const lines = text.trim().split('\n');
@@ -1469,6 +1699,9 @@ function renderAnalysisTab() {
         container.innerHTML = '';
         return;
     }
+
+    // ── MARKET BIAS ──
+    const bias = calcMarketBias(d);
 
     const isFallback = state.data.current?.oi?.underlyingIsFallback
         || state.data.monthly?.oi?.underlyingIsFallback
@@ -2782,8 +3015,148 @@ function renderAnalysisTab() {
 
     // ── RENDER GRID LAYOUT ──
     header.innerHTML = '';
+    // ── BIAS METER HTML ──
+    const needlePct = Math.max(2, Math.min(98, (bias.score + 100) / 2));
+    const biasGrad = bias.score >= 0
+        ? `linear-gradient(135deg, rgba(38,166,154,.08), rgba(0,230,118,.04))`
+        : `linear-gradient(135deg, rgba(239,83,80,.08), rgba(255,23,68,.04))`;
+    const biasBorderColor = bias.color;
+
+    // Sort signals by absolute score for display (most impactful first)
+    const sortedSignals = [...bias.signals].sort((a, b) => Math.abs(b.score) - Math.abs(a.score));
+
+    const signalBarsHtml = sortedSignals.map(s => {
+        const pct = s.max > 0 ? Math.abs(s.score / s.max) * 100 : 0;
+        const barColor = s.direction === 'bullish' ? 'var(--green)' : s.direction === 'bearish' ? 'var(--red)' : 'var(--text-muted)';
+        const dirIcon = s.direction === 'bullish' ? '▲' : s.direction === 'bearish' ? '▼' : '—';
+        const dirColor = s.direction === 'bullish' ? 'var(--green)' : s.direction === 'bearish' ? 'var(--red)' : 'var(--text-muted)';
+        return `<div style="display:flex;align-items:center;gap:8px;padding:6px 8px;background:rgba(0,0,0,.2);border-radius:8px;border:1px solid rgba(255,255,255,.04)">
+            <span style="font-size:13px;width:18px;text-align:center">${s.icon}</span>
+            <span style="font-size:11px;font-weight:700;color:var(--text-secondary);min-width:90px">${s.name}</span>
+            <div style="flex:1;height:6px;background:rgba(255,255,255,.06);border-radius:3px;overflow:hidden;position:relative">
+                <div style="position:absolute;left:50%;top:0;bottom:0;width:1px;background:rgba(255,255,255,.15)"></div>
+                ${s.score >= 0
+                ? `<div style="position:absolute;left:50%;top:0;bottom:0;width:${pct / 2}%;background:${barColor};border-radius:0 3px 3px 0;transition:width .3s"></div>`
+                : `<div style="position:absolute;right:50%;top:0;bottom:0;width:${pct / 2}%;background:${barColor};border-radius:3px 0 0 3px;transition:width .3s"></div>`
+            }
+            </div>
+            <span style="font-size:11px;font-weight:800;color:${dirColor};min-width:16px;text-align:center">${dirIcon}</span>
+            <span style="font-size:10px;color:var(--text-muted);flex:1.5;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${s.detail}">${s.detail}</span>
+        </div>`;
+    }).join('');
+
+    // ── QUICK SETUP SUMMARY (compact action line for bias meter) ──
+    const slMulQ = STYLE_CONFIG[state.tradingStyle].slMul;
+    const slBufQ = Math.max(10, Math.round((d.er1Day || 50) * slMulQ));
+    const bestBrokenCallQ = (d.brokenCallWalls || []).find(bw => bw.volumeConf === 'strong' || bw.volumeConf === 'moderate');
+    const bestBrokenPutQ = (d.brokenPutWalls || []).find(bw => bw.volumeConf === 'strong' || bw.volumeConf === 'moderate');
+    const nrStrikeQ = d.nearestCall ? d.nearestCall.strike : (d.callWalls.length > 0 ? d.callWalls[0].strike : null);
+    const nsStrikeQ = d.nearestPut ? d.nearestPut.strike : (d.putWalls.length > 0 ? d.putWalls[0].strike : null);
+
+    let quickSetupHtml = '';
+    if (d.risk.noMansLand) {
+        const isUp = d.risk.noMansLandSide === 'above';
+        quickSetupHtml = `<div style="padding:10px 14px;background:rgba(255,23,68,.08);border-radius:10px;border:1px solid rgba(255,23,68,.25);margin-top:14px">
+            <div style="font-size:13px;font-weight:800;color:#ff1744">⛔ NO MAN'S LAND — ${isUp ? 'Follow Long เท่านั้น ห้าม Short' : 'Follow Short เท่านั้น ห้าม Buy'}</div>
+        </div>`;
+    } else if (bestBrokenCallQ && bias.score >= -10) {
+        const tp = nrStrikeQ || (d.callWalls.length > 0 ? d.callWalls[0].strike : '?');
+        quickSetupHtml = `<div style="padding:10px 14px;background:rgba(255,152,0,.06);border-radius:10px;border:1px solid rgba(255,152,0,.2);margin-top:14px;display:flex;align-items:center;gap:16px;flex-wrap:wrap">
+            <span style="font-size:13px;font-weight:900;color:var(--orange)">🔥 BUY RETEST</span>
+            <span style="font-size:12px;color:var(--text-primary)">Entry: <b style="color:var(--call-color)">$${bestBrokenCallQ.strike}</b></span>
+            <span style="font-size:12px;color:var(--text-primary)">SL: <b style="color:var(--red)">$${(bestBrokenCallQ.strike - slBufQ).toFixed(0)}</b></span>
+            <span style="font-size:12px;color:var(--text-primary)">TP: <b style="color:var(--call-color)">$${tp}</b></span>
+            <span style="font-size:11px;color:var(--text-muted)">(Vol/OI: ${(bestBrokenCallQ.volRatio * 100).toFixed(0)}%)</span>
+        </div>`;
+    } else if (bestBrokenPutQ && bias.score <= 10) {
+        const tp = nsStrikeQ || (d.putWalls.length > 0 ? d.putWalls[0].strike : '?');
+        quickSetupHtml = `<div style="padding:10px 14px;background:rgba(255,152,0,.06);border-radius:10px;border:1px solid rgba(255,152,0,.2);margin-top:14px;display:flex;align-items:center;gap:16px;flex-wrap:wrap">
+            <span style="font-size:13px;font-weight:900;color:var(--orange)">🔥 SELL RETEST</span>
+            <span style="font-size:12px;color:var(--text-primary)">Entry: <b style="color:var(--put-color)">$${bestBrokenPutQ.strike}</b></span>
+            <span style="font-size:12px;color:var(--text-primary)">SL: <b style="color:var(--red)">$${(bestBrokenPutQ.strike + slBufQ).toFixed(0)}</b></span>
+            <span style="font-size:12px;color:var(--text-primary)">TP: <b style="color:var(--put-color)">$${tp}</b></span>
+            <span style="font-size:11px;color:var(--text-muted)">(Vol/OI: ${(bestBrokenPutQ.volRatio * 100).toFixed(0)}%)</span>
+        </div>`;
+    } else if (d.isLongGamma && !d.priceAboveCallWall && !d.priceBelowPutWall) {
+        // Wall-to-Wall Fade summary
+        const buyAt = nsStrikeQ ? `Buy <b style="color:var(--put-color)">$${nsStrikeQ}</b>` : '';
+        const sellAt = nrStrikeQ ? `Sell <b style="color:var(--call-color)">$${nrStrikeQ}</b>` : '';
+        const fadeActions = [buyAt, sellAt].filter(Boolean).join(' <span style="color:var(--text-muted)">·</span> ');
+        if (fadeActions) {
+            quickSetupHtml = `<div style="padding:10px 14px;background:rgba(0,188,212,.04);border-radius:10px;border:1px solid rgba(0,188,212,.15);margin-top:14px;display:flex;align-items:center;gap:16px;flex-wrap:wrap">
+                <span style="font-size:13px;font-weight:900;color:var(--cyan)">🔄 FADE</span>
+                <span style="font-size:12px;color:var(--text-primary)">${fadeActions}</span>
+                <span style="font-size:11px;color:var(--text-muted)">Long γ = Fade ที่ Wall</span>
+            </div>`;
+        }
+    } else if (!d.isLongGamma) {
+        // Short gamma: breakout/breakdown trigger
+        const bkoText = nrStrikeQ ? `ทะลุ <b style="color:var(--call-color)">$${nrStrikeQ}</b> = Buy` : '';
+        const bkdText = nsStrikeQ ? `หลุด <b style="color:var(--put-color)">$${nsStrikeQ}</b> = Sell` : '';
+        const triggers = [bkdText, bkoText].filter(Boolean).join(' <span style="color:var(--text-muted)">·</span> ');
+        if (triggers) {
+            quickSetupHtml = `<div style="padding:10px 14px;background:rgba(255,87,34,.04);border-radius:10px;border:1px solid rgba(255,87,34,.15);margin-top:14px;display:flex;align-items:center;gap:16px;flex-wrap:wrap">
+                <span style="font-size:13px;font-weight:900;color:var(--orange)">🌊 TRIGGER</span>
+                <span style="font-size:12px;color:var(--text-primary)">${triggers}</span>
+                <span style="font-size:11px;color:var(--text-muted)">Short γ = รอทะลุ Wall</span>
+            </div>`;
+        }
+    }
+
+    const biasMeterHtml = `
+    <div style="padding:20px 24px;background:${biasGrad};border:1px solid ${biasBorderColor}40;border-left:5px solid ${biasBorderColor};border-radius:14px">
+        <!-- Header Row -->
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:8px">
+            <div style="display:flex;align-items:center;gap:12px">
+                <div style="font-size:28px">${bias.icon}</div>
+                <div>
+                    <div style="font-size:22px;font-weight:900;color:${bias.color};letter-spacing:1px;line-height:1.1">${bias.label}</div>
+                    <div style="font-size:12px;color:var(--text-muted);font-weight:600;margin-top:2px">DIRECTIONAL BIAS</div>
+                </div>
+            </div>
+            <div style="display:flex;align-items:center;gap:12px">
+                <div style="text-align:center">
+                    <div style="font-size:36px;font-weight:900;color:${bias.color};line-height:1">${bias.score > 0 ? '+' : ''}${bias.score}</div>
+                    <div style="font-size:10px;color:var(--text-muted);font-weight:700;margin-top:2px">SCORE</div>
+                </div>
+                <div style="display:inline-flex;flex-direction:column;align-items:center;padding:6px 14px;border-radius:12px;background:${bias.confColor}15;border:1px solid ${bias.confColor}40">
+                    <span style="font-size:13px">${bias.confIcon}</span>
+                    <span style="font-size:10px;font-weight:800;color:${bias.confColor}">${bias.confidence}</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Gauge Bar -->
+        <div style="position:relative;height:10px;background:linear-gradient(90deg, #ff1744 0%, #ef5350 20%, #ef9a9a 35%, rgba(255,255,255,.1) 50%, #a5d6a7 65%, #66bb6a 80%, #00e676 100%);border-radius:5px;margin-bottom:6px">
+            <div style="position:absolute;left:50%;top:-2px;bottom:-2px;width:2px;background:rgba(255,255,255,.3);transform:translateX(-50%)"></div>
+            <div style="position:absolute;left:${needlePct}%;top:-5px;bottom:-5px;width:4px;background:white;transform:translateX(-50%);border-radius:2px;box-shadow:0 0 8px rgba(255,255,255,.7),0 0 16px ${bias.color}"></div>
+        </div>
+        <div style="display:flex;justify-content:space-between;font-size:9px;color:var(--text-muted);font-weight:700;margin-bottom:14px">
+            <span>STRONG SELL -100</span>
+            <span>NEUTRAL 0</span>
+            <span>STRONG BUY +100</span>
+        </div>
+
+        <!-- Signal Agreement -->
+        <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px;padding:8px 12px;background:rgba(0,0,0,.2);border-radius:8px">
+            <span style="font-size:11px;color:var(--text-muted);font-weight:700">สัญญาณ:</span>
+            <span style="font-size:12px;font-weight:800;color:var(--green)">▲ ${bias.bullishCount} Bullish</span>
+            <span style="font-size:12px;font-weight:800;color:var(--red)">▼ ${bias.bearishCount} Bearish</span>
+            ${bias.neutralCount > 0 ? `<span style="font-size:12px;font-weight:800;color:var(--text-muted)">— ${bias.neutralCount} Neutral</span>` : ''}
+        </div>
+
+        <!-- Signal Breakdown Grid -->
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px">
+            ${signalBarsHtml}
+        </div>
+        ${quickSetupHtml}
+    </div>`;
+
     container.innerHTML = `
         ${fallbackHtml}
+
+        <!-- BIAS METER — full width, top position -->
+        ${biasMeterHtml}
 
         <!-- HERO — full width -->
         <div style="padding:20px 24px;background:linear-gradient(135deg,rgba(255,255,255,.04),transparent);border:1px solid ${bColor}40;border-radius:14px">
@@ -2838,12 +3211,6 @@ function renderAnalysisTab() {
                 <div style="font-size:14px;color:var(--text-secondary);padding:6px 0;line-height:1.6">🌪️ <b>Vomma:</b> ${vommaText}</div>
             </div>
 
-        </div>
-
-        <!-- ACTION — full width -->
-        <div style="padding:18px 22px;background:rgba(0,0,0,.3);border:1px solid ${bColor}30;border-left:4px solid ${bColor};border-radius:14px">
-            <div style="font-size:12px;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px">📋 What to Do</div>
-            <div style="font-size:15px;color:var(--text-primary);line-height:1.9;font-weight:600">${actionHtml}</div>
         </div>
 
         ${patienceHtml}
