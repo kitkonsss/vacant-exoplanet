@@ -277,16 +277,19 @@ function calcCharm(F, K, sigma, t) {
 //   Positive = dealer delta increasing → must SELL futures → bearish pressure
 //   Negative = dealer delta decreasing → must BUY futures → bullish support
 function calcNetCharmExposure(strikes, F, dte) {
-    if (!strikes || strikes.length === 0 || dte <= 0) return 0;
+    if (!strikes || strikes.length === 0 || dte <= 0) return { net: 0, absFlow: 0 };
     const t = dte / 365;
     const contractMultiplier = getProfile().contractMultiplier;
     let netCharm = 0;
+    let absCharm = 0;
     for (const s of strikes) {
         const c = calcCharm(F, s.strike, s.volSettle, t);
         // Dealer is short both → delta change per day = charm × (callOI + putOI) × mult × F × 0.01 / 365
-        netCharm += c * (s.call + s.put) * contractMultiplier * F * 0.01 / 365;
+        const contribution = c * (s.call + s.put) * contractMultiplier * F * 0.01 / 365;
+        netCharm += contribution;
+        absCharm += Math.abs(contribution);
     }
-    return netCharm;
+    return { net: netCharm, absFlow: absCharm };
 }
 
 // Vomma: ∂Vega/∂σ — how sensitive is Vega to vol changes (vol-of-vol)
@@ -334,19 +337,31 @@ function calcVanna(F, K, sigma, t) {
 //   netVanna < 0 → IV↑ causes dealers to BUY (bullish)
 //   netVanna > 0 → IV↑ causes dealers to SELL (bearish)
 function calcNetVannaExposure(strikes, F, dte) {
-    if (!strikes || strikes.length === 0 || dte <= 0) return 0;
+    if (!strikes || strikes.length === 0 || dte <= 0) return { net: 0, callExp: 0, putExp: 0, absFlow: 0, dailyFlow: 0 };
     const t = dte / 365;
     const contractMultiplier = getProfile().contractMultiplier;
-    let netVanna = 0;
+    let callExp = 0, putExp = 0;
+    // Find ATM vol for daily IV shock calculation
+    let atmVol = 0.30; // fallback
+    let bestDist = Infinity;
+    for (const s of strikes) {
+        const dist = Math.abs(s.strike - F);
+        if (dist < bestDist && s.volSettle > 0) { bestDist = dist; atmVol = s.volSettle; }
+    }
+    const dailyIVShock = atmVol / Math.sqrt(252); // ~2% for 30% IV
+
     for (const s of strikes) {
         const v = calcVanna(F, s.strike, s.volSettle, t);
         // Dealers short calls → call vanna exposure = -v × callOI
-        // Dealers short puts  → put vanna exposure  = -v × putOI  (same sign convention)
-        const callVannaExp = -v * s.call * contractMultiplier * F * 0.01;
-        const putVannaExp = -v * s.put * contractMultiplier * F * 0.01;
-        netVanna += callVannaExp + putVannaExp;
+        // Dealers short puts → put vanna has OPPOSITE hedge direction
+        //   (short put = long delta exposure, so vol-driven delta change hedges opposite)
+        callExp += -v * s.call * contractMultiplier * F * 0.01;
+        putExp += v * s.put * contractMultiplier * F * 0.01;
     }
-    return netVanna;
+    const net = callExp + putExp;
+    const absFlow = Math.abs(callExp) + Math.abs(putExp); // total magnitude (no cancellation)
+    const dailyFlow = net * dailyIVShock; // expected daily $ delta change from 1σ IV move
+    return { net, callExp, putExp, absFlow, dailyFlow };
 }
 
 // ========== MULTI-WALL DETECTION (Quant-Grade) ==========
@@ -865,30 +880,31 @@ function calcMarketBias(d) {
     }
 
     // ── 2. Vanna Direction (Weight: 15) ──
-    // vannaExp < 0 → IV↑ causes dealers to BUY = bullish
-    // vannaExp > 0 → IV↑ causes dealers to SELL = bearish
-    if (d.vannaExp !== undefined && d.vannaExp !== 0) {
-        const vannaContracts = Math.abs(d.vannaExp / (d.uPrice * 100));
-        const adv = getProfile().defaultADV;
-        const vannaPctAdv = vannaContracts / adv;
-        // Scale: meaningful if > 0.5% ADV
-        const magnitude = Math.min(1, vannaPctAdv / 0.03); // caps at 3% ADV
-        const vannaScore = d.vannaExp < 0 ? magnitude : -magnitude;
-        const vannaDir = d.vannaExp < 0 ? 'Dealers Buy (Bullish)' : 'Dealers Sell (Bearish)';
-        addSignal('Vanna', vannaScore, 15, `IV↑ → ${vannaDir} ~${(vannaPctAdv * 100).toFixed(1)}% ADV`, '⚡');
+    // Uses dailyFlow (net vanna × 1σ daily IV shock) for realistic hedging estimate
+    // Normalized against |GEX| instead of futures ADV for meaningful magnitude
+    if (d.vannaResult && d.vannaResult.dailyFlow !== 0) {
+        const flow = d.vannaResult.dailyFlow;
+        const absGEX = Math.abs(d.gexVal || 1);
+        const flowRatio = Math.abs(flow) / absGEX; // vs gamma hedging
+        const magnitude = Math.min(1, flowRatio / 0.10); // caps at 10% of GEX
+        const vannaScore = flow < 0 ? magnitude : -magnitude;
+        const vannaDir = flow < 0 ? 'Dealers Buy (Bullish)' : 'Dealers Sell (Bearish)';
+        const flowM = (Math.abs(flow) / 1e6).toFixed(2);
+        addSignal('Vanna', vannaScore, 15, `IV↑ → ${vannaDir} ~$${flowM}M/day`, '⚡');
     }
 
     // ── 3. Charm Direction (Weight: 10) ──
-    // charmExp < 0 → time decay causes dealers to BUY = bullish
-    // charmExp > 0 → time decay causes dealers to SELL = bearish
-    if (d.charmExp !== undefined && d.charmExp !== 0) {
-        const charmContracts = Math.abs(d.charmExp / (d.uPrice * 100));
-        const adv = getProfile().defaultADV;
-        const charmPctAdv = charmContracts / adv;
-        const magnitude = Math.min(1, charmPctAdv / 0.02);
-        const charmScore = d.charmExp < 0 ? magnitude : -magnitude;
-        const charmDir = d.charmExp < 0 ? 'Dealers Buy (Bullish)' : 'Dealers Sell (Bearish)';
-        addSignal('Charm', charmScore, 10, `Theta → ${charmDir} ~${(charmPctAdv * 100).toFixed(1)}% ADV`, '⏱️');
+    // Uses net charm exposure (daily delta drift from time decay)
+    // Normalized against |GEX| for meaningful magnitude
+    if (d.charmResult && d.charmResult.net !== 0) {
+        const flow = d.charmResult.net;
+        const absGEX = Math.abs(d.gexVal || 1);
+        const flowRatio = Math.abs(flow) / absGEX;
+        const magnitude = Math.min(1, flowRatio / 0.10);
+        const charmScore = flow < 0 ? magnitude : -magnitude;
+        const charmDir = flow < 0 ? 'Dealers Buy (Bullish)' : 'Dealers Sell (Bearish)';
+        const flowM = (Math.abs(flow) / 1e6).toFixed(2);
+        addSignal('Charm', charmScore, 10, `Theta → ${charmDir} ~$${flowM}M/day`, '⏱️');
     }
 
     // ── 4. P/C Ratio (Weight: 10) ──
@@ -1650,8 +1666,8 @@ function renderAnalysisTab() {
         const tradeableRange = (nearestCall ? nearestCall.dist : 999) + (nearestPut ? nearestPut.dist : 999);
 
         const risk = calcBreakdownRisk(data.strikes, sourceStrikes2, uPrice, data.dte, gexResult.flipStrike, er1Day);
-        const vannaExp = calcNetVannaExposure(data.strikes, uPrice, data.dte);
-        const charmExp = calcNetCharmExposure(data.strikes, uPrice, data.dte);
+        const vannaResult = calcNetVannaExposure(data.strikes, uPrice, data.dte);
+        const charmResult = calcNetCharmExposure(data.strikes, uPrice, data.dte);
         const vommaExp = calcNetVommaExposure(data.strikes, uPrice, data.dte);
 
         const t_h = Math.max(data.dte, 0.01) / 365;
@@ -1684,7 +1700,7 @@ function renderAnalysisTab() {
             nearestCall, nearestPut, callWalls, putWalls, callSummary, putSummary,
             brokenCallWalls, brokenPutWalls,
             tradeableRange, er1Day, sourceStrikes2, wallSliceCount,
-            risk, vannaExp, charmExp, vommaExp, hedgeLabel, itmPct, dte: data.dte,
+            risk, vannaExp: vannaResult.net, vannaResult, charmExp: charmResult.net, charmResult, vommaExp, hedgeLabel, itmPct, dte: data.dte,
             longDteWarning: data.dte > 60 // Greeks less accurate at long DTE (r=0 assumption)
         };
     }
@@ -1723,9 +1739,10 @@ function renderAnalysisTab() {
     } else if (d.priceAboveCallWall) {
         // Short Gamma + Above Call Wall = genuine breakout
         // Vanna confirmation requires meaningful magnitude (> 0.5% ADV)
-        const vannaContractsCheck = Math.abs(d.vannaExp / (d.uPrice * 100));
-        const vannaMeaningful = vannaContractsCheck / getProfile().defaultADV > 0.005; // > 0.5% of ADV
-        const vannaConfirm = d.vannaExp < 0 && vannaMeaningful; // negative = dealers BUY = confirms upside
+        const vannaDailyCheck = d.vannaResult ? Math.abs(d.vannaResult.dailyFlow) : 0;
+        const absGEXCheck = Math.abs(d.gexVal || 1);
+        const vannaMeaningful = vannaDailyCheck / absGEXCheck > 0.01; // > 1% of GEX
+        const vannaConfirm = d.vannaResult && d.vannaResult.dailyFlow < 0 && vannaMeaningful; // negative dailyFlow = dealers BUY = confirms upside
         const vannaNeutral = !vannaMeaningful;
         bText = vannaConfirm ? '🚀 BREAKOUT + Vanna' : '🚀 BREAKOUT';
         bColor = 'var(--green)';
@@ -1734,9 +1751,10 @@ function renderAnalysisTab() {
         else if (vannaNeutral) bDesc += ` — Vanna แรงน้อย (ไม่มีนัยสำคัญ) ระวัง pullback`;
         else bDesc += ` — Vanna ยังไม่ confirm ระวัง pullback`;
     } else if (d.priceBelowPutWall) {
-        const vannaContractsCheck = Math.abs(d.vannaExp / (d.uPrice * 100));
-        const vannaMeaningful = vannaContractsCheck / 200000 > 0.005;
-        const vannaConfirm = d.vannaExp > 0 && vannaMeaningful; // positive = dealers SELL = confirms downside
+        const vannaDailyCheck2 = d.vannaResult ? Math.abs(d.vannaResult.dailyFlow) : 0;
+        const absGEXCheck2 = Math.abs(d.gexVal || 1);
+        const vannaMeaningful = vannaDailyCheck2 / absGEXCheck2 > 0.01;
+        const vannaConfirm = d.vannaResult && d.vannaResult.dailyFlow > 0 && vannaMeaningful; // positive dailyFlow = dealers SELL = confirms downside
         const vannaNeutral = !vannaMeaningful;
         bText = vannaConfirm ? '💧 CASCADE + Vanna' : '💧 CASCADE';
         bColor = 'var(--red)';
@@ -2251,9 +2269,10 @@ function renderAnalysisTab() {
         actionHtml += `</div></div>`;
     } else if (d.priceAboveCallWall) {
         // Short Gamma + Above Call Wall = genuine breakout
-        const vannaContractsAct = Math.abs(d.vannaExp / (d.uPrice * 100));
-        const vannaMeaningfulAct = vannaContractsAct / getProfile().defaultADV > 0.005;
-        const vannaConfirm = d.vannaExp < 0 && vannaMeaningfulAct;
+        const vannaDailyAct = d.vannaResult ? Math.abs(d.vannaResult.dailyFlow) : 0;
+        const absGEXAct = Math.abs(d.gexVal || 1);
+        const vannaMeaningfulAct = vannaDailyAct / absGEXAct > 0.01;
+        const vannaConfirm = d.vannaResult && d.vannaResult.dailyFlow < 0 && vannaMeaningfulAct;
         const swStr = fmtC(d.structCallWall.strike);
         // Build breakout long setup with buildTradeSetup
         const breakoutSetup = buildTradeSetup('long', d.structCallWall.strike, allSetupLevels, d.er1Day, d.dte, d.putWalls, d.callWalls);
@@ -2269,9 +2288,10 @@ function renderAnalysisTab() {
         actionHtml += `<br><span style="font-size:12px;color:${breakoutSetup.gradeColor};font-weight:700">${breakoutSetup.gradeIcon} R:R ${breakoutSetup.rr.toFixed(1)} ${breakoutSetup.gradeLabel}</span>`;
         actionHtml += `<div style="font-size:12px;color:var(--text-muted);margin-top:6px">🔥 Wall ถูกทะลุแล้ว — Call Wall เดิมกลายเป็น Support | ห้าม Short สวนทาง!</div>`;
     } else if (d.priceBelowPutWall) {
-        const vannaContractsAct = Math.abs(d.vannaExp / (d.uPrice * 100));
-        const vannaMeaningfulAct = vannaContractsAct / getProfile().defaultADV > 0.005;
-        const vannaConfirm = d.vannaExp > 0 && vannaMeaningfulAct;
+        const vannaDailyAct2 = d.vannaResult ? Math.abs(d.vannaResult.dailyFlow) : 0;
+        const absGEXAct2 = Math.abs(d.gexVal || 1);
+        const vannaMeaningfulAct = vannaDailyAct2 / absGEXAct2 > 0.01;
+        const vannaConfirm = d.vannaResult && d.vannaResult.dailyFlow > 0 && vannaMeaningfulAct;
         const swStr = fmtP(d.structPutWall.strike);
         const breakdownSetup = buildTradeSetup('short', d.structPutWall.strike, allSetupLevels, d.er1Day, d.dte, d.putWalls, d.callWalls);
         actionHtml = `<b style="color:var(--red)">Sell / Follow Short!</b> ราคาหลุด Put Wall ${swStr} ไปแล้ว -${d.putWallBreakdownDist.toFixed(0)} pts`;
@@ -2847,22 +2867,23 @@ function renderAnalysisTab() {
         adv = Math.max(advDefault, totalIntradayVol * 3);
     }
 
-    // Vanna: positive = dealers SELL (bearish), negative = dealers BUY (bullish)
-    // 1 Option = 1 Futures contract equivalent (100 oz)
-    const vannaContracts = Math.abs(d.vannaExp / (d.uPrice * 100));
-    const vannaPctAdv = (vannaContracts / adv * 100).toFixed(1);
+    // Vanna: show daily expected flow in $ terms and as % of GEX
+    const vannaDaily = d.vannaResult ? Math.abs(d.vannaResult.dailyFlow) : 0;
+    const vannaDailyM = (vannaDaily / 1e6).toFixed(2);
+    const vannaVsGEX = d.gexVal ? (vannaDaily / Math.abs(d.gexVal) * 100).toFixed(1) : '0.0';
     const vannaColor = d.vannaExp > 0 ? 'var(--red)' : 'var(--green)';
     const vannaText = d.vannaExp > 0
-        ? `IV +1% → Dealers <span style="color:var(--red);font-weight:700">SELL</span> ~${Math.round(vannaContracts).toLocaleString()} สัญญา (${vannaPctAdv}% ADV) = กดลง`
-        : `IV +1% → Dealers <span style="color:var(--green);font-weight:700">BUY</span> ~${Math.round(vannaContracts).toLocaleString()} สัญญา (${vannaPctAdv}% ADV) = ดันขึ้น`;
+        ? `IV↑1σ/day → Dealers <span style="color:var(--red);font-weight:700">SELL</span> ~$${vannaDailyM}M (${vannaVsGEX}% of GEX) = กดลง`
+        : `IV↑1σ/day → Dealers <span style="color:var(--green);font-weight:700">BUY</span> ~$${vannaDailyM}M (${vannaVsGEX}% of GEX) = ดันขึ้น`;
 
-    // Charm: positive = dealers SELL (bearish), negative = dealers BUY (bullish)
-    const charmContracts = Math.abs(d.charmExp / (d.uPrice * 100));
-    const charmPctAdv = (charmContracts / adv * 100).toFixed(1);
+    // Charm: show daily delta drift in $ terms and as % of GEX
+    const charmDaily = d.charmResult ? Math.abs(d.charmResult.net) : 0;
+    const charmDailyM = (charmDaily / 1e6).toFixed(2);
+    const charmVsGEX = d.gexVal ? (charmDaily / Math.abs(d.gexVal) * 100).toFixed(1) : '0.0';
     const charmColor = d.charmExp > 0 ? 'var(--red)' : 'var(--green)';
     const charmText = d.charmExp > 0
-        ? `Theta/Day → Dealers <span style="color:var(--red);font-weight:700">SELL</span> ~${Math.round(charmContracts).toLocaleString()} สัญญา (${charmPctAdv}% ADV) = กดลง`
-        : `Theta/Day → Dealers <span style="color:var(--green);font-weight:700">BUY</span> ~${Math.round(charmContracts).toLocaleString()} สัญญา (${charmPctAdv}% ADV) = ดันขึ้น`;
+        ? `Theta/Day → Dealers <span style="color:var(--red);font-weight:700">SELL</span> ~$${charmDailyM}M (${charmVsGEX}% of GEX) = กดลง`
+        : `Theta/Day → Dealers <span style="color:var(--green);font-weight:700">BUY</span> ~$${charmDailyM}M (${charmVsGEX}% of GEX) = ดันขึ้น`;
 
     // Net GEX & Liquidity-Adjusted Gamma
     const gexContracts = Math.abs(d.gexVal / (d.uPrice * 100)); // GEX per $1 move
@@ -2889,15 +2910,15 @@ function renderAnalysisTab() {
     // Expected Flow Matrix Table
     const flowMatrixHtml = `
     <div style="margin-top:10px;border-top:1px solid rgba(255,255,255,0.05);padding-top:10px;">
-        <div style="font-size:11px;color:var(--text-muted);font-weight:700;margin-bottom:6px">🔮 24H FORWARD EXPECTED FLOW (Contracts)</div>
+        <div style="font-size:11px;color:var(--text-muted);font-weight:700;margin-bottom:6px">🔮 24H FORWARD EXPECTED FLOW ($)</div>
         <div style="display:flex;flex-direction:column;gap:4px;font-size:13px;">
             <div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid rgba(255,255,255,0.03)">
                 <span style="color:var(--text-secondary)">1. ตลาดซึม (IV ตก, เวลาเดิน)</span>
-                <span>${charmDir === 'buy' ? '<span style="color:var(--green)">Buy</span>' : charmDir === 'sell' ? '<span style="color:var(--red)">Sell</span>' : '-'} ~${Math.round(charmContracts).toLocaleString()}</span>
+                <span>${charmDir === 'buy' ? '<span style="color:var(--green)">Buy</span>' : charmDir === 'sell' ? '<span style="color:var(--red)">Sell</span>' : '-'} ~$${charmDailyM}M</span>
             </div>
             <div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid rgba(255,255,255,0.03)">
-                <span style="color:var(--text-secondary)">2. ตลาดตกใจ (IV พุ่ง +10%)</span>
-                <span>${vannaDir === 'buy' ? '<span style="color:var(--green)">Buy</span>' : vannaDir === 'sell' ? '<span style="color:var(--red)">Sell</span>' : '-'} ~${Math.round(vannaContracts * 10).toLocaleString()}</span>
+                <span style="color:var(--text-secondary)">2. ตลาดตกใจ (IV พุ่ง 1σ)</span>
+                <span>${vannaDir === 'buy' ? '<span style="color:var(--green)">Buy</span>' : vannaDir === 'sell' ? '<span style="color:var(--red)">Sell</span>' : '-'} ~$${vannaDailyM}M</span>
             </div>
             <div style="display:flex;justify-content:space-between;padding:4px 0;">
                 <span style="color:var(--text-secondary)">3. ราคาวิ่งแรง (+$20 USD)</span>
