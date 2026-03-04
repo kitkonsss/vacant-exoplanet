@@ -119,7 +119,7 @@ def create_driver():
     options.add_argument('--window-size=1920,1080')
     service = Service(ChromeDriverManager().install())
     driver = webdriver.Chrome(service=service, options=options)
-    driver.implicitly_wait(5)
+    driver.implicitly_wait(2)
     return driver
 
 
@@ -148,7 +148,7 @@ def login_cme(driver, quikstrike_url, max_wait=120):
     """Navigate to QuikStrike → handle SSO login → handle disclaimer."""
     print(f'[LOGIN] Opening QuikStrike URL: {quikstrike_url}')
     driver.get(quikstrike_url)
-    time.sleep(4)
+    time.sleep(2)
 
     # Poll until we reach the Vol2Vol page
     start = time.time()
@@ -178,7 +178,7 @@ def login_cme(driver, quikstrike_url, max_wait=120):
         if is_disclaimer:
             print('[LOGIN] Disclaimer page detected — auto-accepting...')
             _handle_disclaimer(driver)
-            time.sleep(3)
+            time.sleep(1.5)
             continue
 
         # ✅ On QuikStrike Vol2Vol page (not disclaimer)
@@ -196,11 +196,11 @@ def login_cme(driver, quikstrike_url, max_wait=120):
                     if not logged_in:
                         print(f'[LOGIN] ⚠ Manual login required. You have {max_wait}s...')
                         logged_in = True
-            time.sleep(3)
+            time.sleep(2)
             continue
 
         # Unknown — wait
-        time.sleep(3)
+        time.sleep(2)
 
     print('[LOGIN] ❌ Timed out.')
     return False
@@ -239,7 +239,7 @@ def _handle_disclaimer(driver):
                 # Use JavaScript click — more reliable on ASP.NET pages
                 driver.execute_script('arguments[0].click();', cb)
                 print('[DISCLAIMER] Checked checkbox')
-                time.sleep(1)
+                time.sleep(0.5)
                 
                 # Verify and fallback if needed
                 if not cb.is_selected():
@@ -266,7 +266,7 @@ def _handle_disclaimer(driver):
             btn = driver.find_element(By.CSS_SELECTOR, sel)
             driver.execute_script('arguments[0].click();', btn)
             print(f'[DISCLAIMER] ✅ Clicked button: {sel} (value="{btn.get_attribute("value") or btn.text}")')
-            time.sleep(3)
+            time.sleep(1.5)
             return
         except:
             continue
@@ -278,7 +278,7 @@ def _handle_disclaimer(driver):
             print(f'[DISCLAIMER] Found button: "{val}" — clicking...')
             try:
                 driver.execute_script('arguments[0].click();', el)
-                time.sleep(3)
+                time.sleep(1.5)
                 return
             except:
                 continue
@@ -310,7 +310,7 @@ def wait_ready(driver, timeout=15):
         )
     except:
         pass
-    time.sleep(2)
+    time.sleep(0.5)
 
 
 def debug_page(driver, label=''):
@@ -464,7 +464,7 @@ def get_expiration_contracts(driver, asset_profile):
                 el = driver.find_element(By.CSS_SELECTOR, sel)
                 if el.tag_name == 'a' and el.is_displayed():
                     driver.execute_script('arguments[0].click();', el)
-                    time.sleep(2)
+                    time.sleep(1)
                     print(f'[EXPIRY] Clicked: {sel}')
                     break
             except:
@@ -521,7 +521,7 @@ def select_contract(driver, contract):
     from selenium.webdriver.common.keys import Keys
     try:
         driver.find_element(By.TAG_NAME, 'body').send_keys(Keys.ESCAPE)
-        time.sleep(0.5)
+        time.sleep(0.2)
     except:
         pass
 
@@ -534,7 +534,7 @@ def select_contract(driver, contract):
                 el = driver.find_element(By.CSS_SELECTOR, sel)
                 if el.tag_name == 'a' and el.is_displayed():
                     driver.execute_script('arguments[0].click();', el)
-                    time.sleep(2)
+                    time.sleep(1)
                     break
             except:
                 continue
@@ -650,7 +650,7 @@ def switch_to_view(driver, view_type):
     from selenium.webdriver.common.keys import Keys
     try:
         driver.find_element(By.TAG_NAME, 'body').send_keys(Keys.ESCAPE)
-        time.sleep(0.5)
+        time.sleep(0.2)
     except:
         pass
 
@@ -673,13 +673,13 @@ def switch_to_view(driver, view_type):
         print(f'[VIEW] ✅ Selected dropdown option: {target_label} (value={target_value})')
         
         # Wait for ASP.NET Postback
-        time.sleep(1)
+        time.sleep(0.5)
         wait_ready(driver)
         
         # Verify header update
         expected = 'Open Interest' if view_type == 'oi' else 'Volume'
-        for _ in range(20):
-            time.sleep(0.5)
+        for _ in range(10):
+            time.sleep(0.3)
             hdr = extract_header(driver)
             if expected in hdr:
                 print(f'[VIEW] Verified header updated to: {hdr}')
@@ -731,8 +731,8 @@ def switch_to_view(driver, view_type):
                     
                     # WAIT FOR HEADER TO UPDATE
                     expected = 'Open Interest' if view_type == 'oi' else 'Volume'
-                    for _ in range(20):  # Wait up to 10 seconds
-                        time.sleep(0.5)
+                    for _ in range(10):  # Wait up to 3 seconds
+                        time.sleep(0.3)
                         hdr = extract_header(driver)
                         if expected in hdr:
                             print(f'[VIEW] Verified header updated to: {hdr}')
@@ -755,7 +755,7 @@ def switch_to_view(driver, view_type):
 
 def extract_chart(driver, min_price=1000):
     """Extract data from all Highcharts charts on the page."""
-    time.sleep(2)
+    time.sleep(0.5)
     return driver.execute_script("""
         if (typeof Highcharts === 'undefined') return {error: 'No Highcharts'};
         var charts = (Highcharts.charts || []).filter(c => c != null);
@@ -1147,7 +1147,7 @@ def scrape_asset(driver, asset_id):
 
     print(f'[NAV] Loading {profile["short"]} page: {url}')
     driver.get(url)
-    time.sleep(5)
+    time.sleep(2)
 
     # Check for QuikStrike error page
     if is_error_page(driver):
@@ -1169,10 +1169,10 @@ def scrape_asset(driver, asset_id):
             return False
 
     wait_ready(driver)
-    time.sleep(3)
+    time.sleep(1)
 
-    # Debug current state
-    page_info = debug_page(driver, f'{profile["short"]} PAGE')
+    # Debug current state (skipped for performance)
+    # page_info = debug_page(driver, f'{profile["short"]} PAGE')
 
     # Get contracts
     contracts = get_expiration_contracts(driver, profile)
@@ -1259,7 +1259,7 @@ def main():
             return
 
         wait_ready(driver)
-        time.sleep(3)
+        time.sleep(1)
 
         # Scrape each asset
         for asset_id in assets:
