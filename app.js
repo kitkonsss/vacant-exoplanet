@@ -2010,29 +2010,38 @@ function renderAnalysisTab() {
         labelsRow.push({ strike: w.strike, color: 'var(--call-color)', label: `$${w.strike}`, sub: w.tier === 'primary' ? oiK : '', primary: w.tier === 'primary' });
     }
     labelsRow.sort((a, b) => a.strike - b.strike);
-    // Anti-overlap: multi-row greedy placement
-    // Each label has an estimated width in % units (~5% for short labels)
-    const MIN_PCT_GAP = 5;
-    const ROWS = [0, 18, 36]; // 3 possible vertical offsets
-    const rowLastPct = [[-999], [-999], [-999]]; // track last placed pct per row
+    // Anti-overlap: multi-row dynamic sequence placement to prevent overlapping
+    // Increase gap slightly for safety
+    const MIN_PCT_GAP = 8;
+    const rowLastPct = []; // dynamic array of rows: each element is an array of placed percentages
+    const rowOffsetBase = 28; // 28px height per row to prevent vertical text bounding box intersection
     const labelPcts = labelsRow.map(l => ({ ...l, pct: toPct(l.strike), offsetY: 0 }));
+
     for (const lbl of labelPcts) {
         let placed = false;
-        for (let r = 0; r < ROWS.length; r++) {
+        // Try to place in an existing row
+        for (let r = 0; r < rowLastPct.length; r++) {
             const lastPct = rowLastPct[r][rowLastPct[r].length - 1];
             if (lbl.pct - lastPct >= MIN_PCT_GAP) {
-                lbl.offsetY = ROWS[r];
+                lbl.offsetY = r * rowOffsetBase;
                 rowLastPct[r].push(lbl.pct);
                 placed = true;
                 break;
             }
         }
+        // If it doesn't fit in any existing row, create a new row cascade below
         if (!placed) {
-            // Force into least-congested row
-            lbl.offsetY = ROWS[2];
-            rowLastPct[2].push(lbl.pct);
+            const newRowIdx = rowLastPct.length;
+            lbl.offsetY = newRowIdx * rowOffsetBase;
+            rowLastPct.push([lbl.pct]);
         }
     }
+
+    // Calculate required height based on number of generated rows (maintain minimum 60px for aesthetics)
+    let totalRows = rowLastPct.length;
+    if (totalRows < 2) totalRows = 2;
+    const labelsContainerHeight = Math.max(60, totalRows * rowOffsetBase + 10);
+
     const labelsRowHtml = labelPcts.map(l => {
         return `<div style="position:absolute;left:${l.pct}%;transform:translateX(-50%);text-align:center;white-space:nowrap;top:${l.offsetY}px">
             <div style="font-size:${l.primary ? 11 : 9}px;font-weight:${l.primary ? 800 : 600};color:${l.color};opacity:${l.primary ? 1 : 0.7}">${l.label}</div>
@@ -2105,8 +2114,8 @@ function renderAnalysisTab() {
             </div>
         </div>
 
-        <!-- Labels row (below bar, clean horizontal) -->
-        <div style="position:relative;height:56px;margin-top:4px">
+        <!-- Labels row (below bar, dynamic height) -->
+        <div style="position:relative;height:${labelsContainerHeight}px;margin-top:4px">
             ${labelsRowHtml}
         </div>
 
