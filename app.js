@@ -86,6 +86,7 @@ let state = {
     data: { current: {}, friday: {}, monthly: {}, analysis: {}, chart: {} },
     refreshTimer: null,
     chartInitialized: false,
+    biasLock: null, // { label, score, direction, color, icon, isLongGamma, hasNoMansLand, hasBrokenWall, lockedAt }
 };
 
 // ========== MATH ==========
@@ -1064,6 +1065,135 @@ function calcMarketBias(d) {
     };
 }
 
+// ========== BIAS HYSTERESIS (Dead Zone + Structural Override) ==========
+// Prevents bias label from flipping on every scrape refresh.
+// Once a direction is established, requires crossing a significant threshold to flip.
+// Structural events (GEX flip, No Man's Land, strong broken wall) bypass the lock.
+const BIAS_FLIP_THRESHOLD = 15; // score must cross this far into opposite zone to flip
+
+function applyBiasHysteresis(rawBias, d) {
+    const assetKey = `biasLock_${state.activeAsset}`;
+
+    // Classify direction from score
+    const getDirection = (score) => {
+        if (score >= 5) return 'bullish';
+        if (score <= -5) return 'bearish';
+        return 'neutral';
+    };
+
+    // Load from localStorage if state doesn't have it
+    if (!state.biasLock) {
+        try {
+            const stored = localStorage.getItem(assetKey);
+            if (stored) state.biasLock = JSON.parse(stored);
+        } catch (e) { /* ignore */ }
+    }
+
+    const lock = state.biasLock;
+    const rawDirection = getDirection(rawBias.score);
+
+    // Check structural override conditions
+    const hasBrokenWall = !!(d.brokenCallWalls || []).find(bw => bw.volumeConf === 'strong')
+        || !!(d.brokenPutWalls || []).find(bw => bw.volumeConf === 'strong');
+    const hasNoMansLand = !!(d.risk && d.risk.noMansLand);
+
+    let structuralOverride = false;
+    if (lock) {
+        // GEX regime flipped
+        if (lock.isLongGamma !== d.isLongGamma) structuralOverride = true;
+        // No Man's Land appeared (wasn't there before)
+        if (hasNoMansLand && !lock.hasNoMansLand) structuralOverride = true;
+        // New strong broken wall appeared
+        if (hasBrokenWall && !lock.hasBrokenWall) structuralOverride = true;
+    }
+
+    // No existing lock → use raw bias, create lock
+    if (!lock || structuralOverride) {
+        const newLock = {
+            label: rawBias.label,
+            score: rawBias.score,
+            direction: rawDirection,
+            color: rawBias.color,
+            icon: rawBias.icon,
+            isLongGamma: d.isLongGamma,
+            hasNoMansLand: hasNoMansLand,
+            hasBrokenWall: hasBrokenWall,
+            lockedAt: Date.now(),
+        };
+        state.biasLock = newLock;
+        try { localStorage.setItem(assetKey, JSON.stringify(newLock)); } catch (e) { /* ignore */ }
+        return { ...rawBias, isLocked: false, rawScore: rawBias.score, overrideReason: structuralOverride ? 'structural' : null };
+    }
+
+    // Existing lock — apply hysteresis
+    const lockedDir = lock.direction;
+
+    // Same direction or neutral → allow label updates within same zone
+    if (lockedDir === rawDirection || lockedDir === 'neutral') {
+        // Update lock with new values (same zone, upgrade/downgrade is fine)
+        const newLock = {
+            ...lock,
+            label: rawBias.label,
+            score: rawBias.score,
+            direction: rawDirection === 'neutral' ? lockedDir : rawDirection, // keep old dir if raw is neutral
+            color: rawBias.color,
+            icon: rawBias.icon,
+            isLongGamma: d.isLongGamma,
+            hasNoMansLand: hasNoMansLand,
+            hasBrokenWall: hasBrokenWall,
+        };
+        // If raw is neutral but locked was directional, keep lock but allow natural decay
+        if (rawDirection === 'neutral' && lockedDir !== 'neutral') {
+            newLock.direction = lockedDir; // keep direction
+            // Use raw label/color/icon since it's NEUTRAL range, that's fine
+        }
+        state.biasLock = newLock;
+        try { localStorage.setItem(assetKey, JSON.stringify(newLock)); } catch (e) { /* ignore */ }
+        return { ...rawBias, isLocked: false, rawScore: rawBias.score };
+    }
+
+    // Opposite direction — check if threshold is crossed
+    const flipOk = (lockedDir === 'bullish' && rawBias.score <= -BIAS_FLIP_THRESHOLD)
+        || (lockedDir === 'bearish' && rawBias.score >= BIAS_FLIP_THRESHOLD);
+
+    if (flipOk) {
+        // Threshold crossed — flip the lock
+        const newLock = {
+            label: rawBias.label,
+            score: rawBias.score,
+            direction: rawDirection,
+            color: rawBias.color,
+            icon: rawBias.icon,
+            isLongGamma: d.isLongGamma,
+            hasNoMansLand: hasNoMansLand,
+            hasBrokenWall: hasBrokenWall,
+            lockedAt: Date.now(),
+        };
+        state.biasLock = newLock;
+        try { localStorage.setItem(assetKey, JSON.stringify(newLock)); } catch (e) { /* ignore */ }
+        return { ...rawBias, isLocked: false, rawScore: rawBias.score };
+    }
+
+    // Threshold NOT crossed — hold the lock, show locked state
+    // Return the locked bias label/color but expose rawScore for transparency
+    return {
+        ...rawBias,             // keep signals, counts, confidence from raw
+        label: lock.label,      // override label
+        color: lock.color,      // override color
+        icon: lock.icon,        // override icon
+        score: lock.score,      // override displayed score
+        isLocked: true,
+        rawScore: rawBias.score, // expose raw for UI transparency
+    };
+}
+
+function clearBiasLock() {
+    state.biasLock = null;
+    try {
+        localStorage.removeItem(`biasLock_${state.activeAsset}`);
+    } catch (e) { /* ignore */ }
+}
+
 // ========== PARSE ==========
 function parseVol2VolData(text) {
     const lines = text.trim().split('\n');
@@ -1422,6 +1552,7 @@ const STYLE_CONFIG = {
 function switchTradingStyle(style) {
     if (!STYLE_CONFIG[style] || style === state.tradingStyle) return;
     state.tradingStyle = style;
+    clearBiasLock(); // Reset bias lock when trading style changes
     document.querySelectorAll('.style-btn').forEach(b => {
         b.classList.toggle('active', b.dataset.style === style);
     });
@@ -1716,8 +1847,9 @@ function renderAnalysisTab() {
         return;
     }
 
-    // ── MARKET BIAS ──
-    const bias = calcMarketBias(d);
+    // ── MARKET BIAS (with Hysteresis) ──
+    const rawBias = calcMarketBias(d);
+    const bias = applyBiasHysteresis(rawBias, d);
 
     const isFallback = state.data.current?.oi?.underlyingIsFallback
         || state.data.monthly?.oi?.underlyingIsFallback
@@ -3140,8 +3272,8 @@ function renderAnalysisTab() {
             <div style="display:flex;align-items:center;gap:12px">
                 <div style="font-size:28px">${bias.icon}</div>
                 <div>
-                    <div style="font-size:22px;font-weight:900;color:${bias.color};letter-spacing:1px;line-height:1.1">${bias.label}</div>
-                    <div style="font-size:12px;color:var(--text-muted);font-weight:600;margin-top:2px">DIRECTIONAL BIAS</div>
+                    <div style="font-size:22px;font-weight:900;color:${bias.color};letter-spacing:1px;line-height:1.1">${bias.label}${bias.isLocked ? ' <span style="font-size:14px;opacity:0.7" title="Bias ล็อก — สัญญาณยังไม่แข็งแรงพอที่จะ Flip (ต้องข้าม ±' + BIAS_FLIP_THRESHOLD + ')">🔒</span>' : ''}</div>
+                    <div style="font-size:12px;color:var(--text-muted);font-weight:600;margin-top:2px">DIRECTIONAL BIAS${bias.isLocked ? ` <span style="color:var(--orange);font-size:10px">(Raw: ${bias.rawScore > 0 ? '+' : ''}${bias.rawScore})</span>` : ''}</div>
                 </div>
             </div>
             <div style="display:flex;align-items:center;gap:12px">
@@ -3296,8 +3428,9 @@ async function switchAsset(assetId) {
     if (!ASSET_PROFILES[assetId] || assetId === state.activeAsset) return;
     state.activeAsset = assetId;
 
-    // Reset data & chart
+    // Reset data, chart & bias lock
     state.data = { current: {}, friday: {}, monthly: {}, analysis: {}, chart: {} };
+    clearBiasLock();
     state.chartInitialized = false;
     if (chartInstance) {
         try { chartInstance.remove(); } catch (e) { }
