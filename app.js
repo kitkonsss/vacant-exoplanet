@@ -15,6 +15,10 @@ const ASSET_PROFILES = {
         oiHotThreshold: 100,
         volHotThreshold: 80,
         proximityRange: 100,           // for wall detection clustering
+        // ── Bias Engine Baselines — "neutral" levels for this asset ──
+        neutralPCR: 1.0,               // GC: PCR ~1.0 is truly balanced
+        neutralSkew: 1.05,             // GC: minimal structural skew
+        neutralCallPct: 0.50,          // GC: symmetric walls
         dataFolder: 'data',
         contracts: {
             current: {
@@ -48,6 +52,13 @@ const ASSET_PROFILES = {
         oiHotThreshold: 50,
         volHotThreshold: 40,
         proximityRange: 500,
+        // ── Bias Engine Baselines — adjusted for structural put hedging ──
+        // Institutions permanently hold protective puts → PCR, skew, and
+        // call-wall dominance are structurally elevated in equity indices.
+        // Bias engine measures DEVIATION from these baselines, not raw values.
+        neutralPCR: 1.20,              // NQ: PCR ~1.2 is normal (hedge puts)
+        neutralSkew: 1.25,             // NQ: 25% put skew is structural
+        neutralCallPct: 0.55,          // NQ: call walls normally 55% (covered calls)
         dataFolder: 'data/nq',
         contracts: {
             current: {
@@ -909,16 +920,21 @@ function calcMarketBias(d) {
     }
 
     // ── 4. P/C Ratio (Weight: 10) ──
+    // Uses asset-specific neutralPCR baseline so structural hedging (e.g. NQ puts)
+    // doesn't permanently bias the score bearish. Measures DEVIATION from normal.
     if (d.pcr !== undefined && d.pcr > 0) {
+        const basePCR = getProfile().neutralPCR || 1.0;
+        const pcrDev = d.pcr - basePCR; // positive = more puts than normal, negative = more calls
         let pcrScore = 0;
         let pcrDetail = '';
-        if (d.pcr < 0.6) { pcrScore = 1.0; pcrDetail = `PCR ${d.pcr.toFixed(2)} — Call dominant สุดขั้ว`; }
-        else if (d.pcr < 0.8) { pcrScore = 0.6; pcrDetail = `PCR ${d.pcr.toFixed(2)} — Call dominant`; }
-        else if (d.pcr < 0.95) { pcrScore = 0.2; pcrDetail = `PCR ${d.pcr.toFixed(2)} — เอียง Call เล็กน้อย`; }
-        else if (d.pcr <= 1.05) { pcrScore = 0; pcrDetail = `PCR ${d.pcr.toFixed(2)} — สมดุล`; }
-        else if (d.pcr <= 1.2) { pcrScore = -0.2; pcrDetail = `PCR ${d.pcr.toFixed(2)} — เอียง Put เล็กน้อย`; }
-        else if (d.pcr <= 1.5) { pcrScore = -0.6; pcrDetail = `PCR ${d.pcr.toFixed(2)} — Put dominant`; }
+        if (pcrDev < -0.4) { pcrScore = 1.0; pcrDetail = `PCR ${d.pcr.toFixed(2)} — Call dominant สุดขั้ว`; }
+        else if (pcrDev < -0.2) { pcrScore = 0.6; pcrDetail = `PCR ${d.pcr.toFixed(2)} — Call dominant`; }
+        else if (pcrDev < -0.05) { pcrScore = 0.2; pcrDetail = `PCR ${d.pcr.toFixed(2)} — เอียง Call เล็กน้อย`; }
+        else if (pcrDev <= 0.05) { pcrScore = 0; pcrDetail = `PCR ${d.pcr.toFixed(2)} — สมดุล`; }
+        else if (pcrDev <= 0.2) { pcrScore = -0.2; pcrDetail = `PCR ${d.pcr.toFixed(2)} — เอียง Put เล็กน้อย`; }
+        else if (pcrDev <= 0.4) { pcrScore = -0.6; pcrDetail = `PCR ${d.pcr.toFixed(2)} — Put dominant`; }
         else { pcrScore = -1.0; pcrDetail = `PCR ${d.pcr.toFixed(2)} — Put dominant สุดขั้ว`; }
+        if (basePCR !== 1.0) pcrDetail += ` (baseline ${basePCR.toFixed(2)})`;
         addSignal('P/C Ratio', pcrScore, 10, pcrDetail, '📊');
     }
 
@@ -981,34 +997,48 @@ function calcMarketBias(d) {
     }
 
     // ── 8. Wall Asymmetry (Weight: 5) ──
-    // Stronger put walls (support) = bullish, stronger call walls (resistance) = bearish  
+    // Uses asset-specific neutralCallPct baseline.
+    // NQ: call walls at 55% is normal (covered call selling), not bearish.
     if (d.putWalls && d.callWalls && d.putWalls.length > 0 && d.callWalls.length > 0) {
         const putOI = d.putWalls.reduce((sum, w) => sum + w.clusterOI, 0);
         const callOI = d.callWalls.reduce((sum, w) => sum + w.clusterOI, 0);
         const totalOI = putOI + callOI;
         if (totalOI > 0) {
             const putPct = putOI / totalOI;
-            // putPct > 0.5 = more support = bullish; < 0.5 = more resistance = bearish
-            const asymScore = (putPct - 0.5) * 4; // scale: 0.5 → 0, 0.75 → 1, 0.25 → -1
+            const baseCallPct = getProfile().neutralCallPct || 0.50;
+            const basePutPct = 1 - baseCallPct; // e.g. NQ: 0.45
+            // Measure deviation from baseline, not from 0.5
+            const asymScore = (putPct - basePutPct) * 4; // deviation × 4
             const clampedScore = Math.max(-1, Math.min(1, asymScore));
-            const wallDetail = putPct > 0.55 ? `Support หนากว่า (Put ${(putPct * 100).toFixed(0)}%)` :
-                putPct < 0.45 ? `Resistance หนากว่า (Call ${((1 - putPct) * 100).toFixed(0)}%)` : 'สมดุล';
+            const devFromBase = putPct - basePutPct;
+            const wallDetail = devFromBase > 0.05 ? `Support หนากว่า (Put ${(putPct * 100).toFixed(0)}%)` :
+                devFromBase < -0.05 ? `Resistance หนากว่า (Call ${((1 - putPct) * 100).toFixed(0)}%)` : 'สมดุล';
             addSignal('Wall Asymmetry', clampedScore, 5, wallDetail, '🧱');
         }
     }
 
     // ── 9. IV Skew (Weight: 5) ──
-    // High put skew = fear = bearish tail risk → bearish bias
-    // High call skew = upside demand → bullish bias
+    // Uses asset-specific neutralSkew baseline.
+    // NQ structural put skew ~25% is normal hedging, only deviation matters.
     if (d.risk && d.risk.components && d.risk.components.skew) {
         const skewDetail = d.risk.components.skew.detail || '';
+        const baseSkew = getProfile().neutralSkew || 1.05;
         let skewScore = 0;
+        // Extract the actual skew ratio from breakdown risk component
+        // skew.score: 0=flat, 6=mild, 14=high, 20=extreme (from calcBreakdownRisk)
+        const rawSkewScore = d.risk.components.skew.score;
+        // Adjust effective score by subtracting baseline contribution
+        // Higher baseline → need higher raw score to be considered "elevated"
+        const baselineOffset = (baseSkew - 1.05) * 40; // e.g. NQ baseline 1.25 → offset ~8
+        const adjScore = Math.max(0, rawSkewScore - baselineOffset);
         if (skewDetail.includes('Put Skew')) {
-            skewScore = d.risk.components.skew.score > 12 ? -0.8 : d.risk.components.skew.score > 5 ? -0.4 : -0.1;
+            skewScore = adjScore > 12 ? -0.8 : adjScore > 5 ? -0.4 : adjScore > 1 ? -0.1 : 0;
         } else if (skewDetail.includes('Call Skew')) {
-            skewScore = d.risk.components.skew.score > 12 ? 0.8 : d.risk.components.skew.score > 5 ? 0.4 : 0.1;
+            skewScore = adjScore > 12 ? 0.8 : adjScore > 5 ? 0.4 : adjScore > 1 ? 0.1 : 0;
         }
-        addSignal('IV Skew', skewScore, 5, skewDetail || 'Flat', '📐');
+        let skewLabel = skewDetail || 'Flat';
+        if (baseSkew > 1.1) skewLabel += ` (baseline ${((baseSkew - 1) * 100).toFixed(0)}%)`;
+        addSignal('IV Skew', skewScore, 5, skewLabel, '📐');
     }
 
     // ── 10. Gamma Zone Position (Weight: 5) ──
