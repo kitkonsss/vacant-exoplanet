@@ -36,7 +36,7 @@ const ASSET_PROFILES = {
                 intradayUrl: MY_BASE + '/data/monthly_IntradayData.txt',
                 oiUrl: MY_BASE + '/data/monthly_OIData.txt',
             },
-            analysis: { label: 'Trade Setup' },
+            analysis: { label: 'Position Bias' },
             chart: { label: 'Live Chart' },
         },
     },
@@ -76,7 +76,7 @@ const ASSET_PROFILES = {
                 intradayUrl: MY_BASE + '/data/nq/monthly_IntradayData.txt',
                 oiUrl: MY_BASE + '/data/nq/monthly_OIData.txt',
             },
-            analysis: { label: 'Trade Setup' },
+            analysis: { label: 'Position Bias' },
             chart: { label: 'Live Chart' },
         },
     },
@@ -1593,6 +1593,228 @@ let chartInstance = null;
 let candleSeries = null;
 let wallLines = []; // multi-wall lines
 
+function escapeHtml(value) {
+    return String(value ?? '').replace(/[&<>"']/g, ch => ({
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+        "'": '&#39;',
+    }[ch]));
+}
+
+function fmtNumber(value, digits = 0) {
+    if (value === null || value === undefined || Number.isNaN(Number(value))) return '-';
+    return Number(value).toLocaleString(undefined, {
+        maximumFractionDigits: digits,
+        minimumFractionDigits: digits,
+    });
+}
+
+function fmtStrike(value) {
+    if (value === null || value === undefined || Number.isNaN(Number(value))) return '-';
+    return Number(value).toLocaleString(undefined, { maximumFractionDigits: 2 });
+}
+
+function biasDisplay(label, score) {
+    const normalized = String(label || 'neutral').toLowerCase();
+    if (normalized.includes('bull')) {
+        return { label: label.replaceAll('_', ' ').toUpperCase(), color: 'var(--green)', bg: 'rgba(38,166,154,.12)' };
+    }
+    if (normalized.includes('bear')) {
+        return { label: label.replaceAll('_', ' ').toUpperCase(), color: 'var(--red)', bg: 'rgba(239,83,80,.12)' };
+    }
+    const color = score > 0 ? 'var(--green)' : score < 0 ? 'var(--red)' : 'var(--text-secondary)';
+    return { label: 'NEUTRAL', color, bg: 'rgba(255,255,255,.06)' };
+}
+
+function sideColor(side) {
+    if (side === 'call_wall') return 'var(--call-color)';
+    if (side === 'put_wall') return 'var(--put-color)';
+    return 'var(--text-secondary)';
+}
+
+function positionBiasUrl(fileName) {
+    const folder = getProfile().dataFolder || 'data';
+    return `${folder}/${fileName}`;
+}
+
+async function fetchJsonSoft(url) {
+    try {
+        const res = await fetch(`${url}?t=${Date.now()}`);
+        if (!res.ok) return null;
+        return await res.json();
+    } catch (e) {
+        console.warn(`Position bias fetch failed: ${url}`, e);
+        return null;
+    }
+}
+
+async function fetchPositionBiasData() {
+    const profile = getProfile();
+    const cached = state.data.analysis?.asset === profile.id ? state.data.analysis.positionBias : null;
+    if (cached) return cached;
+
+    const keys = ['current', 'friday', 'monthly'];
+    const [summary, ...contracts] = await Promise.all([
+        fetchJsonSoft(positionBiasUrl('position_bias_summary.json')),
+        ...keys.map(key => fetchJsonSoft(positionBiasUrl(`${key}_PositionBias.json`))),
+    ]);
+
+    const payload = {
+        summary,
+        contracts: keys.map((key, idx) => contracts[idx]).filter(Boolean),
+    };
+    state.data.analysis = { asset: profile.id, positionBias: payload };
+    return payload;
+}
+
+function renderMetric(label, value, accent = 'var(--text-primary)') {
+    return `
+        <div class="position-metric">
+            <span>${escapeHtml(label)}</span>
+            <b style="color:${accent}">${value}</b>
+        </div>`;
+}
+
+function renderWallLevel(label, level) {
+    if (!level) {
+        return renderMetric(label, '-');
+    }
+    const dist = level.distance;
+    const distText = dist && dist.points !== null
+        ? `${dist.points > 0 ? '+' : ''}${fmtNumber(dist.points, 1)} pts`
+        : '-';
+    return `
+        <div class="position-wall">
+            <div>
+                <span>${escapeHtml(label)}</span>
+                <b style="color:${sideColor(level.side)}">${fmtStrike(level.strike)}</b>
+            </div>
+            <div>
+                <span>OI</span>
+                <b>${fmtNumber(level.total_oi || 0)}</b>
+            </div>
+            <div>
+                <span>Dist</span>
+                <b>${escapeHtml(distText)}</b>
+            </div>
+        </div>`;
+}
+
+function renderPositionMap(levels) {
+    if (!levels || levels.length === 0) {
+        return '<div class="placeholder-msg"><div class="desc">No position map data</div></div>';
+    }
+    return `
+        <div class="position-map">
+            <div class="position-map-head">
+                <span>Strike</span><span>Type</span><span>Call OI</span><span>Put OI</span><span>Vol/OI</span><span>Dist</span>
+            </div>
+            ${levels.slice(0, 8).map(level => {
+                const dist = level.distance?.points;
+                const distText = dist === null || dist === undefined ? '-' : `${dist > 0 ? '+' : ''}${fmtNumber(dist, 1)}`;
+                return `
+                    <div class="position-map-row">
+                        <b>${fmtStrike(level.strike)}</b>
+                        <span style="color:${sideColor(level.side)}">${escapeHtml(level.side || 'mixed')}</span>
+                        <span>${fmtNumber(level.call_oi || 0)}</span>
+                        <span>${fmtNumber(level.put_oi || 0)}</span>
+                        <span>${level.activity_vs_oi === null || level.activity_vs_oi === undefined ? '-' : fmtNumber(level.activity_vs_oi, 2)}</span>
+                        <span>${escapeHtml(distText)}</span>
+                    </div>`;
+            }).join('')}
+        </div>`;
+}
+
+function renderPositionContractCard(contract) {
+    const bias = biasDisplay(contract.position_bias?.label, contract.position_bias?.score || 0);
+    const totals = contract.totals || {};
+    const structure = contract.structure || {};
+    const walls = contract.walls || {};
+    const title = `${contract.contract_key || ''} ${contract.contract ? `[${contract.contract}]` : ''}`.trim();
+
+    return `
+        <div class="analysis-card position-card">
+            <div class="ac-title">
+                <span>${escapeHtml(title || 'Contract')}</span>
+                <span class="position-badge" style="color:${bias.color};background:${bias.bg};border-color:${bias.color}40">${bias.label}</span>
+            </div>
+            <div class="position-score-row">
+                <div>
+                    <span>Bias Score</span>
+                    <b style="color:${bias.color}">${contract.position_bias?.score > 0 ? '+' : ''}${fmtNumber(contract.position_bias?.score || 0, 2)}</b>
+                </div>
+                <div>
+                    <span>DTE</span>
+                    <b>${fmtNumber(contract.dte, 2)}</b>
+                </div>
+                <div>
+                    <span>Future</span>
+                    <b>${fmtStrike(contract.future_price)}</b>
+                </div>
+                <div>
+                    <span>Confidence</span>
+                    <b>${escapeHtml(contract.confidence || '-')}</b>
+                </div>
+            </div>
+            <div class="position-metrics-grid">
+                ${renderMetric('Open Interest', fmtNumber(totals.open_interest || 0))}
+                ${renderMetric('OI P/C', fmtNumber(totals.oi_put_call_ratio, 3), (totals.oi_put_call_ratio || 0) > 1 ? 'var(--put-color)' : 'var(--call-color)')}
+                ${renderMetric('Intraday Volume', fmtNumber(totals.intraday_volume || 0))}
+                ${renderMetric('Volume/OI', fmtNumber(totals.volume_vs_oi, 3))}
+                ${renderMetric('Support OI', fmtNumber(structure.support_oi_below_price || 0), 'var(--put-color)')}
+                ${renderMetric('Resistance OI', fmtNumber(structure.resistance_oi_above_price || 0), 'var(--call-color)')}
+            </div>
+            <div class="position-wall-grid">
+                ${renderWallLevel('Dominant Call', walls.dominant_call)}
+                ${renderWallLevel('Dominant Put', walls.dominant_put)}
+                ${renderWallLevel('Largest Position', walls.largest_combined_position)}
+                ${renderWallLevel('Nearest Call Above', walls.nearest_call_above)}
+                ${renderWallLevel('Nearest Put Below', walls.nearest_put_below)}
+            </div>
+            ${renderPositionMap(contract.position_map)}
+        </div>`;
+}
+
+async function renderPositionBiasTab() {
+    const container = document.getElementById('analysisGrid');
+    const header = document.getElementById('analysisHeader');
+    const pulseEl = document.getElementById('marketPulse');
+    if (pulseEl) pulseEl.innerHTML = '';
+
+    header.innerHTML = '';
+    container.innerHTML = '<div class="placeholder-msg"><div class="desc">Loading position bias...</div></div>';
+
+    const payload = await fetchPositionBiasData();
+    const summary = payload.summary;
+    const contracts = payload.contracts || [];
+
+    if (!summary && contracts.length === 0) {
+        container.innerHTML = '<div class="placeholder-msg"><div class="title">No Position Bias Data</div><div class="desc">The scraper has not published position-bias JSON yet.</div></div>';
+        return;
+    }
+
+    const bias = biasDisplay(summary?.position_bias?.label, summary?.position_bias?.score || 0);
+    const generated = summary?.generated_at ? new Date(summary.generated_at).toLocaleString() : '-';
+    const score = summary?.position_bias?.score ?? 0;
+
+    header.innerHTML = `
+        <div class="position-summary">
+            <div>
+                <div class="position-kicker">${escapeHtml(getProfile().label)} Position Bias</div>
+                <div class="position-headline" style="color:${bias.color}">${bias.label}</div>
+            </div>
+            <div class="position-summary-stats">
+                <div><span>Score</span><b style="color:${bias.color}">${score > 0 ? '+' : ''}${fmtNumber(score, 2)}</b></div>
+                <div><span>Contracts</span><b>${fmtNumber(summary?.contracts?.length || contracts.length)}</b></div>
+                <div><span>Updated</span><b>${escapeHtml(generated)}</b></div>
+            </div>
+        </div>`;
+
+    container.innerHTML = contracts.map(renderPositionContractCard).join('');
+}
+
 function plotWallsOnChart() {
     if (!candleSeries) return;
 
@@ -1724,6 +1946,8 @@ function renderAnalysisTab() {
     const header = document.getElementById('analysisHeader');
     const pulseEl = document.getElementById('marketPulse');
     if (pulseEl) pulseEl.innerHTML = '';
+    void renderPositionBiasTab();
+    return;
 
     const timeframes = [
         { key: 'current', label: 'Daily' },
@@ -3512,6 +3736,7 @@ async function switchAsset(assetId) {
 async function refreshData() {
     const btn = document.querySelector('.refresh-btn');
     btn.textContent = '⟳ Loading...';
+    if (state.activeTab === 'analysis') state.data.analysis = {};
     btn.disa = await fetchTabData(state.activeTab);
     renderActiveTab();
     btn.textContent = '⟳ Refresh';

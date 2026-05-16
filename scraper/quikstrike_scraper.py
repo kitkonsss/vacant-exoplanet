@@ -19,7 +19,9 @@ import time
 import re
 import shutil
 import subprocess
-from datetime import datetime
+import csv
+import io
+from datetime import datetime, timezone
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
@@ -416,7 +418,7 @@ def get_expiration_contracts(driver, asset_profile):
         var links = document.querySelectorAll('a[id*="lbExpiration"]');
         var result = [];
         links.forEach(function(a) {
-            var txt = a.textContent.replace(/\s+/g,' ').trim().split(' ')[0];
+            var txt = a.textContent.replace(/\\s+/g,' ').trim().split(' ')[0];
             result.push({id: a.id.slice(-40), txt: txt, vis: a.offsetParent !== null});
         });
         return result;
@@ -434,11 +436,11 @@ def get_expiration_contracts(driver, asset_profile):
         document.querySelectorAll('a[id*="lbExpiration"]').forEach(function(a) {
             var id = a.id || '';
             // Get just the first line of text (popup links have lots of whitespace)
-            var txt = a.textContent.replace(/\s+/g,' ').trim().split(' ')[0];
+            var txt = a.textContent.replace(/\\s+/g,' ').trim().split(' ')[0];
             if (contractPattern.test(txt) && txt.length < 15) {
                 var title = a.title || '';
                 var dte = null;
-                var match = title.match(/([\d.]+)\s*DTE/i);
+                var match = title.match(/([\\d.]+)\\s*DTE/i);
                 if (match) dte = parseFloat(match[1]);
                 if (!result.find(c => c.text === txt)) {
                     result.push({text: txt, id: id, title: title, dte: dte});
@@ -475,11 +477,11 @@ def get_expiration_contracts(driver, asset_profile):
             var contractPattern = new RegExp(arguments[0]);
             document.querySelectorAll('a[id*="lbExpiration"]').forEach(function(a) {
                 var id = a.id || '';
-                var txt = a.textContent.replace(/\s+/g,' ').trim().split(' ')[0];
+                var txt = a.textContent.replace(/\\s+/g,' ').trim().split(' ')[0];
                 if (contractPattern.test(txt) && txt.length < 15) {
                     var title = a.title || '';
                     var dte = null;
-                    var match = title.match(/([\d.]+)\s*DTE/i);
+                    var match = title.match(/([\\d.]+)\\s*DTE/i);
                     if (match) dte = parseFloat(match[1]);
                     if (!result.find(c => c.text === txt)) {
                         result.push({text: txt, id: id, title: title, dte: dte});
@@ -917,6 +919,434 @@ def chart_to_text(chart_data, header_line, asset_id='gc'):
 
 
 # ============================================================
+# POSITION BIAS ANALYSIS (Vol2Vol -> position map, no trade setup)
+# ============================================================
+
+CONTRACT_KEYS = ('current', 'friday', 'monthly')
+POSITION_BIAS_VERSION = 1
+
+
+def _to_float(value, default=None):
+    try:
+        if value is None:
+            return default
+        if isinstance(value, (int, float)):
+            return float(value)
+        cleaned = str(value).replace(',', '').strip()
+        if cleaned == '':
+            return default
+        return float(cleaned)
+    except (TypeError, ValueError):
+        return default
+
+
+def _to_int(value, default=0):
+    num = _to_float(value, None)
+    if num is None:
+        return default
+    return int(round(num))
+
+
+def _extract_header_number(header, label):
+    match = re.search(rf'{re.escape(label)}:\s*([-+]?\d[\d,]*(?:\.\d+)?)', header, re.I)
+    return _to_float(match.group(1), None) if match else None
+
+
+def _safe_div(numerator, denominator, default=0.0):
+    if not denominator:
+        return default
+    return numerator / denominator
+
+
+def _clamp(value, low, high):
+    return max(low, min(high, value))
+
+
+def _round_or_none(value, digits=2):
+    if value is None:
+        return None
+    return round(float(value), digits)
+
+
+def parse_vol2vol_file(path):
+    """Parse one dashboard-compatible Vol2Vol text file."""
+    if not path or not os.path.isfile(path):
+        return None
+
+    with open(path, encoding='utf-8') as f:
+        raw = f.read().strip()
+    if not raw:
+        return None
+
+    lines = [line.strip() for line in raw.splitlines() if line.strip()]
+    if len(lines) < 2:
+        return None
+
+    header = ' '.join(lines[0].split())
+    reader = csv.DictReader(io.StringIO('\n'.join(lines[1:])))
+    strikes = []
+    for row in reader:
+        strike = _to_float(row.get('Strike'), None)
+        if strike is None:
+            continue
+        strikes.append({
+            'strike': strike,
+            'call': _to_int(row.get('Call')),
+            'put': _to_int(row.get('Put')),
+            'vol_settle': _to_float(row.get('Vol Settle'), 0.0) or 0.0,
+        })
+
+    option_symbol = None
+    symbol_match = re.search(r'Option Symbol:\s*([A-Z0-9]+)', header, re.I)
+    if symbol_match:
+        option_symbol = symbol_match.group(1)
+
+    dte = None
+    dte_match = re.search(r'\(([\d.]+)\s*DTE\)', header, re.I)
+    if dte_match:
+        dte = _to_float(dte_match.group(1), None)
+
+    data_type = 'intraday' if 'Intraday Volume' in header else 'open_interest'
+    total_put = _extract_header_number(header, 'Put')
+    total_call = _extract_header_number(header, 'Call')
+
+    return {
+        'path': path,
+        'header': header,
+        'data_type': data_type,
+        'contract': option_symbol,
+        'dte': dte,
+        'future_price': _extract_header_number(header, 'FutPrc'),
+        'future_change': _extract_header_number(header, 'Future Chg'),
+        'vol': _extract_header_number(header, 'Vol'),
+        'vol_change': _extract_header_number(header, 'Vol Chg'),
+        'total_put': _to_int(total_put, sum(s['put'] for s in strikes)),
+        'total_call': _to_int(total_call, sum(s['call'] for s in strikes)),
+        'strikes': strikes,
+    }
+
+
+def _distance_payload(strike, price):
+    if strike is None or price is None:
+        return {'points': None, 'pct': None, 'side': 'unknown'}
+    points = strike - price
+    if abs(points) < 1e-9:
+        side = 'at_price'
+    elif points > 0:
+        side = 'above'
+    else:
+        side = 'below'
+    return {
+        'points': round(points, 2),
+        'pct': round(_safe_div(points, price) * 100, 3) if price else None,
+        'side': side,
+    }
+
+
+def _level_payload(row, price, oi_key, intraday_by_strike=None):
+    if not row:
+        return None
+    strike = row['strike']
+    intraday = (intraday_by_strike or {}).get(strike, {})
+    call_oi = row.get('call', 0)
+    put_oi = row.get('put', 0)
+    total_oi = call_oi + put_oi
+    call_vol = intraday.get('call', 0)
+    put_vol = intraday.get('put', 0)
+    total_vol = call_vol + put_vol
+    if call_oi > put_oi * 1.25:
+        side = 'call_wall'
+    elif put_oi > call_oi * 1.25:
+        side = 'put_wall'
+    else:
+        side = 'mixed'
+    return {
+        'strike': _round_or_none(strike, 2),
+        'side': side,
+        oi_key: total_oi,
+        'call_oi': call_oi,
+        'put_oi': put_oi,
+        'net_call_minus_put': call_oi - put_oi,
+        'intraday_volume': total_vol,
+        'call_volume': call_vol,
+        'put_volume': put_vol,
+        'activity_vs_oi': round(_safe_div(total_vol, total_oi), 4) if total_oi else None,
+        'distance': _distance_payload(strike, price),
+    }
+
+
+def _best(rows, key, predicate=None):
+    candidates = [r for r in rows if (predicate(r) if predicate else True) and r.get(key, 0) > 0]
+    if not candidates:
+        return None
+    return max(candidates, key=lambda r: r.get(key, 0))
+
+
+def _nearest(rows, key, price, side):
+    if price is None:
+        return None
+    if side == 'above':
+        candidates = [r for r in rows if r['strike'] > price and r.get(key, 0) > 0]
+        return min(candidates, key=lambda r: r['strike'] - price) if candidates else None
+    candidates = [r for r in rows if r['strike'] < price and r.get(key, 0) > 0]
+    return min(candidates, key=lambda r: price - r['strike']) if candidates else None
+
+
+def _bias_label(score):
+    if score >= 35:
+        return 'strong_bullish'
+    if score >= 12:
+        return 'bullish'
+    if score <= -35:
+        return 'strong_bearish'
+    if score <= -12:
+        return 'bearish'
+    return 'neutral'
+
+
+def _confidence_label(analysis):
+    total_oi = analysis['totals']['open_interest']
+    if total_oi <= 0:
+        return 'low'
+    concentration = analysis['structure'].get('top5_oi_share') or 0
+    wall_gap = abs((analysis['walls'].get('dominant_call') or {}).get('call_oi', 0) -
+                   (analysis['walls'].get('dominant_put') or {}).get('put_oi', 0))
+    wall_gap_share = _safe_div(wall_gap, total_oi)
+    if concentration >= 0.35 or wall_gap_share >= 0.12:
+        return 'high'
+    if concentration >= 0.20 or wall_gap_share >= 0.06:
+        return 'medium'
+    return 'low'
+
+
+def analyze_contract_position(asset_id, contract_key, oi_data, intraday_data=None):
+    """Build a position map and directional market bias from one contract's Vol2Vol data."""
+    if not oi_data or not oi_data.get('strikes'):
+        return None
+
+    price = oi_data.get('future_price') or (intraday_data or {}).get('future_price')
+    oi_rows = sorted(oi_data['strikes'], key=lambda r: r['strike'])
+    intraday_by_strike = {
+        r['strike']: r
+        for r in (intraday_data or {}).get('strikes', [])
+    }
+
+    total_call_oi = oi_data.get('total_call') or sum(r['call'] for r in oi_rows)
+    total_put_oi = oi_data.get('total_put') or sum(r['put'] for r in oi_rows)
+    total_oi = total_call_oi + total_put_oi
+    total_call_vol = (intraday_data or {}).get('total_call') or sum(r.get('call', 0) for r in intraday_by_strike.values())
+    total_put_vol = (intraday_data or {}).get('total_put') or sum(r.get('put', 0) for r in intraday_by_strike.values())
+    total_vol = total_call_vol + total_put_vol
+
+    dominant_call = _best(oi_rows, 'call')
+    dominant_put = _best(oi_rows, 'put')
+    max_position = _best(
+        [{'strike': r['strike'], 'call': r['call'], 'put': r['put'], 'total': r['call'] + r['put']} for r in oi_rows],
+        'total'
+    )
+    nearest_call_above = _nearest(oi_rows, 'call', price, 'above')
+    nearest_put_below = _nearest(oi_rows, 'put', price, 'below')
+    strongest_call_above = _best(oi_rows, 'call', lambda r: price is not None and r['strike'] > price)
+    strongest_put_below = _best(oi_rows, 'put', lambda r: price is not None and r['strike'] < price)
+
+    levels = sorted(
+        oi_rows,
+        key=lambda r: (r.get('call', 0) + r.get('put', 0), max(r.get('call', 0), r.get('put', 0))),
+        reverse=True
+    )[:12]
+
+    top5_oi = sum((r['call'] + r['put']) for r in levels[:5])
+    support_oi = sum(r['put'] for r in oi_rows if price is not None and r['strike'] < price)
+    resistance_oi = sum(r['call'] for r in oi_rows if price is not None and r['strike'] > price)
+    call_vol_above = sum(r.get('call', 0) for s, r in intraday_by_strike.items() if price is not None and s > price)
+    put_vol_below = sum(r.get('put', 0) for s, r in intraday_by_strike.items() if price is not None and s < price)
+
+    score = 0.0
+    drivers = []
+
+    if support_oi or resistance_oi:
+        pressure_score = _clamp(_safe_div(support_oi - resistance_oi, support_oi + resistance_oi) * 38, -38, 38)
+        score += pressure_score
+        drivers.append({
+            'name': 'position_pressure',
+            'score': round(pressure_score, 2),
+            'detail': 'put OI below price as support vs call OI above price as resistance',
+        })
+
+    if max_position and price:
+        magnet_dist = max_position['strike'] - price
+        magnet_score = _clamp(_safe_div(magnet_dist, price) * 1000, -14, 14)
+        score += magnet_score
+        drivers.append({
+            'name': 'largest_position_magnet',
+            'score': round(magnet_score, 2),
+            'detail': f'largest combined OI at {max_position["strike"]:g}',
+        })
+
+    pcr = _safe_div(total_put_oi, total_call_oi, None)
+    if pcr is not None:
+        if pcr >= 1.25:
+            pcr_score = -8
+        elif pcr <= 0.80:
+            pcr_score = 8
+        else:
+            pcr_score = 0
+        score += pcr_score
+        drivers.append({
+            'name': 'oi_put_call_ratio',
+            'score': pcr_score,
+            'detail': f'OI P/C {pcr:.2f}',
+        })
+
+    if total_vol:
+        flow_score = _clamp(_safe_div(call_vol_above - put_vol_below, total_vol) * 30, -18, 18)
+        score += flow_score
+        drivers.append({
+            'name': 'intraday_flow_location',
+            'score': round(flow_score, 2),
+            'detail': 'call volume above price vs put volume below price',
+        })
+
+    if price and dominant_call and price > dominant_call['strike']:
+        breakout_score = min(18, _safe_div(dominant_call['call'], total_oi) * 90)
+        score += breakout_score
+        drivers.append({
+            'name': 'above_dominant_call_wall',
+            'score': round(breakout_score, 2),
+            'detail': f'price is above dominant call wall {dominant_call["strike"]:g}',
+        })
+    if price and dominant_put and price < dominant_put['strike']:
+        breakdown_score = -min(18, _safe_div(dominant_put['put'], total_oi) * 90)
+        score += breakdown_score
+        drivers.append({
+            'name': 'below_dominant_put_wall',
+            'score': round(breakdown_score, 2),
+            'detail': f'price is below dominant put wall {dominant_put["strike"]:g}',
+        })
+
+    score = round(_clamp(score, -100, 100), 2)
+    analysis = {
+        'version': POSITION_BIAS_VERSION,
+        'asset': ASSET_PROFILES[asset_id]['short'],
+        'contract_key': contract_key,
+        'contract': oi_data.get('contract') or (intraday_data or {}).get('contract'),
+        'dte': oi_data.get('dte') if oi_data.get('dte') is not None else (intraday_data or {}).get('dte'),
+        'generated_at': datetime.now(timezone.utc).isoformat(timespec='seconds').replace('+00:00', 'Z'),
+        'future_price': _round_or_none(price, 2),
+        'position_bias': {
+            'score': score,
+            'label': _bias_label(score),
+            'drivers': drivers,
+        },
+        'totals': {
+            'open_interest': total_oi,
+            'call_oi': total_call_oi,
+            'put_oi': total_put_oi,
+            'oi_put_call_ratio': round(pcr, 3) if pcr is not None else None,
+            'intraday_volume': total_vol,
+            'call_volume': total_call_vol,
+            'put_volume': total_put_vol,
+            'volume_put_call_ratio': round(_safe_div(total_put_vol, total_call_vol), 3) if total_call_vol else None,
+            'volume_vs_oi': round(_safe_div(total_vol, total_oi), 4) if total_oi else None,
+        },
+        'structure': {
+            'support_oi_below_price': support_oi,
+            'resistance_oi_above_price': resistance_oi,
+            'top5_oi_share': round(_safe_div(top5_oi, total_oi), 4) if total_oi else None,
+            'call_volume_above_price': call_vol_above,
+            'put_volume_below_price': put_vol_below,
+        },
+        'walls': {
+            'dominant_call': _level_payload(dominant_call, price, 'total_oi', intraday_by_strike),
+            'dominant_put': _level_payload(dominant_put, price, 'total_oi', intraday_by_strike),
+            'largest_combined_position': _level_payload(max_position, price, 'total_oi', intraday_by_strike),
+            'nearest_call_above': _level_payload(nearest_call_above, price, 'total_oi', intraday_by_strike),
+            'nearest_put_below': _level_payload(nearest_put_below, price, 'total_oi', intraday_by_strike),
+            'strongest_call_above': _level_payload(strongest_call_above, price, 'total_oi', intraday_by_strike),
+            'strongest_put_below': _level_payload(strongest_put_below, price, 'total_oi', intraday_by_strike),
+        },
+        'position_map': [_level_payload(row, price, 'total_oi', intraday_by_strike) for row in levels],
+        'note': 'Position-bias read only. No entry, stop, target, or trade setup is produced.',
+    }
+    analysis['confidence'] = _confidence_label(analysis)
+    return analysis
+
+
+def build_asset_position_bias(asset_id):
+    """Generate per-contract and aggregate position bias JSON files for an asset."""
+    out_dir = get_output_dir(asset_id)
+    os.makedirs(out_dir, exist_ok=True)
+
+    contract_analyses = []
+    for key in CONTRACT_KEYS:
+        oi_path = os.path.join(out_dir, f'{key}_OIData.txt')
+        intraday_path = os.path.join(out_dir, f'{key}_IntradayData.txt')
+        oi_data = parse_vol2vol_file(oi_path)
+        intraday_data = parse_vol2vol_file(intraday_path)
+        analysis = analyze_contract_position(asset_id, key, oi_data, intraday_data)
+        if not analysis:
+            print(f'[BIAS] {ASSET_PROFILES[asset_id]["short"]}/{key}: no OI data, skipped')
+            continue
+
+        out_path = os.path.join(out_dir, f'{key}_PositionBias.json')
+        with open(out_path, 'w', encoding='utf-8') as f:
+            json.dump(analysis, f, indent=2, ensure_ascii=False)
+            f.write('\n')
+        print(f'[BIAS] Saved {os.path.basename(out_path)} ({analysis["position_bias"]["label"]}, score={analysis["position_bias"]["score"]})')
+        contract_analyses.append(analysis)
+
+    if not contract_analyses:
+        return None
+
+    weights = {'current': 0.45, 'friday': 0.25, 'monthly': 0.30}
+    seen_contracts = set()
+    weighted = []
+    for item in contract_analyses:
+        identity = item.get('contract') or item['contract_key']
+        if identity in seen_contracts:
+            continue
+        seen_contracts.add(identity)
+        weighted.append((item, weights.get(item['contract_key'], 0.2)))
+
+    weight_sum = sum(w for _, w in weighted) or 1
+    aggregate_score = round(sum(item['position_bias']['score'] * w for item, w in weighted) / weight_sum, 2)
+    summary = {
+        'version': POSITION_BIAS_VERSION,
+        'asset': ASSET_PROFILES[asset_id]['short'],
+        'asset_name': ASSET_PROFILES[asset_id]['name'],
+        'generated_at': datetime.now(timezone.utc).isoformat(timespec='seconds').replace('+00:00', 'Z'),
+        'position_bias': {
+            'score': aggregate_score,
+            'label': _bias_label(aggregate_score),
+            'method': 'weighted unique contract position bias',
+        },
+        'contracts': [
+            {
+                'contract_key': item['contract_key'],
+                'contract': item.get('contract'),
+                'dte': item.get('dte'),
+                'future_price': item.get('future_price'),
+                'score': item['position_bias']['score'],
+                'label': item['position_bias']['label'],
+                'confidence': item.get('confidence'),
+                'dominant_call_wall': (item['walls'].get('dominant_call') or {}).get('strike'),
+                'dominant_put_wall': (item['walls'].get('dominant_put') or {}).get('strike'),
+                'largest_position': (item['walls'].get('largest_combined_position') or {}).get('strike'),
+            }
+            for item in contract_analyses
+        ],
+        'note': 'Aggregates Vol2Vol position placement only; this intentionally excludes trade setup fields.',
+    }
+
+    summary_path = os.path.join(out_dir, 'position_bias_summary.json')
+    with open(summary_path, 'w', encoding='utf-8') as f:
+        json.dump(summary, f, indent=2, ensure_ascii=False)
+        f.write('\n')
+    print(f'[BIAS] Saved {os.path.basename(summary_path)} ({summary["position_bias"]["label"]}, score={aggregate_score})')
+    return summary
+
+
+# ============================================================
 # SCRAPING
 # ============================================================
 
@@ -1185,6 +1615,7 @@ def scrape_asset(driver, asset_id):
         print('[FALLBACK] Scraping current view...')
         scrape_view(driver, 'intraday', 'current', skip_switch=True, output_dir=output_dir, asset_id=asset_id)
         scrape_view(driver, 'oi', 'current', output_dir=output_dir, asset_id=asset_id)
+        build_asset_position_bias(asset_id)
         return True
 
     # Classify
@@ -1218,6 +1649,7 @@ def scrape_asset(driver, asset_id):
         else:
             print(f'\n[SKIP] {key}: no contract')
 
+    build_asset_position_bias(asset_id)
     return True
 
 
@@ -1231,12 +1663,22 @@ def main():
     parser = argparse.ArgumentParser(description='QuikStrike Vol2Vol Scraper v4 — Multi-Asset')
     parser.add_argument('--asset', choices=['gc', 'nq', 'all'], default='all',
                         help='Which asset to scrape (default: all)')
+    parser.add_argument('--analyze-only', action='store_true',
+                        help='Build position-bias JSON from existing data files without opening QuikStrike')
     args = parser.parse_args()
 
     if args.asset == 'all':
         assets = ASSETS_TO_SCRAPE
     else:
         assets = [args.asset]
+
+    if args.analyze_only:
+        print('='*60)
+        print('  Vol2Vol Position Bias Analysis')
+        print('='*60)
+        for asset_id in assets:
+            build_asset_position_bias(asset_id)
+        return
 
     print('='*60)
     print('  QuikStrike Vol2Vol Scraper v4 — Multi-Asset')
@@ -1278,10 +1720,11 @@ def main():
 
         for asset_id in assets:
             out_dir = get_output_dir(asset_id)
-            txt_files = [f for f in os.listdir(out_dir) if f.endswith('.txt') and 'debug' not in f]
-            if txt_files:
+            data_files = [f for f in os.listdir(out_dir)
+                          if (f.endswith('.txt') or f.endswith('.json')) and 'debug' not in f]
+            if data_files:
                 print(f'\n  {ASSET_PROFILES[asset_id]["name"]} files:')
-                for f in sorted(txt_files):
+                for f in sorted(data_files):
                     fp = os.path.join(out_dir, f)
                     lines = len(open(fp, encoding='utf-8').readlines())
                     size = os.path.getsize(fp)
@@ -1320,7 +1763,8 @@ def push_data_to_repo(assets=None):
             dst_dir = DATA_REPO_DIR
         os.makedirs(dst_dir, exist_ok=True)
 
-        data_files = [f for f in os.listdir(src_dir) if f.endswith('.txt') and 'debug' not in f]
+        data_files = [f for f in os.listdir(src_dir)
+                      if (f.endswith('.txt') or f.endswith('.json')) and 'debug' not in f]
         if not data_files:
             print(f'[PUSH] No data files for {profile["short"]}')
             continue
