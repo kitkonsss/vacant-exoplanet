@@ -37,7 +37,6 @@ const ASSET_PROFILES = {
                 oiUrl: MY_BASE + '/data/monthly_OIData.txt',
             },
             analysis: { label: 'Position Bias' },
-            chart: { label: 'Live Chart' },
         },
     },
     nq: {
@@ -77,7 +76,6 @@ const ASSET_PROFILES = {
                 oiUrl: MY_BASE + '/data/nq/monthly_OIData.txt',
             },
             analysis: { label: 'Position Bias' },
-            chart: { label: 'Live Chart' },
         },
     },
 };
@@ -94,9 +92,8 @@ let state = {
     activeAsset: 'gc',            // 'gc' | 'nq'
     activeTab: 'analysis',
     tradingStyle: 'daytrade',     // 'daytrade' | 'swing' | 'position'
-    data: { current: {}, friday: {}, monthly: {}, analysis: {}, chart: {} },
+    data: { current: {}, friday: {}, monthly: {}, analysis: {} },
     refreshTimer: null,
-    chartInitialized: false,
     biasLock: null, // { label, score, direction, color, icon, isLongGamma, hasNoMansLand, hasBrokenWall, lockedAt }
 };
 
@@ -1535,32 +1532,17 @@ async function switchTab(tabKey) {
     });
 
     const mainContainer = document.getElementById('mainContainer');
-    const chartContainer = document.getElementById('chartContainer');
     const summaryStrip = document.getElementById('summaryStrip');
 
-    if (tabKey === 'chart') {
+    if (tabKey === 'analysis') {
         mainContainer.classList.add('hide-main');
         summaryStrip.style.display = 'none';
-        document.getElementById('analysisContainer').classList.remove('active');
-        chartContainer.classList.add('active');
-        if (!state.chartInitialized) {
-            initLightweightChart();
-            state.chartInitialized = true;
-        } else {
-            plotWallsOnChart(); // Re-plot lines in case data updated
-        }
-        return;
-    } else if (tabKey === 'analysis') {
-        mainContainer.classList.add('hide-main');
-        summaryStrip.style.display = 'none';
-        chartContainer.classList.remove('active');
         document.getElementById('analysisContainer').classList.add('active');
         renderAnalysisTab();
         return;
     } else {
         mainContainer.classList.remove('hide-main');
         summaryStrip.style.display = 'flex';
-        chartContainer.classList.remove('active');
         document.getElementById('analysisContainer').classList.remove('active');
     }
 
@@ -1589,9 +1571,6 @@ function switchTradingStyle(style) {
     if (state.activeTab === 'analysis') renderAnalysisTab();
 }
 
-let chartInstance = null;
-let candleSeries = null;
-let wallLines = []; // multi-wall lines
 
 function escapeHtml(value) {
     return String(value ?? '').replace(/[&<>"']/g, ch => ({
@@ -1669,111 +1648,100 @@ async function fetchPositionBiasData() {
     return payload;
 }
 
-function renderMetric(label, value, accent = 'var(--text-primary)') {
-    return `
-        <div class="position-metric">
-            <span>${escapeHtml(label)}</span>
-            <b style="color:${accent}">${value}</b>
-        </div>`;
+function fmtK(n) {
+    if (!n || n === 0) return '';
+    if (n >= 1000) return (n / 1000).toFixed(1).replace(/\.0$/, '') + 'K';
+    return String(Math.round(n));
 }
 
-function renderWallLevel(label, level) {
-    if (!level) {
-        return renderMetric(label, '-');
-    }
-    const dist = level.distance;
-    const distText = dist && dist.points !== null
-        ? `${dist.points > 0 ? '+' : ''}${fmtNumber(dist.points, 1)} pts`
-        : '-';
-    return `
-        <div class="position-wall">
-            <div>
-                <span>${escapeHtml(label)}</span>
-                <b style="color:${sideColor(level.side)}">${fmtStrike(level.strike)}</b>
-            </div>
-            <div>
-                <span>OI</span>
-                <b>${fmtNumber(level.total_oi || 0)}</b>
-            </div>
-            <div>
-                <span>Dist</span>
-                <b>${escapeHtml(distText)}</b>
-            </div>
-        </div>`;
+function renderScoreMeter(score) {
+    const clamped = Math.max(-3, Math.min(3, score || 0));
+    const pct = ((clamped + 3) / 6) * 100;
+    const isPos = clamped >= 0;
+    const color = clamped > 0.2 ? 'var(--call-color)' : clamped < -0.2 ? 'var(--put-color)' : 'var(--text-muted)';
+    const fillLeft = isPos ? 50 : pct;
+    const fillWidth = Math.abs(pct - 50);
+    return `<div class="score-meter"><div class="score-meter-fill" style="left:${fillLeft}%;width:${fillWidth}%;background:${color}"></div><div class="score-meter-dot" style="left:${pct}%;background:${color}"></div></div>`;
 }
 
-function renderPositionMap(levels) {
-    if (!levels || levels.length === 0) {
-        return '<div class="placeholder-msg"><div class="desc">No position map data</div></div>';
+function renderOILadder(contract) {
+    const levels = contract.position_map || [];
+    const price = contract.future_price;
+    if (levels.length === 0) return '<div class="oi-ladder-empty">No position data</div>';
+    const sorted = [...levels].sort((a, b) => b.strike - a.strike);
+    const maxOI = Math.max(...sorted.flatMap(l => [l.call_oi || 0, l.put_oi || 0]), 1);
+    let rows = '';
+    let priceInserted = false;
+    for (const lv of sorted) {
+        if (!priceInserted && price != null && lv.strike < price) {
+            rows += `<div class="oi-price-row"><div class="oi-price-line"></div><div class="oi-price-tag">${fmtStrike(price)}</div><div class="oi-price-line"></div></div>`;
+            priceInserted = true;
+        }
+        const callPct = Math.min(Math.round((lv.call_oi || 0) / maxOI * 100), 100);
+        const putPct = Math.min(Math.round((lv.put_oi || 0) / maxOI * 100), 100);
+        const isCallWall = (lv.side === 'call_wall' || lv.side === 'call') && lv.strike > (price || 0);
+        const isPutWall = (lv.side === 'put_wall' || lv.side === 'put') && lv.strike < (price || 0);
+        const isKey = isCallWall || isPutWall;
+        rows += `
+            <div class="oi-row${isKey ? ' oi-row--key' : ''}">
+                <div class="oi-put-side">${putPct > 0 ? `<div class="oi-bar-wrap put"><span class="oi-bar-num">${fmtK(lv.put_oi)}</span><div class="oi-bar-fill put" style="width:${putPct}%"></div></div>` : ''}</div>
+                <div class="oi-strike-label${isKey ? ' oi-strike--key' : ''}">${fmtStrike(lv.strike)}</div>
+                <div class="oi-call-side">${callPct > 0 ? `<div class="oi-bar-wrap call"><div class="oi-bar-fill call" style="width:${callPct}%"></div><span class="oi-bar-num">${fmtK(lv.call_oi)}</span></div>` : ''}</div>
+            </div>`;
     }
-    return `
-        <div class="position-map">
-            <div class="position-map-head">
-                <span>Strike</span><span>Type</span><span>Call OI</span><span>Put OI</span><span>Vol/OI</span><span>Dist</span>
-            </div>
-            ${levels.slice(0, 8).map(level => {
-                const dist = level.distance?.points;
-                const distText = dist === null || dist === undefined ? '-' : `${dist > 0 ? '+' : ''}${fmtNumber(dist, 1)}`;
-                return `
-                    <div class="position-map-row">
-                        <b>${fmtStrike(level.strike)}</b>
-                        <span style="color:${sideColor(level.side)}">${escapeHtml(level.side || 'mixed')}</span>
-                        <span>${fmtNumber(level.call_oi || 0)}</span>
-                        <span>${fmtNumber(level.put_oi || 0)}</span>
-                        <span>${level.activity_vs_oi === null || level.activity_vs_oi === undefined ? '-' : fmtNumber(level.activity_vs_oi, 2)}</span>
-                        <span>${escapeHtml(distText)}</span>
-                    </div>`;
-            }).join('')}
-        </div>`;
+    if (!priceInserted) {
+        rows += `<div class="oi-price-row"><div class="oi-price-line"></div><div class="oi-price-tag">${fmtStrike(price)}</div><div class="oi-price-line"></div></div>`;
+    }
+    return `<div class="oi-ladder"><div class="oi-ladder-head"><span>PUT OI</span><span>STRIKE</span><span>CALL OI</span></div>${rows}</div>`;
 }
 
 function renderPositionContractCard(contract) {
     const bias = biasDisplay(contract.position_bias?.label, contract.position_bias?.score || 0);
     const totals = contract.totals || {};
-    const structure = contract.structure || {};
     const walls = contract.walls || {};
-    const title = `${contract.contract_key || ''} ${contract.contract ? `[${contract.contract}]` : ''}`.trim();
-
+    const timeframeLabel = (contract.contract_key || '').toUpperCase();
+    const contractCode = contract.contract || '';
+    const score = contract.position_bias?.score ?? 0;
+    const nearCall = walls.nearest_call_above?.distance?.points;
+    const nearPut = walls.nearest_put_below?.distance?.points;
+    const nearCallText = nearCall != null ? `+${fmtNumber(Math.abs(nearCall), 0)}` : '—';
+    const nearPutText = nearPut != null ? `${fmtNumber(Math.abs(nearPut), 0)}` : '—';
+    const pcr = totals.oi_put_call_ratio;
+    const pcrColor = pcr != null ? (pcr > 1.05 ? 'var(--put-color)' : pcr < 0.95 ? 'var(--call-color)' : 'var(--text-secondary)') : 'var(--text-secondary)';
     return `
-        <div class="analysis-card position-card">
-            <div class="ac-title">
-                <span>${escapeHtml(title || 'Contract')}</span>
-                <span class="position-badge" style="color:${bias.color};background:${bias.bg};border-color:${bias.color}40">${bias.label}</span>
-            </div>
-            <div class="position-score-row">
-                <div>
-                    <span>Bias Score</span>
-                    <b style="color:${bias.color}">${contract.position_bias?.score > 0 ? '+' : ''}${fmtNumber(contract.position_bias?.score || 0, 2)}</b>
+        <div class="pcc-card">
+            <div class="pcc-header">
+                <div class="pcc-title">
+                    <span class="pcc-timeframe">${escapeHtml(timeframeLabel)}</span>
+                    <span class="pcc-contract-code">${escapeHtml(contractCode)}</span>
                 </div>
-                <div>
-                    <span>DTE</span>
-                    <b>${fmtNumber(contract.dte, 2)}</b>
-                </div>
-                <div>
-                    <span>Future</span>
-                    <b>${fmtStrike(contract.future_price)}</b>
-                </div>
-                <div>
-                    <span>Confidence</span>
-                    <b>${escapeHtml(contract.confidence || '-')}</b>
+                <div class="pcc-meta">
+                    <span class="pcc-dte">${fmtNumber(contract.dte, 1)} DTE</span>
+                    <span class="pcc-price">${fmtStrike(contract.future_price)}</span>
                 </div>
             </div>
-            <div class="position-metrics-grid">
-                ${renderMetric('Open Interest', fmtNumber(totals.open_interest || 0))}
-                ${renderMetric('OI P/C', fmtNumber(totals.oi_put_call_ratio, 3), (totals.oi_put_call_ratio || 0) > 1 ? 'var(--put-color)' : 'var(--call-color)')}
-                ${renderMetric('Intraday Volume', fmtNumber(totals.intraday_volume || 0))}
-                ${renderMetric('Volume/OI', fmtNumber(totals.volume_vs_oi, 3))}
-                ${renderMetric('Support OI', fmtNumber(structure.support_oi_below_price || 0), 'var(--put-color)')}
-                ${renderMetric('Resistance OI', fmtNumber(structure.resistance_oi_above_price || 0), 'var(--call-color)')}
+            <div class="pcc-bias-row">
+                <div class="pcc-bias-indicator">
+                    <div class="pcc-bias-label" style="color:${bias.color}">${escapeHtml(bias.label)}</div>
+                    <div class="pcc-bias-score" style="color:${bias.color}">${score > 0 ? '+' : ''}${fmtNumber(score, 2)}</div>
+                </div>
+                ${renderScoreMeter(score)}
             </div>
-            <div class="position-wall-grid">
-                ${renderWallLevel('Dominant Call', walls.dominant_call)}
-                ${renderWallLevel('Dominant Put', walls.dominant_put)}
-                ${renderWallLevel('Largest Position', walls.largest_combined_position)}
-                ${renderWallLevel('Nearest Call Above', walls.nearest_call_above)}
-                ${renderWallLevel('Nearest Put Below', walls.nearest_put_below)}
+            ${renderOILadder(contract)}
+            <div class="pcc-stats-row">
+                <div class="pcc-stat">
+                    <span>P/C Ratio</span>
+                    <b style="color:${pcrColor}">${fmtNumber(pcr, 2)}</b>
+                </div>
+                <div class="pcc-stat">
+                    <span>Call Wall</span>
+                    <b style="color:var(--call-color)">${nearCallText} pts</b>
+                </div>
+                <div class="pcc-stat">
+                    <span>Put Wall</span>
+                    <b style="color:var(--put-color)">${nearPutText} pts</b>
+                </div>
             </div>
-            ${renderPositionMap(contract.position_map)}
         </div>`;
 }
 
@@ -1799,145 +1767,31 @@ async function renderPositionBiasTab() {
     const generated = summary?.generated_at ? new Date(summary.generated_at).toLocaleString() : '-';
     const score = summary?.position_bias?.score ?? 0;
 
+    const scorePct = ((Math.max(-3, Math.min(3, score)) + 3) / 6) * 100;
+    const scoreFillLeft = score >= 0 ? 50 : scorePct;
+    const scoreFillW = Math.abs(scorePct - 50);
     header.innerHTML = `
-        <div class="position-summary">
-            <div>
-                <div class="position-kicker">${escapeHtml(getProfile().label)} Position Bias</div>
-                <div class="position-headline" style="color:${bias.color}">${bias.label}</div>
+        <div class="bias-summary-header">
+            <div class="bsh-left">
+                <div class="bsh-asset">${escapeHtml(getProfile().label)}</div>
+                <div class="bsh-direction" style="color:${bias.color}">${bias.label}</div>
             </div>
-            <div class="position-summary-stats">
-                <div><span>Score</span><b style="color:${bias.color}">${score > 0 ? '+' : ''}${fmtNumber(score, 2)}</b></div>
-                <div><span>Contracts</span><b>${fmtNumber(summary?.contracts?.length || contracts.length)}</b></div>
-                <div><span>Updated</span><b>${escapeHtml(generated)}</b></div>
+            <div class="bsh-meter-wrap">
+                <div class="bsh-meter-labels"><span>BEARISH</span><span>NEUTRAL</span><span>BULLISH</span></div>
+                <div class="bsh-meter">
+                    <div class="bsh-meter-fill" style="left:${scoreFillLeft}%;width:${scoreFillW}%;background:${bias.color}"></div>
+                    <div class="bsh-meter-dot" style="left:${scorePct}%;background:${bias.color}"></div>
+                    <div class="bsh-meter-center"></div>
+                </div>
+                <div class="bsh-score" style="color:${bias.color}">${score > 0 ? '+' : ''}${fmtNumber(score, 2)}</div>
+            </div>
+            <div class="bsh-right">
+                <div class="bsh-meta"><span>Contracts</span><b>${fmtNumber(summary?.contracts?.length || contracts.length)}</b></div>
+                <div class="bsh-meta"><span>Updated</span><b>${escapeHtml(generated)}</b></div>
             </div>
         </div>`;
 
     container.innerHTML = contracts.map(renderPositionContractCard).join('');
-}
-
-function plotWallsOnChart() {
-    if (!candleSeries) return;
-
-    // Clear existing lines
-    for (const line of wallLines) {
-        try { candleSeries.removePriceLine(line); } catch (e) { }
-    }
-    wallLines = [];
-
-    const tData = state.data['current'];
-    if (!tData || !tData.oi || !tData.oi.strikes) return;
-
-    let uPrice = 0;
-    if (state.data.current?.oi?.underlying) uPrice = state.data.current.oi.underlying;
-    else if (state.data.monthly?.oi?.underlying) uPrice = state.data.monthly.oi.underlying;
-    if (uPrice === 0) return;
-
-    const callWalls = findSignificantWalls(tData.oi.strikes, uPrice, 'call');
-    const putWalls = findSignificantWalls(tData.oi.strikes, uPrice, 'put');
-
-    const lineStyles = [LightweightCharts.LineStyle.Solid, LightweightCharts.LineStyle.Dashed, LightweightCharts.LineStyle.Dotted];
-    const lineWidths = [2, 1, 1];
-
-    callWalls.slice(0, 3).forEach((w, i) => {
-        wallLines.push(candleSeries.createPriceLine({
-            price: w.strike, color: i === 0 ? '#26a69a' : '#26a69a88',
-            lineWidth: lineWidths[i], lineStyle: lineStyles[i],
-            axisLabelVisible: i < 2,
-            title: i === 0 ? `Call Wall ${w.oi.toLocaleString()}` : `C ${w.oi.toLocaleString()}`,
-        }));
-    });
-
-    putWalls.slice(0, 3).forEach((w, i) => {
-        wallLines.push(candleSeries.createPriceLine({
-            price: w.strike, color: i === 0 ? '#ef5350' : '#ef535088',
-            lineWidth: lineWidths[i], lineStyle: lineStyles[i],
-            axisLabelVisible: i < 2,
-            title: i === 0 ? `Put Wall ${w.oi.toLocaleString()}` : `P ${w.oi.toLocaleString()}`,
-        }));
-    });
-}
-
-async function initLightweightChart() {
-    const container = document.getElementById('lwc_chart');
-    if (!container) return;
-
-    // Show loading status
-    container.innerHTML = `<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--text-secondary);font-size:14px;">⏳ Loading ${getProfile().label} chart data...</div>`;
-
-    chartInstance = LightweightCharts.createChart(container, {
-        layout: {
-            background: { type: 'solid', color: '#131722' },
-            textColor: '#9598a1',
-        },
-        grid: {
-            vertLines: { color: '#2a2e3e' },
-            horzLines: { color: '#2a2e3e' },
-        },
-        timeScale: {
-            timeVisible: true,
-            secondsVisible: false,
-        }
-    });
-
-    candleSeries = chartInstance.addCandlestickSeries({
-        upColor: '#26a69a',
-        downColor: '#ef5350',
-        borderVisible: false,
-        wickUpColor: '#26a69a',
-        wickDownColor: '#ef5350'
-    });
-
-    // Fetch chart data via CORS proxies (Yahoo Finance blocks direct browser calls)
-    const yahooUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${getProfile().yahooSymbol}?interval=15m&range=5d`;
-    const proxies = [
-        `https://corsproxy.io/?${encodeURIComponent(yahooUrl)}`,
-        `https://api.allorigins.win/raw?url=${encodeURIComponent(yahooUrl)}`,
-        yahooUrl
-    ];
-
-    let loaded = false;
-    for (const url of proxies) {
-        try {
-            const res = await fetch(url);
-            if (!res.ok) continue;
-            const data = await res.json();
-            const result = data.chart.result[0];
-            const chartData = [];
-            for (let i = 0; i < result.timestamp.length; i++) {
-                const q = result.indicators.quote[0];
-                if (q.open[i] != null && q.high[i] != null && q.low[i] != null && q.close[i] != null) {
-                    chartData.push({
-                        time: result.timestamp[i],
-                        open: q.open[i],
-                        high: q.high[i],
-                        low: q.low[i],
-                        close: q.close[i]
-                    });
-                }
-            }
-            candleSeries.setData(chartData);
-            loaded = true;
-            break;
-        } catch (err) {
-            console.warn("Chart proxy failed:", url, err);
-        }
-    }
-
-    if (!loaded) {
-        const errorDiv = document.createElement('div');
-        errorDiv.style.cssText = 'position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);color:var(--red);font-size:14px;text-align:center;z-index:10;background:rgba(0,0,0,0.7);padding:20px;border-radius:8px;';
-        errorDiv.innerHTML = '⚠️ ไม่สามารถโหลดข้อมูลกราฟได้<br><span style="font-size:12px;color:var(--text-secondary);">Yahoo Finance API ถูกบล็อค (CORS) — ลอง Refresh อีกครั้ง</span>';
-        container.style.position = 'relative';
-        container.appendChild(errorDiv);
-    }
-
-    // Sync with current tab data to plot walls
-    plotWallsOnChart();
-
-    // Handle resize
-    window.addEventListener('resize', () => {
-        chartInstance.resize(container.clientWidth, container.clientHeight);
-    });
 }
 
 
@@ -3639,7 +3493,6 @@ function renderAnalysisTab() {
 }
 
 function renderActiveTab() {
-    if (state.activeTab === 'chart') return;
     if (state.activeTab === 'analysis') {
         renderAnalysisTab();
         // Fallback to update header cleanly on load using Current data (since it's representative)
@@ -3682,16 +3535,8 @@ async function switchAsset(assetId) {
     if (!ASSET_PROFILES[assetId] || assetId === state.activeAsset) return;
     state.activeAsset = assetId;
 
-    // Reset data, chart & bias lock
-    state.data = { current: {}, friday: {}, monthly: {}, analysis: {}, chart: {} };
+    state.data = { current: {}, friday: {}, monthly: {}, analysis: {} };
     clearBiasLock();
-    state.chartInitialized = false;
-    if (chartInstance) {
-        try { chartInstance.remove(); } catch (e) { }
-        chartInstance = null;
-        candleSeries = null;
-        wallLines = [];
-    }
 
     // Update dropdown (in case called programmatically)
     const dd = document.getElementById('assetDropdown');
