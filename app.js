@@ -1684,9 +1684,9 @@ function renderOILadder(contract) {
         const isKey = isCallWall || isPutWall;
         rows += `
             <div class="oi-row${isKey ? ' oi-row--key' : ''}">
-                <div class="oi-put-side">${putPct > 0 ? `<div class="oi-bar-wrap put"><span class="oi-bar-num">${fmtK(lv.put_oi)}</span><div class="oi-bar-fill put" style="width:${putPct}%"></div></div>` : ''}</div>
+                <div class="oi-put-side">${putPct > 0 ? `<span class="oi-bar-num">${fmtK(lv.put_oi)}</span><div class="oi-bar-track"><div class="oi-bar-fill put" style="width:${putPct}%"></div></div>` : ''}</div>
                 <div class="oi-strike-label${isKey ? ' oi-strike--key' : ''}">${fmtStrike(lv.strike)}</div>
-                <div class="oi-call-side">${callPct > 0 ? `<div class="oi-bar-wrap call"><div class="oi-bar-fill call" style="width:${callPct}%"></div><span class="oi-bar-num">${fmtK(lv.call_oi)}</span></div>` : ''}</div>
+                <div class="oi-call-side">${callPct > 0 ? `<div class="oi-bar-track"><div class="oi-bar-fill call" style="width:${callPct}%"></div></div><span class="oi-bar-num">${fmtK(lv.call_oi)}</span>` : ''}</div>
             </div>`;
     }
     if (!priceInserted) {
