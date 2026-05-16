@@ -1682,11 +1682,13 @@ function renderOILadder(contract) {
         const isCallWall = (lv.side === 'call_wall' || lv.side === 'call') && lv.strike > (price || 0);
         const isPutWall = (lv.side === 'put_wall' || lv.side === 'put') && lv.strike < (price || 0);
         const isKey = isCallWall || isPutWall;
+        const putBar = putPct > 0 ? `<span class="oi-bar-num">${fmtK(lv.put_oi)}</span><div class="oi-bar-track" style="background:linear-gradient(to right,var(--put-color) ${putPct}%,transparent ${putPct}%)"></div>` : '';
+        const callBar = callPct > 0 ? `<div class="oi-bar-track" style="background:linear-gradient(to left,var(--call-color) ${callPct}%,transparent ${callPct}%)"></div><span class="oi-bar-num">${fmtK(lv.call_oi)}</span>` : '';
         rows += `
             <div class="oi-row${isKey ? ' oi-row--key' : ''}">
-                <div class="oi-put-side">${putPct > 0 ? `<span class="oi-bar-num">${fmtK(lv.put_oi)}</span><div class="oi-bar-track"><div class="oi-bar-fill put" style="width:${putPct}%"></div></div>` : ''}</div>
+                <div class="oi-put-side">${putBar}</div>
                 <div class="oi-strike-label${isKey ? ' oi-strike--key' : ''}">${fmtStrike(lv.strike)}</div>
-                <div class="oi-call-side">${callPct > 0 ? `<div class="oi-bar-track"><div class="oi-bar-fill call" style="width:${callPct}%"></div></div><span class="oi-bar-num">${fmtK(lv.call_oi)}</span>` : ''}</div>
+                <div class="oi-call-side">${callBar}</div>
             </div>`;
     }
     if (!priceInserted) {
