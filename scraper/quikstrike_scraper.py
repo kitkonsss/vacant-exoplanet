@@ -588,17 +588,18 @@ def select_contract(driver, contract):
 def classify_contracts(contracts, asset_profile):
     """
     Classify contracts into current/friday/monthly using asset-specific symbol patterns + DTE.
-    
+
     Rules:
-      current = lowest DTE overall (nearest expiry, could be Daily, Friday, or Monthly)
-      friday  = lowest DTE Friday contract
-      monthly = lowest DTE Monthly contract
+      current = nearest non-expired daily/Monday contract (DTE >= 0.5); fallback to any active
+      friday  = nearest Friday (OG+digit) contract with DTE > current's DTE
+      monthly = nearest Monthly (OG+letter) contract with DTE > friday's DTE (or > current's)
     """
+    MIN_DTE = 0.5  # contracts expiring in less than half a day are considered expired
+
     monthly_check = asset_profile['monthly_check']
     friday_check = asset_profile['friday_check']
     result = {'current': None, 'friday': None, 'monthly': None, 'friday_is_current': False}
 
-    # Sort by DTE
     with_dte = [c for c in contracts if c.get('dte') is not None]
     sorted_c = sorted(with_dte, key=lambda c: c['dte'])
 
@@ -609,24 +610,49 @@ def classify_contracts(contracts, asset_profile):
         if len(contracts) >= 3: result['monthly'] = contracts[2]
         return result
 
-    # Current = lowest DTE overall (could be Daily, Friday, or Monthly)
-    result['current'] = sorted_c[0]
+    # Active = DTE >= MIN_DTE (not already expired/expiring today)
+    active = [c for c in sorted_c if c['dte'] >= MIN_DTE]
+    if not active:
+        # Everything is expiring — fall back to taking them as-is
+        print('[CLASSIFY] Warning: all contracts below MIN_DTE threshold, using raw sort')
+        active = sorted_c
 
-    # Separate Friday vs Monthly based on symbol pattern
-    fridays = [c for c in sorted_c if friday_check(c['text'])]
-    monthlies = [c for c in sorted_c if monthly_check(c['text'])]
+    # Current = prefer daily/Monday (not OG prefix) among active; else any active
+    dailies = [c for c in active if not friday_check(c['text']) and not monthly_check(c['text'])]
+    if dailies:
+        result['current'] = dailies[0]
+    else:
+        result['current'] = active[0]
 
-    print(f'[CLASSIFY] Found {len(fridays)} Friday and {len(monthlies)} Monthly contracts')
+    current_dte = result['current']['dte']
 
-    if fridays: result['friday'] = fridays[0]
-    if monthlies: result['monthly'] = monthlies[0]
+    # Friday = nearest OG+digit contract with DTE strictly > current's DTE
+    fridays = [c for c in active if friday_check(c['text']) and c['dte'] > current_dte]
+    if fridays:
+        result['friday'] = fridays[0]
+    else:
+        # Fallback: any friday >= MIN_DTE
+        fridays_any = [c for c in sorted_c if friday_check(c['text']) and c['dte'] >= MIN_DTE]
+        if fridays_any:
+            result['friday'] = fridays_any[0]
 
-    # LOGGING
+    friday_dte = result['friday']['dte'] if result['friday'] else current_dte
+
+    # Monthly = nearest OG+letter contract with DTE strictly > friday's DTE
+    monthlies = [c for c in active if monthly_check(c['text']) and c['dte'] > friday_dte]
+    if monthlies:
+        result['monthly'] = monthlies[0]
+    else:
+        # Fallback: any monthly >= MIN_DTE
+        monthlies_any = [c for c in sorted_c if monthly_check(c['text']) and c['dte'] >= MIN_DTE]
+        if monthlies_any:
+            result['monthly'] = monthlies_any[0]
+
+    print(f'[CLASSIFY] Found {len(fridays)} Friday and {len(monthlies)} Monthly active contracts')
     print(f'[CLASSIFY] Current candidate: {result["current"].get("text", "?") if result["current"] else "None"} (DTE={result["current"].get("dte") if result["current"] else "?"})')
     print(f'[CLASSIFY] Friday candidate:  {result["friday"].get("text", "?") if result["friday"] else "None"} (DTE={result["friday"].get("dte") if result["friday"] else "?"})')
     print(f'[CLASSIFY] Monthly candidate: {result["monthly"].get("text", "?") if result["monthly"] else "None"} (DTE={result["monthly"].get("dte") if result["monthly"] else "?"})')
 
-    # Check for overlap: if current and friday are the same contract
     if result['current'] and result['friday']:
         if result['current']['text'] == result['friday']['text']:
             result['friday_is_current'] = True
