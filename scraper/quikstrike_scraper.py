@@ -1625,6 +1625,53 @@ def _click_heatmap_expiration_tab(driver, contract_text):
     return driver.execute_script(js, contract_text)
 
 
+def _ensure_call_put_combined(driver):
+    """
+    On the Heatmap → OI page, make sure the 'Call/Put Combined' checkbox
+    is checked. When unchecked, QuikStrike renders each date header as a
+    colspan=2 cell with two sub-columns (C, P) under it, which breaks the
+    by-date-index extraction in _extract_heatmap_table and ends up reading
+    only the Put column.
+
+    Returns a small dict {ok, action, ...} describing what was done.
+    Triggers the ASP.NET postback if the checkbox state changed.
+    """
+    return driver.execute_script("""
+        // Find a checkbox whose nearby label text contains 'Call/Put Combined'
+        const boxes = Array.from(document.querySelectorAll('input[type=checkbox]'));
+        function labelText(cb) {
+            // Try <label for=id>
+            if (cb.id) {
+                const lab = document.querySelector('label[for="' + cb.id + '"]');
+                if (lab) return (lab.textContent || '').trim();
+            }
+            // Try parent label, then next sibling text
+            const p = cb.closest('label');
+            if (p) return (p.textContent || '').trim();
+            const sib = cb.nextSibling;
+            if (sib && sib.textContent) return sib.textContent.trim();
+            // Walk up a couple levels and grab text
+            let n = cb.parentElement;
+            for (let i = 0; i < 3 && n; i++) {
+                const t = (n.textContent || '').trim();
+                if (t) return t.slice(0, 120);
+                n = n.parentElement;
+            }
+            return '';
+        }
+        const target = boxes.find(cb => /call\\s*\\/?\\s*put\\s+combined/i.test(labelText(cb)));
+        if (!target) {
+            return {ok: false, error: 'checkbox-not-found',
+                    candidates: boxes.slice(0, 8).map(cb => ({id: cb.id, name: cb.name, label: labelText(cb).slice(0, 80), checked: cb.checked}))};
+        }
+        if (target.checked) {
+            return {ok: true, action: 'already-checked', id: target.id, name: target.name};
+        }
+        target.click();
+        return {ok: true, action: 'clicked', id: target.id, name: target.name, nowChecked: target.checked};
+    """)
+
+
 def _extract_heatmap_table(driver):
     """
     Find the strike × date heatmap table on the page and extract it.
@@ -1782,6 +1829,24 @@ def scrape_oi_heatmap_phase(driver, classified, asset_id, output_dir):
     except Exception:
         pass
     time.sleep(1.0)
+
+    # 2b. Ensure 'Call/Put Combined' checkbox is checked. Otherwise the
+    # heatmap renders date headers with colspan=2 (C, P sub-columns) and
+    # the by-date-index extractor reads only the Put column.
+    print('[HEATMAP] Ensuring Call/Put Combined checkbox is checked...')
+    try:
+        cb_res = _ensure_call_put_combined(driver)
+        print(f'[HEATMAP] Call/Put Combined: {cb_res}')
+        if cb_res and cb_res.get('action') == 'clicked':
+            # ASP.NET postback usually fires on checkbox change — let it settle
+            time.sleep(2.5)
+            try:
+                wait_ready(driver, timeout=15)
+            except Exception:
+                pass
+            time.sleep(0.5)
+    except Exception as e:
+        print(f'[HEATMAP] ⚠ Call/Put Combined toggle raised: {e}')
 
     # 3. Iterate contracts: click expiration tab → extract table → save
     underlying = get_futures_price(asset_id)
