@@ -1556,6 +1556,7 @@ async function switchTab(tabKey) {
         summaryStrip.style.display = 'none';
         if (heatmapEl) heatmapEl.style.display = 'none';
         analysisEl.classList.add('active');
+        analysisEl.style.display = '';
         renderAnalysisTab();
         return;
     }
@@ -1564,6 +1565,7 @@ async function switchTab(tabKey) {
         mainContainer.classList.add('hide-main');
         summaryStrip.style.display = 'none';
         analysisEl.classList.remove('active');
+        analysisEl.style.display = 'none';
         if (heatmapEl) heatmapEl.style.display = 'flex';
         await ensureHeatmapData(state.heatmapContract);
         renderHeatmap();
@@ -1573,6 +1575,7 @@ async function switchTab(tabKey) {
     mainContainer.classList.remove('hide-main');
     summaryStrip.style.display = 'grid';
     analysisEl.classList.remove('active');
+    analysisEl.style.display = 'none';
     if (heatmapEl) heatmapEl.style.display = 'none';
 
     // Fetch data if not loaded yet
