@@ -1,5 +1,5 @@
 <script>
-    import { onMount } from 'svelte';
+    import { untrack } from 'svelte';
     import Header from '$lib/components/Header.svelte';
     import TabNav from '$lib/components/TabNav.svelte';
     import AppFooter from '$lib/components/AppFooter.svelte';
@@ -45,18 +45,19 @@
     }
 
     async function ensureHeatmap(contractKey) {
-        if (heatmapCache[contractKey]) return;
+        // Read cache without tracking — caller may be inside an $effect
+        const cached = untrack(() => heatmapCache[contractKey]);
+        if (cached) return;
         heatmapLoading = true;
         try {
             const data = await fetchHeatmap(asset, contractKey);
-            heatmapCache = { ...heatmapCache, [contractKey]: data };
+            heatmapCache = { ...untrack(() => heatmapCache), [contractKey]: data };
         } finally {
             heatmapLoading = false;
         }
     }
 
     async function refresh() {
-        // Refresh both data sources for the active asset
         heatmapCache = {};
         await load();
         if (activeTab === 'heatmap') await ensureHeatmap(heatmapContract);
@@ -71,16 +72,15 @@
         void ensureHeatmap(key);
     }
 
-    onMount(load);
-
-    // Reload when asset changes
+    // React only to asset changes. Wrap side effects in untrack so writes
+    // to heatmapCache / reads of activeTab don't subscribe this effect.
     $effect(() => {
-        asset; // track
-        if (typeof window !== 'undefined') {
+        asset; // dep
+        untrack(() => {
             heatmapCache = {};
             void load();
             if (activeTab === 'heatmap') void ensureHeatmap(heatmapContract);
-        }
+        });
     });
 </script>
 
