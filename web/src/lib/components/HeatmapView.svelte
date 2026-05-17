@@ -60,8 +60,9 @@
     });
 
     /**
-     * Log-scaled emerald ramp. Uses the brand hue (142) so the heatmap
-     * matches the rest of the system.
+     * Log-scaled emerald ramp. Uses the brand hue (142) but stays muted —
+     * even the max value tops out around 34% lightness so the grid is
+     * readable rather than blinding.
      */
     function cellStyle(value) {
         if (value == null || !Number.isFinite(value) || value <= 0 || maxVal <= 0) {
@@ -69,9 +70,9 @@
         }
         const t = Math.log10(value + 1) / Math.log10(maxVal + 1);
         const clamped = Math.max(0, Math.min(1, t));
-        // 10% (very dark emerald) → 56% (vivid emerald, matches --primary)
-        const lightness = 10 + clamped * 46;
-        const saturation = 60 + clamped * 26;
+        // 10% sat / 10% L (barely visible) → 50% sat / 34% L (muted emerald)
+        const lightness = 10 + clamped * 24;
+        const saturation = 10 + clamped * 40;
         return `background-color:hsl(142 ${saturation.toFixed(0)}% ${lightness.toFixed(0)}%);`;
     }
 </script>
@@ -231,16 +232,18 @@
         font-weight: 800;
     }
 
-    /* Data cells — visible "grout" creates row + column separation */
+    /* Data cells — visible "grout" creates row + column separation.
+       Default (null / no data) stays at page background so empty cells
+       read as voids, not as "very low value". */
     .hm-cell {
         padding: 4px 8px;
         text-align: right;
         min-width: 70px;
         white-space: nowrap;
-        /* 1px lines in the page background color act as crisp grout */
         border-right: 1px solid hsl(var(--background));
         border-bottom: 1px solid hsl(var(--background));
-        background-color: hsl(var(--muted));
+        background-color: hsl(var(--background));
+        color: hsl(var(--foreground));
         transition: filter 80ms ease;
     }
 
