@@ -19,14 +19,6 @@
         { key: 'monthly', label: 'Monthly' }
     ];
 
-    /** @type {'oi' | 'delta'} */
-    let viewMode = $state('oi');
-
-    const views = [
-        { key: 'oi',    label: 'OI',  hint: 'Absolute open interest' },
-        { key: 'delta', label: 'ΔOI', hint: 'Day-over-day change vs previous date' }
-    ];
-
     function pickContract(key) {
         contractKey = key;
         onChangeContract(key);
@@ -55,41 +47,6 @@
         return m;
     });
 
-    /**
-     * Day-over-day delta for each (strike, date) — dates are sorted recent→old
-     * so the "previous day" for column i is column i+1.
-     * @type {Array<Array<number | null>>}
-     */
-    const deltas = $derived.by(() => {
-        return visibleStrikes.map((s) => {
-            const vals = s.values || [];
-            return vals.map((v, i) => {
-                const prev = vals[i + 1];
-                if (v == null || prev == null) return null;
-                return v - prev;
-            });
-        });
-    });
-
-    /**
-     * Reference magnitude used to normalize the diverging delta ramp.
-     * Use a high quantile rather than absolute max so a single outlier
-     * doesn't wash out the rest of the grid.
-     */
-    const deltaScale = $derived.by(() => {
-        const abs = [];
-        for (const row of deltas) {
-            for (const d of row) {
-                if (d != null && d !== 0) abs.push(Math.abs(d));
-            }
-        }
-        if (!abs.length) return 1;
-        abs.sort((a, b) => a - b);
-        // 90th percentile so the visible range stays meaningful
-        const idx = Math.floor(abs.length * 0.9);
-        return Math.max(abs[idx] || abs[abs.length - 1], 1);
-    });
-
     const atmIdx = $derived.by(() => {
         const underlying = data?.underlying || 0;
         if (underlying <= 0 || !visibleStrikes.length) return -1;
@@ -103,50 +60,33 @@
     });
 
     /**
-     * Log-scaled emerald ramp for absolute OI values. Muted so the grid
-     * doesn't strain the eyes.
+     * Six discrete tiers — small/empty values stay near-gray, only the
+     * genuinely large positions reach a vivid emerald. Matches CME's
+     * QuikStrike feel where most cells fade and the chunky walls pop.
+     *
+     * The log-transformed value is mapped to thresholds (not equal width)
+     * so the rare top values get the brightest tier.
      */
+    const TIERS = [
+        // [maxT (inclusive), background HSL]
+        [0.30, 'hsl(0 0% 11%)'],     // tier 1 — gray, dim (empty-ish)
+        [0.50, 'hsl(142 18% 16%)'],  // tier 2 — faintest green tint
+        [0.70, 'hsl(142 32% 22%)'],  // tier 3 — light green
+        [0.84, 'hsl(142 48% 30%)'],  // tier 4 — medium green
+        [0.94, 'hsl(142 62% 40%)'],  // tier 5 — clear green
+        [1.01, 'hsl(142 78% 52%)']   // tier 6 — vivid green (top values only)
+    ];
+
     function oiStyle(value) {
-        if (value == null || !Number.isFinite(value) || value <= 0 || maxVal <= 0) return '';
+        if (value == null || !Number.isFinite(value) || value <= 0 || maxVal <= 0) {
+            return '';
+        }
         const t = Math.log10(value + 1) / Math.log10(maxVal + 1);
         const clamped = Math.max(0, Math.min(1, t));
-        const lightness = 10 + clamped * 24;
-        const saturation = 10 + clamped * 40;
-        return `background-color:hsl(142 ${saturation.toFixed(0)}% ${lightness.toFixed(0)}%);`;
-    }
-
-    /**
-     * Diverging palette for day-over-day delta.
-     *   - positive delta (added OI) → emerald (hue 142)
-     *   - negative delta (removed OI) → red (hue 0)
-     *   - near-zero → background (no color)
-     * Intensity scales with |delta| / deltaScale, capped at 1.
-     */
-    function deltaStyle(delta) {
-        if (delta == null || !Number.isFinite(delta)) return '';
-        const ratio = Math.max(-1, Math.min(1, delta / deltaScale));
-        const mag = Math.abs(ratio);
-        // Anything below ~3% of the reference magnitude stays neutral
-        if (mag < 0.03) return '';
-        const hue = ratio >= 0 ? 142 : 0;
-        // Cap intensity below "screaming" — saturation 25-65%, lightness 12-36%
-        const saturation = 25 + mag * 40;
-        const lightness = 12 + mag * 24;
-        return `background-color:hsl(${hue} ${saturation.toFixed(0)}% ${lightness.toFixed(0)}%);`;
-    }
-
-    function cellStyle(value, delta) {
-        return viewMode === 'delta' ? deltaStyle(delta) : oiStyle(value);
-    }
-
-    function cellText(value, delta) {
-        if (viewMode === 'delta') {
-            if (delta == null) return '';
-            if (delta === 0) return '0';
-            const sign = delta > 0 ? '+' : '';
-            return `${sign}${fmtNumber(delta, 0)}`;
+        for (const [threshold, color] of TIERS) {
+            if (clamped <= threshold) return `background-color:${color};`;
         }
-        return value == null ? '' : fmtNumber(value, 0);
+        return `background-color:${TIERS[TIERS.length - 1][1]};`;
     }
 </script>
 
@@ -168,71 +108,43 @@
             </span>
         </div>
 
-        <div class="flex flex-wrap items-center gap-4">
-            <!-- View-mode pills -->
-            <div class="flex items-center gap-2">
-                <span class="text-[9px] font-semibold uppercase tracking-widest text-muted-foreground">
-                    View
-                </span>
-                <div class="flex gap-1">
-                    {#each views as v}
-                        {@const isActive = v.key === viewMode}
-                        <button
-                            type="button"
-                            title={v.hint}
-                            onclick={() => (viewMode = v.key)}
-                            class={cn(
-                                'rounded-md border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider transition-colors',
-                                isActive
-                                    ? 'border-primary bg-primary text-primary-foreground'
-                                    : 'border-border bg-surface text-muted-foreground hover:bg-surface-elevated hover:text-foreground'
-                            )}
-                        >
-                            {v.label}
-                        </button>
-                    {/each}
-                </div>
-            </div>
-
-            <!-- Contract pills -->
-            <div class="flex items-center gap-2">
-                <span class="text-[9px] font-semibold uppercase tracking-widest text-muted-foreground">
-                    Contract
-                </span>
-                <div class="flex gap-1">
-                    {#each contracts as c}
-                        {@const isActive = c.key === contractKey}
-                        <button
-                            type="button"
-                            onclick={() => pickContract(c.key)}
-                            class={cn(
-                                'rounded-md border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider transition-colors',
-                                isActive
-                                    ? 'border-primary bg-primary text-primary-foreground'
-                                    : 'border-border bg-surface text-muted-foreground hover:bg-surface-elevated hover:text-foreground'
-                            )}
-                        >
-                            {c.label}
-                        </button>
-                    {/each}
-                </div>
+        <!-- Contract pill switcher -->
+        <div class="flex items-center gap-2">
+            <span class="text-[9px] font-semibold uppercase tracking-widest text-muted-foreground">
+                Contract
+            </span>
+            <div class="flex gap-1">
+                {#each contracts as c}
+                    {@const isActive = c.key === contractKey}
+                    <button
+                        type="button"
+                        onclick={() => pickContract(c.key)}
+                        class={cn(
+                            'rounded-md border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider transition-colors',
+                            isActive
+                                ? 'border-primary bg-primary text-primary-foreground'
+                                : 'border-border bg-surface text-muted-foreground hover:bg-surface-elevated hover:text-foreground'
+                        )}
+                    >
+                        {c.label}
+                    </button>
+                {/each}
             </div>
         </div>
     </div>
 
-    <!-- Legend strip (only for delta view, to teach the colors) -->
-    {#if viewMode === 'delta' && visibleStrikes.length}
-        <div class="flex items-center gap-3 border-b border-border bg-surface px-4 py-1.5 text-[10px] text-muted-foreground">
-            <span class="font-semibold uppercase tracking-widest">Legend</span>
-            <span class="inline-flex items-center gap-1.5">
-                <span class="h-2.5 w-4 rounded-sm" style="background:hsl(0 65% 36%);"></span>
-                Removed
-            </span>
-            <span class="inline-flex items-center gap-1.5">
-                <span class="h-2.5 w-4 rounded-sm" style="background:hsl(142 65% 36%);"></span>
-                Added
-            </span>
-            <span class="ml-auto font-mono">scale ±{fmtNumber(deltaScale, 0)} (90p)</span>
+    <!-- Legend: six discrete tiers from low → high -->
+    {#if visibleStrikes.length}
+        <div class="flex items-center gap-2 border-b border-border bg-surface px-4 py-1.5 text-[10px] text-muted-foreground">
+            <span class="font-semibold uppercase tracking-widest">Scale</span>
+            <span class="font-mono">low</span>
+            <div class="flex gap-px">
+                {#each TIERS as [, color]}
+                    <span class="h-3 w-6" style="background:{color};"></span>
+                {/each}
+            </div>
+            <span class="font-mono">high</span>
+            <span class="ml-auto font-mono">max {fmtNumber(maxVal, 0)}</span>
         </div>
     {/if}
 
@@ -272,10 +184,9 @@
                             <td class={cn('hm-strike', isATM && 'hm-strike-atm')}>
                                 {fmtStrike(s.strike)}
                             </td>
-                            {#each s.values as v, i}
-                                {@const d = deltas[rowIdx]?.[i] ?? null}
-                                <td class="hm-cell" style={cellStyle(v, d)}>
-                                    {cellText(v, d)}
+                            {#each s.values as v}
+                                <td class="hm-cell" style={oiStyle(v)}>
+                                    {v == null ? '' : fmtNumber(v, 0)}
                                 </td>
                             {/each}
                         </tr>
@@ -364,7 +275,7 @@
     }
 
     .hm-row:hover .hm-cell {
-        filter: brightness(1.15);
+        filter: brightness(1.18);
     }
     .hm-row:hover .hm-strike:not(.hm-strike-atm) {
         background: hsl(var(--surface-elevated));
