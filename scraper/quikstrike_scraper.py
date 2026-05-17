@@ -1414,10 +1414,139 @@ def scrape_view(driver, view_type, prefix, header_prefix='', skip_switch=False, 
     return filepath
 
 
+def scrape_oi_heatmap(driver, prefix, output_dir=None, asset_id='gc'):
+    """
+    Navigate to the sidebar 'Heatmap → OI' section and extract the
+    strike × date open-interest table that QuikStrike renders there.
+    Saves as {prefix}_OIHeatmap.json. Non-fatal: returns None on failure.
+    """
+    out_dir = output_dir or get_output_dir(asset_id)
+    print(f'[HEATMAP] Navigating to Heatmap → OI for {prefix}...')
+
+    from selenium.webdriver.common.keys import Keys
+    try:
+        driver.find_element(By.TAG_NAME, 'body').send_keys(Keys.ESCAPE)
+        time.sleep(0.2)
+    except Exception:
+        pass
+
+    # Click the "OI" link under the "Heatmap" sidebar section.
+    # Sidebar order is: Charts → Reports → Heatmap → History → Futures.
+    # Both Charts and Heatmap have an "OI" sub-item, so we disambiguate
+    # by scanning DOM order and only firing once we're past the Heatmap header.
+    clicked = driver.execute_script("""
+        const SECTION_HEADERS = ['Charts','Reports','Heatmap','History','Futures'];
+        const leaves = Array.from(document.querySelectorAll('*'))
+            .filter(el => el.children.length === 0 && el.offsetParent !== null);
+        let inHeatmap = false;
+        for (const el of leaves) {
+            const txt = (el.textContent || '').trim();
+            if (txt === 'Heatmap') { inHeatmap = true; continue; }
+            if (inHeatmap && SECTION_HEADERS.includes(txt) && txt !== 'Heatmap') {
+                inHeatmap = false; continue;
+            }
+            if (inHeatmap && txt === 'OI') {
+                let t = el;
+                while (t && t !== document.body) {
+                    const tag = t.tagName;
+                    if (tag === 'A' || t.onclick || (t.getAttribute && t.getAttribute('href'))) {
+                        t.click(); return 'clicked:' + tag;
+                    }
+                    t = t.parentElement;
+                }
+                el.click();
+                return 'clicked:leaf';
+            }
+        }
+        return null;
+    """)
+    if not clicked:
+        print(f'[HEATMAP] ⚠ Could not find Heatmap → OI link in sidebar')
+        save_debug(driver, f'heatmap_nav_fail_{prefix}', output_dir=out_dir)
+        return None
+    print(f'[HEATMAP] Sidebar click result: {clicked}')
+
+    time.sleep(1.5)
+    try:
+        wait_ready(driver, timeout=10)
+    except Exception:
+        pass
+    time.sleep(0.5)  # let table render after postback
+
+    # Extract the largest visible table on the page — that's the heatmap.
+    data = driver.execute_script("""
+        const tables = Array.from(document.querySelectorAll('table'))
+            .filter(t => t.offsetParent !== null && t.rows && t.rows.length > 4);
+        if (!tables.length) return {error: 'No table found'};
+        tables.sort((a,b) =>
+            (b.rows.length * (b.rows[0].cells.length||0)) -
+            (a.rows.length * (a.rows[0].cells.length||0))
+        );
+        const table = tables[0];
+        const rows = Array.from(table.rows);
+
+        // Header row: find date-like cells (e.g. "5/15/2026" or "5/15")
+        const dateRe = /^\\s*\\d{1,2}[\\/\\-]\\d{1,2}([\\/\\-]\\d{2,4})?\\s*$/;
+        const headerCells = Array.from(rows[0].cells).map(c => (c.textContent || '').trim());
+        const dateCols = [];
+        headerCells.forEach((txt, i) => { if (dateRe.test(txt)) dateCols.push({i: i, label: txt}); });
+        if (dateCols.length === 0) return {error: 'No date headers', headerCells: headerCells};
+
+        const strikes = [];
+        for (let r = 1; r < rows.length; r++) {
+            const cells = Array.from(rows[r].cells);
+            if (!cells.length) continue;
+            // Strike is the first numeric cell that comes before any date column
+            let strike = null;
+            for (let c = 0; c < dateCols[0].i + 1 && c < cells.length; c++) {
+                const t = (cells[c].textContent || '').replace(/[, ]/g, '').trim();
+                const v = parseFloat(t);
+                if (Number.isFinite(v)) { strike = v; break; }
+            }
+            if (strike === null) continue;
+            const values = [];
+            for (const dc of dateCols) {
+                const cell = cells[dc.i];
+                if (!cell) { values.push(null); continue; }
+                const t = (cell.textContent || '').replace(/[, ]/g, '').trim();
+                const v = parseFloat(t);
+                values.push(Number.isFinite(v) ? v : null);
+            }
+            strikes.push({strike: strike, values: values});
+        }
+        return {dates: dateCols.map(d => d.label), strikes: strikes};
+    """)
+
+    if not data or 'error' in data:
+        print(f'[HEATMAP] ⚠ Extract failed: {data}')
+        save_debug(driver, f'heatmap_extract_fail_{prefix}', output_dir=out_dir)
+        return None
+
+    header_line = extract_header(driver) or ''
+    underlying = get_futures_price(asset_id)
+
+    payload = {
+        'asset': asset_id,
+        'prefix': prefix,
+        'header': header_line,
+        'underlying': underlying,
+        'dates': data['dates'],
+        'strikes': data['strikes'],
+        'scrapedAt': datetime.now(timezone.utc).isoformat(),
+    }
+
+    filepath = os.path.join(out_dir, f'{prefix}_OIHeatmap.json')
+    with open(filepath, 'w', encoding='utf-8') as f:
+        json.dump(payload, f, indent=2)
+
+    print(f'[HEATMAP] ✅ Saved {os.path.basename(filepath)} ({len(data["dates"])} dates × {len(data["strikes"])} strikes)')
+    return filepath
+
+
 def scrape_contract(driver, contract, prefix, output_dir=None, asset_id='gc'):
     """
     Scrape both Intraday + OI for one contract.
-    
+
     IMPORTANT: After selecting a contract, Vol2Vol defaults to Intraday Volume.
     So we scrape Intraday FIRST (no extra click), then switch to OI.
     """
@@ -1453,6 +1582,14 @@ def scrape_contract(driver, contract, prefix, output_dir=None, asset_id='gc'):
     path = scrape_view(driver, 'oi', prefix, header_prefix=contract_text, output_dir=output_dir, asset_id=asset_id)
     if path:
         results['oi'] = path
+
+    # 3. OI Heatmap (multi-day strike × date position history)
+    try:
+        hpath = scrape_oi_heatmap(driver, prefix, output_dir=output_dir, asset_id=asset_id)
+        if hpath:
+            results['heatmap'] = hpath
+    except Exception as e:
+        print(f'[HEATMAP] ⚠ Heatmap scrape raised: {e}')
 
     return bool(results)
 
@@ -1665,6 +1802,9 @@ def scrape_asset(driver, asset_id):
             try:
                 shutil.copy(os.path.join(output_dir, 'current_IntradayData.txt'), os.path.join(output_dir, 'friday_IntradayData.txt'))
                 shutil.copy(os.path.join(output_dir, 'current_OIData.txt'), os.path.join(output_dir, 'friday_OIData.txt'))
+                heatmap_src = os.path.join(output_dir, 'current_OIHeatmap.json')
+                if os.path.exists(heatmap_src):
+                    shutil.copy(heatmap_src, os.path.join(output_dir, 'friday_OIHeatmap.json'))
                 print('[COPY] Copied current data to friday files')
             except Exception as e:
                 print(f'[WARN] Could not copy current to friday: {e}')

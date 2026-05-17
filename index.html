@@ -4,177 +4,241 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Vol2Vol Dashboard — OI & Intraday Volume</title>
+    <title>Vol2Vol — OI & Intraday Volume</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Inter:wght@400;500;600;700;800;900&display=swap"
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Inter:wght@400;500;600;700&display=swap"
         rel="stylesheet">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        bg: { 0: '#0a0d12', 1: '#0f131b', 2: '#141923', 3: '#1a2030' },
+                        line: { DEFAULT: '#222a3d', strong: '#2e3650' },
+                        ink: { 0: '#e8ecf5', 1: '#a8b0c4', 2: '#5e6781', 3: '#3a4159' },
+                        brand: { DEFAULT: '#5b8def', soft: 'rgba(91,141,239,0.12)' },
+                        call: { DEFAULT: '#22d3ee', soft: 'rgba(34,211,238,0.10)' },
+                        put: { DEFAULT: '#fb923c', soft: 'rgba(251,146,60,0.10)' },
+                        up: '#22c55e',
+                        down: '#ef4444',
+                        warn: '#f59e0b',
+                        mag: '#a855f7',
+                    },
+                    fontFamily: {
+                        sans: ['Inter', 'system-ui', 'sans-serif'],
+                        mono: ['JetBrains Mono', 'Consolas', 'monospace'],
+                    },
+                    fontSize: {
+                        '2xs': ['10px', '14px'],
+                    },
+                }
+            }
+        }
+    </script>
     <link rel="stylesheet" href="styles.css">
 </head>
 
-<body>
+<body class="bg-bg-0 text-ink-0 font-sans text-sm antialiased h-screen flex flex-col overflow-hidden">
 
     <!-- Loading -->
-    <div class="loading-overlay" id="loading">
-        <div class="spinner"></div>
-        <div class="loading-text">Fetching Vol2Vol Data...</div>
+    <div class="loading-overlay fixed inset-0 z-[1000] bg-bg-0/95 flex flex-col items-center justify-center transition-opacity duration-500" id="loading">
+        <div class="spinner w-10 h-10 border-2 border-line border-t-brand rounded-full animate-spin"></div>
+        <div class="mt-4 text-ink-1 text-sm">Loading market data…</div>
     </div>
 
     <!-- Header -->
-    <div class="header">
-        <div class="header-left">
-            <div class="logo">⚡ Vol2Vol</div>
+    <header class="flex items-center justify-between gap-4 px-6 py-3 bg-bg-1 border-b border-line shrink-0">
+        <div class="flex items-center gap-4 min-w-0">
+            <div class="flex items-center gap-2 font-mono font-semibold text-brand tracking-tight">
+                <span class="inline-block w-2 h-2 rounded-full bg-brand"></span>
+                Vol2Vol
+            </div>
             <div class="asset-selector">
-                <select id="assetDropdown" onchange="switchAsset(this.value)">
-                    <option value="gc" selected>🥇 Gold (GC)</option>
-                    <option value="nq">📈 Nasdaq (NQ)</option>
+                <select id="assetDropdown" onchange="switchAsset(this.value)"
+                    class="bg-bg-2 text-ink-0 border border-line rounded-md pl-3 pr-8 py-1.5 text-sm font-medium cursor-pointer hover:border-brand focus:outline-none focus:border-brand transition">
+                    <option value="gc" selected>Gold · GC</option>
+                    <option value="nq">Nasdaq · NQ</option>
                 </select>
             </div>
-            <div class="contract-info">
-                <span class="contract-name" id="contractName">Gold (GC)</span>
-                <span class="contract-detail" id="contractDetail">—</span>
-                <span class="price-display" id="priceDisplay">—</span>
-                <span class="price-change up" id="priceChange">—</span>
+            <div class="hidden md:flex items-center gap-3 min-w-0">
+                <div class="flex flex-col leading-tight min-w-0">
+                    <span class="text-2xs text-ink-2 uppercase tracking-wider">Contract</span>
+                    <div class="flex items-baseline gap-2 min-w-0">
+                        <span class="text-ink-0 font-semibold truncate" id="contractName">Gold (GC)</span>
+                        <span class="text-ink-2 text-xs font-mono truncate" id="contractDetail">—</span>
+                    </div>
+                </div>
+                <div class="h-8 w-px bg-line"></div>
+                <div class="flex items-baseline gap-2">
+                    <span class="font-mono text-2xl font-semibold tabular-nums tracking-tight" id="priceDisplay">—</span>
+                    <span class="price-change up text-xs font-semibold font-mono px-2 py-0.5 rounded tabular-nums" id="priceChange">—</span>
+                </div>
             </div>
         </div>
-        <div class="header-right">
-            <span class="dte-badge" id="dteBadge">DTE —</span>
-            <button class="refresh-btn" onclick="refreshData()">⟳ Refresh</button>
-            <div class="status-indicator">
-                <div class="status-dot" id="statusDot"></div>
-                <span class="last-update" id="lastUpdate">—</span>
+        <div class="flex items-center gap-3 shrink-0">
+            <span class="dte-badge font-mono text-xs font-semibold px-2.5 py-1 rounded-md bg-brand-soft text-brand border border-brand/30 tabular-nums" id="dteBadge">DTE —</span>
+            <button onclick="refreshData()"
+                class="text-xs font-semibold px-3 py-1.5 rounded-md bg-bg-2 hover:bg-bg-3 border border-line hover:border-brand text-ink-1 hover:text-ink-0 transition">
+                ↻ Refresh
+            </button>
+            <div class="hidden sm:flex items-center gap-1.5 text-2xs text-ink-2 font-mono">
+                <div id="statusDot" class="w-1.5 h-1.5 rounded-full bg-up animate-pulse"></div>
+                <span id="lastUpdate">—</span>
             </div>
         </div>
-    </div>
+    </header>
 
     <!-- Contract Tabs -->
-    <div class="tab-bar">
-        <button class="tab-btn" data-tab="current" onclick="switchTab('current')">
-            Current <span class="tab-contract" id="tabContractCurrent"></span> <span class="tab-dte"
-                id="tabDteCurrent"></span>
+    <nav class="flex items-stretch gap-0 bg-bg-1 border-b border-line px-6 shrink-0">
+        <button class="tab-btn group flex items-center gap-2 px-5 py-2.5 text-xs font-semibold uppercase tracking-wider border-b-2 border-transparent text-ink-2 hover:text-ink-1 transition"
+            data-tab="current" onclick="switchTab('current')">
+            Current
+            <span class="font-mono text-ink-1 normal-case tracking-normal" id="tabContractCurrent"></span>
+            <span class="font-mono text-ink-2 normal-case tracking-normal text-[10px]" id="tabDteCurrent"></span>
         </button>
-        <button class="tab-btn" data-tab="friday" onclick="switchTab('friday')">
-            Friday <span class="tab-contract" id="tabContractFriday"></span> <span class="tab-dte"
-                id="tabDteFriday"></span>
+        <button class="tab-btn group flex items-center gap-2 px-5 py-2.5 text-xs font-semibold uppercase tracking-wider border-b-2 border-transparent text-ink-2 hover:text-ink-1 transition"
+            data-tab="friday" onclick="switchTab('friday')">
+            Friday
+            <span class="font-mono text-ink-1 normal-case tracking-normal" id="tabContractFriday"></span>
+            <span class="font-mono text-ink-2 normal-case tracking-normal text-[10px]" id="tabDteFriday"></span>
         </button>
-        <button class="tab-btn" data-tab="monthly" onclick="switchTab('monthly')">
-            Monthly <span class="tab-contract" id="tabContractMonthly"></span> <span class="tab-dte"
-                id="tabDteMonthly"></span>
+        <button class="tab-btn group flex items-center gap-2 px-5 py-2.5 text-xs font-semibold uppercase tracking-wider border-b-2 border-transparent text-ink-2 hover:text-ink-1 transition"
+            data-tab="monthly" onclick="switchTab('monthly')">
+            Monthly
+            <span class="font-mono text-ink-1 normal-case tracking-normal" id="tabContractMonthly"></span>
+            <span class="font-mono text-ink-2 normal-case tracking-normal text-[10px]" id="tabDteMonthly"></span>
         </button>
-        <button class="tab-btn active" data-tab="analysis" onclick="switchTab('analysis')"
-            style="margin-left:auto; color: #ff9800;">
+        <button class="tab-btn flex items-center gap-2 ml-auto px-5 py-2.5 text-xs font-semibold uppercase tracking-wider border-b-2 border-transparent text-mag hover:text-mag transition"
+            data-tab="heatmap" onclick="switchTab('heatmap')">
+            OI Heatmap
+        </button>
+        <button class="tab-btn active flex items-center gap-2 px-5 py-2.5 text-xs font-semibold uppercase tracking-wider border-b-2 border-transparent text-warn hover:text-warn transition"
+            data-tab="analysis" onclick="switchTab('analysis')">
             Position Bias
         </button>
-    </div>
+    </nav>
 
     <!-- Summary Strip -->
-    <div class="summary-strip" id="summaryStrip" style="display:none;">
-        <div class="summary-card">
-            <span class="summary-label">Vol Settle (ATM)</span>
-            <span class="summary-value val-cyan" id="sumVolSettle">—</span>
+    <div class="summary-strip grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 xl:grid-cols-9 bg-bg-1 border-b border-line shrink-0"
+        id="summaryStrip" style="display:none;">
+        <div class="summary-card min-w-0 px-4 py-3 border-r border-line">
+            <div class="text-2xs text-ink-2 uppercase tracking-wider font-semibold">Vol Settle (ATM)</div>
+            <div class="font-mono text-base font-semibold tabular-nums text-call truncate" id="sumVolSettle">—</div>
         </div>
-        <div class="summary-card">
-            <span class="summary-label">Expected Range</span>
-            <span class="summary-value val-gold" id="sumExpRange">—</span>
-            <span class="summary-sub" id="sumExpRangePrices"></span>
+        <div class="summary-card min-w-0 px-4 py-3 border-r border-line">
+            <div class="text-2xs text-ink-2 uppercase tracking-wider font-semibold">Expected Range</div>
+            <div class="font-mono text-base font-semibold tabular-nums text-brand truncate" id="sumExpRange">—</div>
+            <div class="font-mono text-2xs text-ink-2 tabular-nums truncate" id="sumExpRangePrices"></div>
         </div>
-        <div class="summary-card">
-            <span class="summary-label">Max OI Strike</span>
-            <span class="summary-value val-pink" id="sumMaxOI">—</span>
-            <span class="summary-sub" id="sumMaxOIDetail"></span>
+        <div class="summary-card min-w-0 px-4 py-3 border-r border-line">
+            <div class="text-2xs text-ink-2 uppercase tracking-wider font-semibold">Max OI Strike</div>
+            <div class="font-mono text-base font-semibold tabular-nums text-mag truncate" id="sumMaxOI">—</div>
+            <div class="font-mono text-2xs text-ink-2 tabular-nums truncate" id="sumMaxOIDetail"></div>
         </div>
-        <div class="summary-card">
-            <span class="summary-label">Total Call OI</span>
-            <span class="summary-value val-cyan" id="sumTotalCall">—</span>
+        <div class="summary-card min-w-0 px-4 py-3 border-r border-line">
+            <div class="text-2xs text-ink-2 uppercase tracking-wider font-semibold">Total Call OI</div>
+            <div class="font-mono text-base font-semibold tabular-nums text-call truncate" id="sumTotalCall">—</div>
         </div>
-        <div class="summary-card">
-            <span class="summary-label">Total Put OI</span>
-            <span class="summary-value val-orange" id="sumTotalPut">—</span>
+        <div class="summary-card min-w-0 px-4 py-3 border-r border-line">
+            <div class="text-2xs text-ink-2 uppercase tracking-wider font-semibold">Total Put OI</div>
+            <div class="font-mono text-base font-semibold tabular-nums text-put truncate" id="sumTotalPut">—</div>
         </div>
-        <div class="summary-card">
-            <span class="summary-label">P/C Ratio</span>
-            <span class="summary-value" id="sumPCRatio">—</span>
+        <div class="summary-card min-w-0 px-4 py-3 border-r border-line">
+            <div class="text-2xs text-ink-2 uppercase tracking-wider font-semibold">P/C Ratio</div>
+            <div class="font-mono text-base font-semibold tabular-nums text-ink-0 truncate" id="sumPCRatio">—</div>
         </div>
-        <div class="summary-card">
-            <span class="summary-label">Max Pain</span>
-            <span class="summary-value val-pink" id="sumMaxPain">—</span>
-            <span class="summary-sub" id="sumMaxPainDetail"></span>
+        <div class="summary-card min-w-0 px-4 py-3 border-r border-line">
+            <div class="text-2xs text-ink-2 uppercase tracking-wider font-semibold">Max Pain</div>
+            <div class="font-mono text-base font-semibold tabular-nums text-mag truncate" id="sumMaxPain">—</div>
+            <div class="font-mono text-2xs text-ink-2 tabular-nums truncate" id="sumMaxPainDetail"></div>
         </div>
-        <div class="summary-card">
-            <span class="summary-label">Net GEX</span>
-            <span class="summary-value" id="sumNetGEX">—</span>
-            <span class="summary-sub" id="sumNetGEXDetail"></span>
+        <div class="summary-card min-w-0 px-4 py-3 border-r border-line">
+            <div class="text-2xs text-ink-2 uppercase tracking-wider font-semibold">Net GEX</div>
+            <div class="font-mono text-base font-semibold tabular-nums text-ink-0 truncate" id="sumNetGEX">—</div>
+            <div class="font-mono text-2xs text-ink-2 tabular-nums truncate" id="sumNetGEXDetail"></div>
         </div>
-        <div class="summary-card">
-            <span class="summary-label">Inst. Hedge</span>
-            <span class="summary-value" id="sumHedgePct">—</span>
-            <div class="hedge-bar" id="hedgeBar">
-                <div class="hedge-bar-itm" id="hedgeBarITM" style="flex:0"></div>
-                <div class="hedge-bar-atm" id="hedgeBarATM" style="flex:1"></div>
-                <div class="hedge-bar-otm" id="hedgeBarOTM" style="flex:0"></div>
+        <div class="summary-card min-w-0 px-4 py-3">
+            <div class="text-2xs text-ink-2 uppercase tracking-wider font-semibold">Inst. Hedge</div>
+            <div class="font-mono text-base font-semibold tabular-nums text-ink-0 truncate" id="sumHedgePct">—</div>
+            <div class="hedge-bar flex h-1 rounded-sm overflow-hidden gap-px mt-1.5" id="hedgeBar">
+                <div class="hedge-bar-itm bg-warn rounded-l-sm" id="hedgeBarITM" style="flex:0"></div>
+                <div class="hedge-bar-atm bg-ink-3" id="hedgeBarATM" style="flex:1"></div>
+                <div class="hedge-bar-otm bg-call rounded-r-sm" id="hedgeBarOTM" style="flex:0"></div>
             </div>
-            <span class="summary-sub" id="sumHedgeDetail"></span>
+            <div class="font-mono text-2xs text-ink-2 tabular-nums truncate mt-1" id="sumHedgeDetail"></div>
         </div>
     </div>
 
     <!-- ===== MAIN 2-COL ===== -->
-    <div class="main-container hide-main" id="mainContainer">
+    <main class="main-container hide-main flex-1 grid grid-cols-2 min-h-0 overflow-hidden bg-bg-0" id="mainContainer">
 
         <!-- LEFT: Intraday Volume Panel -->
-        <div class="data-panel">
-            <div class="panel-header">
-                <span class="panel-title">Intraday Volume</span>
-                <div class="panel-legend">
-                    <div class="legend-item">
-                        <div class="legend-dot put"></div><span class="legend-put">Put</span>
-                    </div>
-                    <div class="legend-item">
-                        <div class="legend-dot call"></div><span class="legend-call">Call</span>
-                    </div>
+        <section class="data-panel flex flex-col overflow-hidden border-r border-line">
+            <div class="panel-header flex items-center justify-between px-4 py-2.5 border-b border-line bg-bg-1">
+                <span class="text-xs font-semibold uppercase tracking-widest text-ink-1">Intraday Volume</span>
+                <div class="flex items-center gap-3 text-2xs font-medium">
+                    <div class="flex items-center gap-1.5"><span class="w-2 h-2 rounded-sm bg-put"></span><span class="text-put">Put</span></div>
+                    <div class="flex items-center gap-1.5"><span class="w-2 h-2 rounded-sm bg-call"></span><span class="text-call">Call</span></div>
                 </div>
             </div>
-            <div class="data-rows" id="volContainer">
-                <div class="placeholder-msg">
-                    <div class="icon">📊</div>
-                    <div class="desc">Loading Volume data...</div>
+            <div class="data-rows flex-1 overflow-y-auto py-1" id="volContainer">
+                <div class="placeholder-msg flex flex-col items-center justify-center gap-2 py-16 text-ink-2 text-sm">
+                    <div>Loading Volume data…</div>
                 </div>
             </div>
-        </div>
+        </section>
 
         <!-- RIGHT: OI Panel -->
-        <div class="data-panel">
-            <div class="panel-header">
-                <span class="panel-title">Open Interest</span>
+        <section class="data-panel flex flex-col overflow-hidden">
+            <div class="panel-header flex items-center justify-between px-4 py-2.5 border-b border-line bg-bg-1">
+                <span class="text-xs font-semibold uppercase tracking-widest text-ink-1">Open Interest</span>
             </div>
-            <div class="data-rows" id="oiContainer">
-                <div class="placeholder-msg">
-                    <div class="icon">📊</div>
-                    <div class="desc">Loading OI data...</div>
+            <div class="data-rows flex-1 overflow-y-auto py-1" id="oiContainer">
+                <div class="placeholder-msg flex flex-col items-center justify-center gap-2 py-16 text-ink-2 text-sm">
+                    <div>Loading OI data…</div>
+                </div>
+            </div>
+        </section>
+
+    </main>
+
+    <!-- ===== HEATMAP CONTAINER ===== -->
+    <main class="heatmap-container flex-1 flex flex-col bg-bg-0 overflow-hidden" id="heatmapContainer" style="display:none;">
+        <div class="flex items-center justify-between px-6 py-2.5 border-b border-line bg-bg-1 shrink-0">
+            <div class="flex items-center gap-3">
+                <span class="text-xs font-semibold uppercase tracking-widest text-ink-1">OI Heatmap</span>
+                <span class="text-2xs text-ink-2" id="heatmapSubtitle">Strike × Date — Open Interest history</span>
+            </div>
+            <div class="flex items-center gap-2">
+                <span class="text-2xs text-ink-2 uppercase tracking-wider">Contract</span>
+                <div class="flex gap-1" id="heatmapContractBtns">
+                    <button class="heatmap-c-btn active px-2.5 py-1 rounded-md text-2xs font-semibold uppercase tracking-wider bg-bg-3 border border-line text-ink-0" data-contract="current" onclick="setHeatmapContract('current')">Current</button>
+                    <button class="heatmap-c-btn px-2.5 py-1 rounded-md text-2xs font-semibold uppercase tracking-wider bg-bg-2 border border-line text-ink-2 hover:text-ink-0" data-contract="friday" onclick="setHeatmapContract('friday')">Friday</button>
+                    <button class="heatmap-c-btn px-2.5 py-1 rounded-md text-2xs font-semibold uppercase tracking-wider bg-bg-2 border border-line text-ink-2 hover:text-ink-0" data-contract="monthly" onclick="setHeatmapContract('monthly')">Monthly</button>
                 </div>
             </div>
         </div>
-
-    </div>
+        <div class="flex-1 overflow-auto" id="heatmapBody">
+            <div class="placeholder-msg flex flex-col items-center justify-center gap-2 py-16 text-ink-2 text-sm">
+                <div>Loading heatmap…</div>
+            </div>
+        </div>
+    </main>
 
     <!-- ===== ANALYSIS CONTAINER ===== -->
-    <div class="analysis-container active" id="analysisContainer">
+    <main class="analysis-container active flex-1 flex flex-col bg-bg-0 overflow-y-auto px-6 py-5 gap-4" id="analysisContainer">
         <div id="marketPulse"></div>
-        <div class="analysis-header" id="analysisHeader">
-            <!-- Overall Bias Header -->
-        </div>
-        <div class="analysis-grid" id="analysisGrid">
-            <!-- 3 columns: Daily, Weekly, Monthly -->
-        </div>
-    </div>
+        <div id="analysisHeader"></div>
+        <div class="analysis-grid grid grid-cols-1 lg:grid-cols-3 gap-4 items-start" id="analysisGrid"></div>
+    </main>
 
     <!-- Info Footer -->
-    <div class="info-footer">
-        <div class="info-item"><span class="info-label">Source:</span><span class="info-value">pageth/Vol2VolData</span>
-        </div>
-        <div class="info-item"><span class="info-label">Contract:</span><span class="info-value"
-                id="footerContract">—</span></div>
-        <div class="info-item"><span class="info-label">Data Type:</span><span class="info-value"
-                id="footerDataType">—</span></div>
-    </div>
+    <footer class="info-footer flex items-center flex-wrap gap-6 px-6 py-2 bg-bg-1 border-t border-line text-2xs text-ink-2 shrink-0">
+        <div class="flex items-center gap-1.5"><span>Source</span><span class="text-ink-1 font-mono">pageth/Vol2VolData</span></div>
+        <div class="flex items-center gap-1.5"><span>Contract</span><span class="text-ink-1 font-mono" id="footerContract">—</span></div>
+        <div class="flex items-center gap-1.5"><span>Data Type</span><span class="text-ink-1 font-mono" id="footerDataType">—</span></div>
+    </footer>
 
     <script src="app.js"></script>
 </body>

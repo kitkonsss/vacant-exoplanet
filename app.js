@@ -25,18 +25,22 @@ const ASSET_PROFILES = {
                 label: 'Current',
                 intradayUrl: MY_BASE + '/data/current_IntradayData.txt',
                 oiUrl: MY_BASE + '/data/current_OIData.txt',
+                heatmapUrl: MY_BASE + '/data/current_OIHeatmap.json',
             },
             friday: {
                 label: 'Friday',
                 intradayUrl: MY_BASE + '/data/friday_IntradayData.txt',
                 oiUrl: MY_BASE + '/data/friday_OIData.txt',
+                heatmapUrl: MY_BASE + '/data/friday_OIHeatmap.json',
             },
             monthly: {
                 label: 'Monthly',
                 intradayUrl: MY_BASE + '/data/monthly_IntradayData.txt',
                 oiUrl: MY_BASE + '/data/monthly_OIData.txt',
+                heatmapUrl: MY_BASE + '/data/monthly_OIHeatmap.json',
             },
             analysis: { label: 'Position Bias' },
+            heatmap: { label: 'OI Heatmap' },
         },
     },
     nq: {
@@ -64,18 +68,22 @@ const ASSET_PROFILES = {
                 label: 'Current',
                 intradayUrl: MY_BASE + '/data/nq/current_IntradayData.txt',
                 oiUrl: MY_BASE + '/data/nq/current_OIData.txt',
+                heatmapUrl: MY_BASE + '/data/nq/current_OIHeatmap.json',
             },
             friday: {
                 label: 'Friday',
                 intradayUrl: MY_BASE + '/data/nq/friday_IntradayData.txt',
                 oiUrl: MY_BASE + '/data/nq/friday_OIData.txt',
+                heatmapUrl: MY_BASE + '/data/nq/friday_OIHeatmap.json',
             },
             monthly: {
                 label: 'Monthly',
                 intradayUrl: MY_BASE + '/data/nq/monthly_IntradayData.txt',
                 oiUrl: MY_BASE + '/data/nq/monthly_OIData.txt',
+                heatmapUrl: MY_BASE + '/data/nq/monthly_OIHeatmap.json',
             },
             analysis: { label: 'Position Bias' },
+            heatmap: { label: 'OI Heatmap' },
         },
     },
 };
@@ -92,7 +100,9 @@ let state = {
     activeAsset: 'gc',            // 'gc' | 'nq'
     activeTab: 'analysis',
     tradingStyle: 'daytrade',     // 'daytrade' | 'swing' | 'position'
+    heatmapContract: 'current',   // 'current' | 'friday' | 'monthly'
     data: { current: {}, friday: {}, monthly: {}, analysis: {} },
+    heatmapData: { current: null, friday: null, monthly: null },
     refreshTimer: null,
     biasLock: null, // { label, score, direction, color, icon, isLongGamma, hasNoMansLand, hasBrokenWall, lockedAt }
 };
@@ -1433,7 +1443,13 @@ function updateSummary(intraday, oi) {
     document.getElementById('priceDisplay').textContent = uPrice.toFixed(1);
     const ce = document.getElementById('priceChange');
     ce.textContent = `${data.change >= 0 ? '+' : ''}${data.change.toFixed(1)}`;
-    ce.className = `price-change ${data.change >= 0 ? 'up' : 'down'}`;
+    if (data.change >= 0) {
+        ce.style.color = '#22c55e';
+        ce.style.background = 'rgba(34,197,94,0.12)';
+    } else {
+        ce.style.color = '#ef4444';
+        ce.style.background = 'rgba(239,68,68,0.12)';
+    }
     document.getElementById('dteBadge').textContent = `DTE ${data.dte.toFixed(2)}`;
     document.getElementById('lastUpdate').textContent = new Date().toLocaleTimeString('th-TH');
     document.getElementById('footerContract').textContent = data.contract || '';
@@ -1486,12 +1502,11 @@ function updateSummary(intraday, oi) {
         const gexEl = document.getElementById('sumNetGEX');
         if (gexVal > 0) {
             gexEl.textContent = '+' + (gexVal / 1e6).toFixed(1) + 'M';
-            gexEl.className = 'summary-value val-green';
+            gexEl.style.color = '#22c55e';
             document.getElementById('sumNetGEXDetail').textContent = 'Long Gamma (Stable)';
         } else {
             gexEl.textContent = (gexVal / 1e6).toFixed(1) + 'M';
-            gexEl.className = 'summary-value' + (gexVal < 0 ? ' bear' : '');
-            gexEl.style.color = 'var(--red)';
+            gexEl.style.color = '#ef4444';
             document.getElementById('sumNetGEXDetail').textContent = 'Short Gamma (Volatile)';
         }
 
@@ -1533,18 +1548,32 @@ async function switchTab(tabKey) {
 
     const mainContainer = document.getElementById('mainContainer');
     const summaryStrip = document.getElementById('summaryStrip');
+    const analysisEl = document.getElementById('analysisContainer');
+    const heatmapEl = document.getElementById('heatmapContainer');
 
     if (tabKey === 'analysis') {
         mainContainer.classList.add('hide-main');
         summaryStrip.style.display = 'none';
-        document.getElementById('analysisContainer').classList.add('active');
+        if (heatmapEl) heatmapEl.style.display = 'none';
+        analysisEl.classList.add('active');
         renderAnalysisTab();
         return;
-    } else {
-        mainContainer.classList.remove('hide-main');
-        summaryStrip.style.display = 'flex';
-        document.getElementById('analysisContainer').classList.remove('active');
     }
+
+    if (tabKey === 'heatmap') {
+        mainContainer.classList.add('hide-main');
+        summaryStrip.style.display = 'none';
+        analysisEl.classList.remove('active');
+        if (heatmapEl) heatmapEl.style.display = 'flex';
+        await ensureHeatmapData(state.heatmapContract);
+        renderHeatmap();
+        return;
+    }
+
+    mainContainer.classList.remove('hide-main');
+    summaryStrip.style.display = 'grid';
+    analysisEl.classList.remove('active');
+    if (heatmapEl) heatmapEl.style.display = 'none';
 
     // Fetch data if not loaded yet
     const tabData = state.data[tabKey];
@@ -1552,6 +1581,138 @@ async function switchTab(tabKey) {
         await fetchTabData(tabKey);
     }
     renderActiveTab();
+}
+
+// ========== OI HEATMAP ==========
+async function fetchHeatmapData(contractKey) {
+    const cfg = getProfile().contracts[contractKey];
+    if (!cfg || !cfg.heatmapUrl) {
+        state.heatmapData[contractKey] = null;
+        return;
+    }
+    try {
+        const res = await fetch(cfg.heatmapUrl + '?t=' + Date.now());
+        if (!res.ok) {
+            state.heatmapData[contractKey] = null;
+            return;
+        }
+        state.heatmapData[contractKey] = await res.json();
+    } catch (e) {
+        console.warn(`Heatmap fetch failed (${contractKey})`, e);
+        state.heatmapData[contractKey] = null;
+    }
+}
+
+async function ensureHeatmapData(contractKey) {
+    if (state.heatmapData[contractKey]) return;
+    await fetchHeatmapData(contractKey);
+}
+
+function setHeatmapContract(contractKey) {
+    if (!['current', 'friday', 'monthly'].includes(contractKey)) return;
+    state.heatmapContract = contractKey;
+    document.querySelectorAll('.heatmap-c-btn').forEach(b => {
+        const active = b.dataset.contract === contractKey;
+        b.classList.toggle('active', active);
+        b.classList.toggle('bg-bg-3', active);
+        b.classList.toggle('text-ink-0', active);
+        b.classList.toggle('bg-bg-2', !active);
+        b.classList.toggle('text-ink-2', !active);
+    });
+    ensureHeatmapData(contractKey).then(renderHeatmap);
+}
+
+function heatmapCellColor(value, maxVal) {
+    if (value == null || !Number.isFinite(value) || value <= 0 || maxVal <= 0) return '';
+    // Log scale so 100 vs 10000 still reads visually
+    const t = Math.log10(value + 1) / Math.log10(maxVal + 1);
+    const clamped = Math.max(0, Math.min(1, t));
+    // Teal/cyan gradient matching QuikStrike: dark transparent → bright cyan
+    const alpha = 0.08 + clamped * 0.72;
+    return `background-color: rgba(34, 211, 238, ${alpha.toFixed(3)});`;
+}
+
+function renderHeatmap() {
+    const body = document.getElementById('heatmapBody');
+    const subtitleEl = document.getElementById('heatmapSubtitle');
+    if (!body) return;
+
+    const profile = getProfile();
+    const contractKey = state.heatmapContract;
+    const data = state.heatmapData[contractKey];
+
+    if (!data || !data.strikes || !data.strikes.length) {
+        body.innerHTML = `<div class="placeholder-msg flex flex-col items-center justify-center gap-2 py-16 text-ink-2 text-sm">
+            <div class="text-base">🗺️</div>
+            <div>No heatmap data yet for <span class="font-mono text-ink-1">${escapeHtml(contractKey)}</span></div>
+            <div class="text-2xs">Run the QuikStrike scraper to populate <span class="font-mono">${escapeHtml(contractKey)}_OIHeatmap.json</span>.</div>
+        </div>`;
+        if (subtitleEl) subtitleEl.textContent = 'Strike × Date — Open Interest history';
+        return;
+    }
+
+    // Determine underlying — prefer live data fetched for the same contract
+    let underlying = data.underlying || 0;
+    const liveOI = state.data[contractKey]?.oi;
+    if (liveOI?.underlying) underlying = liveOI.underlying;
+    else if (state.data.current?.oi?.underlying) underlying = state.data.current.oi.underlying;
+
+    const dates = data.dates || [];
+    // Filter strikes to ±visibleStrikeRange of underlying (if we have one), otherwise show all
+    let strikes = data.strikes.slice();
+    if (underlying > 0) {
+        const range = profile.visibleStrikeRange;
+        strikes = strikes.filter(s => Math.abs(s.strike - underlying) <= range);
+    }
+    // Sort descending so highest strike at top (QuikStrike convention)
+    strikes.sort((a, b) => b.strike - a.strike);
+
+    // Compute global max for color scale
+    let maxVal = 1;
+    for (const s of strikes) {
+        for (const v of s.values) {
+            if (v != null && v > maxVal) maxVal = v;
+        }
+    }
+
+    // ATM row = closest strike to underlying
+    let atmStrike = null;
+    if (underlying > 0 && strikes.length) {
+        atmStrike = strikes.reduce((prev, curr) =>
+            Math.abs(curr.strike - underlying) < Math.abs(prev.strike - underlying) ? curr : prev, strikes[0]);
+    }
+
+    if (subtitleEl) {
+        const header = data.header ? ` · ${data.header}` : '';
+        subtitleEl.textContent = `${dates.length} days × ${strikes.length} strikes${header}`;
+    }
+
+    // Build table HTML
+    let html = '<table class="heatmap-table">';
+    html += '<thead><tr><th class="hm-strike-col">Strike</th>';
+    for (const d of dates) {
+        html += `<th class="hm-date-col">${escapeHtml(d)}</th>`;
+    }
+    html += '</tr></thead><tbody>';
+
+    for (const s of strikes) {
+        const isATM = s === atmStrike;
+        let strikeCls = 'hm-strike';
+        if (isATM) strikeCls += ' atm';
+        else if (underlying > 0) strikeCls += s.strike > underlying ? ' above' : ' below';
+
+        html += `<tr class="${isATM ? 'hm-row atm' : 'hm-row'}">`;
+        html += `<td class="${strikeCls}">${fmtStrike(s.strike)}</td>`;
+        for (let i = 0; i < dates.length; i++) {
+            const v = s.values[i];
+            const style = heatmapCellColor(v, maxVal);
+            const display = (v == null) ? '' : fmtNumber(v, 0);
+            html += `<td class="hm-cell" style="${style}">${display}</td>`;
+        }
+        html += '</tr>';
+    }
+    html += '</tbody></table>';
+    body.innerHTML = html;
 }
 
 // ========== TRADING STYLE SWITCH ==========
@@ -1658,23 +1819,38 @@ function renderScoreMeter(score) {
     const clamped = Math.max(-3, Math.min(3, score || 0));
     const pct = ((clamped + 3) / 6) * 100;
     const isPos = clamped >= 0;
-    const color = clamped > 0.2 ? 'var(--call-color)' : clamped < -0.2 ? 'var(--put-color)' : 'var(--text-muted)';
+    const color = clamped > 0.2 ? '#22d3ee' : clamped < -0.2 ? '#fb923c' : '#5e6781';
     const fillLeft = isPos ? 50 : pct;
     const fillWidth = Math.abs(pct - 50);
-    return `<div class="score-meter"><div class="score-meter-fill" style="left:${fillLeft}%;width:${fillWidth}%;background:${color}"></div><div class="score-meter-dot" style="left:${pct}%;background:${color}"></div></div>`;
+    return `<div class="relative flex-1 h-1.5 bg-white/10 rounded-full">
+        <div class="absolute top-0 h-full rounded-full opacity-70" style="left:${fillLeft}%;width:${fillWidth}%;background:${color}"></div>
+        <div class="absolute top-1/2 w-2.5 h-2.5 rounded-full -translate-x-1/2 -translate-y-1/2 ring-2 ring-bg-2" style="left:${pct}%;background:${color}"></div>
+    </div>`;
 }
 
 function renderOILadder(contract) {
     const levels = contract.position_map || [];
     const price = contract.future_price;
-    if (levels.length === 0) return '<div class="oi-ladder-empty">No position data</div>';
+    if (levels.length === 0) {
+        return '<div class="text-center text-xs text-ink-2 py-6">No position data</div>';
+    }
     const sorted = [...levels].sort((a, b) => b.strike - a.strike);
     const maxOI = Math.max(...sorted.flatMap(l => [l.call_oi || 0, l.put_oi || 0]), 1);
+
+    // Layout: [put-num | put-bar(fill right→left)] | strike(72px) | [call-bar(fill left→right) | call-num]
+    // Bar fills always grow OUT from the strike axis. Numbers are anchored on the outside edges.
     let rows = '';
     let priceInserted = false;
+    const priceRow = (p) => `
+        <div class="grid grid-cols-[1fr_72px_1fr] items-center px-3 my-1 gap-2 h-4">
+            <div class="h-px bg-brand/40"></div>
+            <div class="text-center font-mono text-2xs font-semibold text-brand bg-brand/10 rounded px-1.5 py-0.5">${fmtStrike(p)}</div>
+            <div class="h-px bg-brand/40"></div>
+        </div>`;
+
     for (const lv of sorted) {
         if (!priceInserted && price != null && lv.strike < price) {
-            rows += `<div class="oi-price-row"><div class="oi-price-line"></div><div class="oi-price-tag">${fmtStrike(price)}</div><div class="oi-price-line"></div></div>`;
+            rows += priceRow(price);
             priceInserted = true;
         }
         const callPct = Math.min(Math.round((lv.call_oi || 0) / maxOI * 100), 100);
@@ -1682,19 +1858,44 @@ function renderOILadder(contract) {
         const isCallWall = (lv.side === 'call_wall' || lv.side === 'call') && lv.strike > (price || 0);
         const isPutWall = (lv.side === 'put_wall' || lv.side === 'put') && lv.strike < (price || 0);
         const isKey = isCallWall || isPutWall;
-        const putBar = putPct > 0 ? `<span class="oi-bar-num">${fmtK(lv.put_oi)}</span><div class="oi-bar-track" style="background:linear-gradient(to right,var(--put-color) ${putPct}%,transparent ${putPct}%)"></div>` : '';
-        const callBar = callPct > 0 ? `<div class="oi-bar-track" style="background:linear-gradient(to left,var(--call-color) ${callPct}%,transparent ${callPct}%)"></div><span class="oi-bar-num">${fmtK(lv.call_oi)}</span>` : '';
+
+        const putNum = lv.put_oi > 0 ? fmtK(lv.put_oi) : '';
+        const callNum = lv.call_oi > 0 ? fmtK(lv.call_oi) : '';
+
+        const putSide = `
+            <div class="flex items-center gap-2 min-w-0">
+                <span class="font-mono text-[10px] tabular-nums text-ink-2 shrink-0 text-right" style="min-width:34px">${putNum}</span>
+                <div class="flex-1 h-1.5 rounded-sm bg-white/5 overflow-hidden flex justify-end">
+                    <div class="h-full rounded-sm bg-put/80" style="width:${putPct}%"></div>
+                </div>
+            </div>`;
+
+        const callSide = `
+            <div class="flex items-center gap-2 min-w-0">
+                <div class="flex-1 h-1.5 rounded-sm bg-white/5 overflow-hidden flex justify-start">
+                    <div class="h-full rounded-sm bg-call/80" style="width:${callPct}%"></div>
+                </div>
+                <span class="font-mono text-[10px] tabular-nums text-ink-2 shrink-0 text-left" style="min-width:34px">${callNum}</span>
+            </div>`;
+
         rows += `
-            <div class="oi-row${isKey ? ' oi-row--key' : ''}">
-                <div class="oi-put-side">${putBar}</div>
-                <div class="oi-strike-label${isKey ? ' oi-strike--key' : ''}">${fmtStrike(lv.strike)}</div>
-                <div class="oi-call-side">${callBar}</div>
+            <div class="grid grid-cols-[1fr_72px_1fr] items-center px-3 h-5 gap-2 ${isKey ? 'bg-white/[0.025]' : ''}">
+                ${putSide}
+                <div class="text-center font-mono text-[11px] tabular-nums ${isKey ? 'text-ink-0 font-semibold' : 'text-ink-2'}">${fmtStrike(lv.strike)}</div>
+                ${callSide}
             </div>`;
     }
-    if (!priceInserted) {
-        rows += `<div class="oi-price-row"><div class="oi-price-line"></div><div class="oi-price-tag">${fmtStrike(price)}</div><div class="oi-price-line"></div></div>`;
-    }
-    return `<div class="oi-ladder"><div class="oi-ladder-head"><span>PUT OI</span><span>STRIKE</span><span>CALL OI</span></div>${rows}</div>`;
+    if (!priceInserted) rows += priceRow(price);
+
+    return `
+        <div class="bg-bg-2 border border-line rounded-md overflow-hidden py-1">
+            <div class="grid grid-cols-[1fr_72px_1fr] px-3 pb-1.5 mb-1 text-[9px] font-mono font-semibold tracking-widest text-ink-2 uppercase border-b border-line">
+                <span class="text-left">Put OI</span>
+                <span class="text-center">Strike</span>
+                <span class="text-right">Call OI</span>
+            </div>
+            ${rows}
+        </div>`;
 }
 
 function renderPositionContractCard(contract) {
@@ -1709,39 +1910,43 @@ function renderPositionContractCard(contract) {
     const nearCallText = nearCall != null ? `+${fmtNumber(Math.abs(nearCall), 0)}` : '—';
     const nearPutText = nearPut != null ? `${fmtNumber(Math.abs(nearPut), 0)}` : '—';
     const pcr = totals.oi_put_call_ratio;
-    const pcrColor = pcr != null ? (pcr > 1.05 ? 'var(--put-color)' : pcr < 0.95 ? 'var(--call-color)' : 'var(--text-secondary)') : 'var(--text-secondary)';
+    const pcrColor = pcr != null ? (pcr > 1.05 ? '#fb923c' : pcr < 0.95 ? '#22d3ee' : '#a8b0c4') : '#a8b0c4';
+
     return `
-        <div class="pcc-card">
-            <div class="pcc-header">
-                <div class="pcc-title">
-                    <span class="pcc-timeframe">${escapeHtml(timeframeLabel)}</span>
-                    <span class="pcc-contract-code">${escapeHtml(contractCode)}</span>
+        <div class="bg-bg-1 border border-line rounded-lg p-4 flex flex-col gap-3 hover:border-line-strong transition-colors">
+            <header class="flex justify-between items-start gap-3 min-w-0">
+                <div class="flex flex-col gap-0.5 min-w-0">
+                    <span class="text-[10px] font-semibold uppercase tracking-widest text-ink-2">${escapeHtml(timeframeLabel)}</span>
+                    <span class="font-mono text-base font-semibold text-ink-0 tracking-tight truncate">${escapeHtml(contractCode)}</span>
                 </div>
-                <div class="pcc-meta">
-                    <span class="pcc-dte">${fmtNumber(contract.dte, 1)} DTE</span>
-                    <span class="pcc-price">${fmtStrike(contract.future_price)}</span>
+                <div class="flex flex-col items-end gap-0.5 shrink-0">
+                    <span class="text-2xs text-ink-2 tabular-nums font-mono">${fmtNumber(contract.dte, 1)} DTE</span>
+                    <span class="font-mono text-sm font-medium text-brand tabular-nums">${fmtStrike(contract.future_price)}</span>
                 </div>
-            </div>
-            <div class="pcc-bias-row">
-                <div class="pcc-bias-indicator">
-                    <div class="pcc-bias-label" style="color:${bias.color}">${escapeHtml(bias.label)}</div>
-                    <div class="pcc-bias-score" style="color:${bias.color}">${score > 0 ? '+' : ''}${fmtNumber(score, 2)}</div>
+            </header>
+
+            <div class="flex items-center gap-3 min-w-0">
+                <div class="flex items-baseline gap-2 shrink-0 min-w-0">
+                    <span class="text-xs font-semibold uppercase tracking-wider truncate" style="color:${bias.color}">${escapeHtml(bias.label)}</span>
+                    <span class="font-mono text-[11px] tabular-nums opacity-70" style="color:${bias.color}">${score > 0 ? '+' : ''}${fmtNumber(score, 2)}</span>
                 </div>
                 ${renderScoreMeter(score)}
             </div>
+
             ${renderOILadder(contract)}
-            <div class="pcc-stats-row">
-                <div class="pcc-stat">
-                    <span>P/C Ratio</span>
-                    <b style="color:${pcrColor}">${fmtNumber(pcr, 2)}</b>
+
+            <div class="grid grid-cols-3 gap-2">
+                <div class="bg-bg-2 border border-line/70 rounded-md px-2.5 py-2">
+                    <div class="text-[9px] font-semibold uppercase tracking-wider text-ink-2 mb-1">P/C Ratio</div>
+                    <div class="font-mono text-sm font-semibold tabular-nums" style="color:${pcrColor}">${fmtNumber(pcr, 2)}</div>
                 </div>
-                <div class="pcc-stat">
-                    <span>Call Wall</span>
-                    <b style="color:var(--call-color)">${nearCallText} pts</b>
+                <div class="bg-bg-2 border border-line/70 rounded-md px-2.5 py-2">
+                    <div class="text-[9px] font-semibold uppercase tracking-wider text-ink-2 mb-1">Call Wall</div>
+                    <div class="font-mono text-sm font-semibold tabular-nums text-call">${nearCallText}<span class="text-2xs text-ink-2 font-sans ml-0.5">pts</span></div>
                 </div>
-                <div class="pcc-stat">
-                    <span>Put Wall</span>
-                    <b style="color:var(--put-color)">${nearPutText} pts</b>
+                <div class="bg-bg-2 border border-line/70 rounded-md px-2.5 py-2">
+                    <div class="text-[9px] font-semibold uppercase tracking-wider text-ink-2 mb-1">Put Wall</div>
+                    <div class="font-mono text-sm font-semibold tabular-nums text-put">${nearPutText}<span class="text-2xs text-ink-2 font-sans ml-0.5">pts</span></div>
                 </div>
             </div>
         </div>`;
@@ -1773,23 +1978,31 @@ async function renderPositionBiasTab() {
     const scoreFillLeft = score >= 0 ? 50 : scorePct;
     const scoreFillW = Math.abs(scorePct - 50);
     header.innerHTML = `
-        <div class="bias-summary-header">
-            <div class="bsh-left">
-                <div class="bsh-asset">${escapeHtml(getProfile().label)}</div>
-                <div class="bsh-direction" style="color:${bias.color}">${bias.label}</div>
+        <div class="flex items-center flex-wrap gap-x-8 gap-y-4 px-5 py-4 bg-bg-1 border border-line border-l-4 rounded-lg" style="border-left-color:${bias.color}">
+            <div class="shrink-0">
+                <div class="text-[10px] font-semibold uppercase tracking-widest text-ink-2 mb-0.5">${escapeHtml(getProfile().label)}</div>
+                <div class="text-xl font-semibold font-mono uppercase tracking-tight leading-tight" style="color:${bias.color}">${bias.label}</div>
             </div>
-            <div class="bsh-meter-wrap">
-                <div class="bsh-meter-labels"><span>BEARISH</span><span>NEUTRAL</span><span>BULLISH</span></div>
-                <div class="bsh-meter">
-                    <div class="bsh-meter-fill" style="left:${scoreFillLeft}%;width:${scoreFillW}%;background:${bias.color}"></div>
-                    <div class="bsh-meter-dot" style="left:${scorePct}%;background:${bias.color}"></div>
-                    <div class="bsh-meter-center"></div>
+            <div class="flex-1 flex flex-col gap-1.5 min-w-[200px]">
+                <div class="flex justify-between text-[9px] font-semibold uppercase tracking-wider text-ink-2">
+                    <span>Bearish</span><span>Neutral</span><span>Bullish</span>
                 </div>
-                <div class="bsh-score" style="color:${bias.color}">${score > 0 ? '+' : ''}${fmtNumber(score, 2)}</div>
+                <div class="relative h-2 bg-white/10 rounded-full">
+                    <div class="absolute top-0 h-full rounded-full opacity-60" style="left:${scoreFillLeft}%;width:${scoreFillW}%;background:${bias.color}"></div>
+                    <div class="absolute top-1/2 w-3.5 h-3.5 rounded-full -translate-x-1/2 -translate-y-1/2 ring-2 ring-bg-1 z-10" style="left:${scorePct}%;background:${bias.color}"></div>
+                    <div class="absolute -top-1 left-1/2 -translate-x-1/2 w-px h-4 bg-white/20"></div>
+                </div>
+                <div class="text-center font-mono text-xs font-semibold tabular-nums" style="color:${bias.color}">${score > 0 ? '+' : ''}${fmtNumber(score, 2)}</div>
             </div>
-            <div class="bsh-right">
-                <div class="bsh-meta"><span>Contracts</span><b>${fmtNumber(summary?.contracts?.length || contracts.length)}</b></div>
-                <div class="bsh-meta"><span>Updated</span><b>${escapeHtml(generated)}</b></div>
+            <div class="flex flex-col gap-2 text-right shrink-0">
+                <div>
+                    <div class="text-[9px] font-semibold uppercase tracking-wider text-ink-2">Contracts</div>
+                    <div class="font-mono text-sm font-semibold tabular-nums text-ink-0">${fmtNumber(summary?.contracts?.length || contracts.length)}</div>
+                </div>
+                <div>
+                    <div class="text-[9px] font-semibold uppercase tracking-wider text-ink-2">Updated</div>
+                    <div class="font-mono text-2xs text-ink-1">${escapeHtml(generated)}</div>
+                </div>
             </div>
         </div>`;
 
@@ -3538,6 +3751,7 @@ async function switchAsset(assetId) {
     state.activeAsset = assetId;
 
     state.data = { current: {}, friday: {}, monthly: {}, analysis: {} };
+    state.heatmapData = { current: null, friday: null, monthly: null };
     clearBiasLock();
 
     // Update dropdown (in case called programmatically)
@@ -3584,8 +3798,14 @@ async function refreshData() {
     const btn = document.querySelector('.refresh-btn');
     btn.textContent = '⟳ Loading...';
     if (state.activeTab === 'analysis') state.data.analysis = {};
-    btn.disa = await fetchTabData(state.activeTab);
-    renderActiveTab();
+    if (state.activeTab === 'heatmap') {
+        state.heatmapData[state.heatmapContract] = null;
+        await fetchHeatmapData(state.heatmapContract);
+        renderHeatmap();
+    } else {
+        btn.disa = await fetchTabData(state.activeTab);
+        renderActiveTab();
+    }
     btn.textContent = '⟳ Refresh';
     btn.disabled = false;
 }
