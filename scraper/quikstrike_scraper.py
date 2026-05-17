@@ -1442,22 +1442,26 @@ function _clickClosestClickable(el) {
 def _click_qs_top_tab(driver, label):
     """
     Click a QuikStrike top-nav tab by visible label (e.g. 'Open Interest').
-    Prefers <a> elements so the ASP.NET postback actually fires — falls
-    back to a generic match only if no anchor matched.
+    QuikStrike top tabs often live in markup like
+        <td><span>OPEN</span><br/><span>INTEREST</span></td>
+    so textContent collapses to 'OPENINTEREST' with no spaces. We strip
+    ALL whitespace from both target and candidate before comparing.
     """
     js = _CLICK_HELPERS_JS + """
-        const target = _norm(arguments[0]);
-        // Strategy A: prefer <a> tags
+        const stripAll = s => (s || '').toLowerCase().replace(/\\s+/g, '');
+        const target = stripAll(arguments[0]);
+
+        // Strategy A: prefer <a> tags so the ASP.NET postback fires reliably
         const anchors = Array.from(document.querySelectorAll('a'));
         for (const a of anchors) {
             if (!a.offsetParent) continue;
-            if (_norm(a.textContent) === target) { a.click(); return 'A'; }
+            if (stripAll(a.textContent) === target) { a.click(); return 'A'; }
         }
-        // Strategy B: any visible element whose direct text matches
-        const all = Array.from(document.querySelectorAll('*'));
+        // Strategy B: any visible element whose total text matches
+        const all = Array.from(document.querySelectorAll('a, span, td, th, button, li, div'));
         for (const el of all) {
             if (!el.offsetParent) continue;
-            if (_norm(_directText(el)) === target) return _clickClosestClickable(el);
+            if (stripAll(el.textContent) === target) return _clickClosestClickable(el);
         }
         return null;
     """
