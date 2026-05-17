@@ -1470,61 +1470,76 @@ def _click_qs_top_tab(driver, label):
 
 def _click_sidebar_heatmap_oi(driver):
     """
-    On the Open Interest page, click 'OI' under the 'Heatmap' sidebar
-    section. Disambiguates from 'Charts → OI' by finding the Heatmap
-    section header first and then locating an 'OI' link that is closer
-    to that header than to any other section header.
+    On the Open Interest page, click 'OI' under the 'Heatmap' sidebar.
+
+    Primary strategy: find an <a> whose href/onclick attribute mentions
+    'heatmap' AND whose visible text is 'OI'. This is much more specific
+    than text-only matching — anchors that target the heatmap landing
+    page are uniquely identifiable by their handler.
+
+    Fallback: DOM-order proximity to a 'Heatmap' section header.
     """
     js = _CLICK_HELPERS_JS + """
-        const SECTIONS = ['charts','reports','heatmap','history','futures'];
+        function _describe(el) {
+            return {
+                tag: el.tagName,
+                text: (el.textContent || '').trim().slice(0, 40),
+                href: (el.getAttribute && el.getAttribute('href')) || '',
+                onclick: ((el.getAttribute && el.getAttribute('onclick')) || '').slice(0, 100),
+                id: el.id || '',
+                cls: (el.className && typeof el.className === 'string') ? el.className.slice(0, 60) : ''
+            };
+        }
 
-        // 1. Find every visible element whose own direct text is a section header.
-        //    These act as anchors for proximity ranking.
+        // STRATEGY 1: href/onclick contains 'heatmap' AND text is 'OI'
+        const anchors = Array.from(document.querySelectorAll('a'));
+        const heatmapAnchors = anchors.filter(a => {
+            if (!a.offsetParent) return false;
+            const href = (a.getAttribute('href') || '').toLowerCase();
+            const oc = (a.getAttribute('onclick') || '').toLowerCase();
+            return href.includes('heatmap') || oc.includes('heatmap');
+        });
+        const oiHeatmap = heatmapAnchors.find(a => (a.textContent || '').trim() === 'OI');
+        if (oiHeatmap) {
+            oiHeatmap.click();
+            return {ok: true, via: 'href-heatmap', clicked: _describe(oiHeatmap)};
+        }
+
+        // STRATEGY 2: DOM-order proximity to 'Heatmap' section header
+        const SECTIONS = ['charts','reports','heatmap','history','futures'];
         const all = Array.from(document.querySelectorAll('*')).filter(el => el.offsetParent !== null);
-        const sectionAnchors = []; // [{el, name, index}]
-        const allInDocOrder = all;
+        const sectionAnchors = [];
         all.forEach((el, idx) => {
             const direct = _norm(_directText(el));
             if (SECTIONS.includes(direct)) {
                 sectionAnchors.push({el: el, name: direct, index: idx});
             }
         });
-
-        // 2. Locate the Heatmap anchor (last occurrence — it's usually a sidebar header).
-        const heatmapAnchors = sectionAnchors.filter(a => a.name === 'heatmap');
-        if (heatmapAnchors.length === 0) {
-            return {error: 'no-heatmap-header', sections: sectionAnchors.map(a => a.name)};
-        }
-        const heatmapAnchor = heatmapAnchors[heatmapAnchors.length - 1];
-
-        // 3. Find all 'OI' candidates (visible, direct text == 'OI').
+        const heatmapHeaders = sectionAnchors.filter(a => a.name === 'heatmap');
         const oiCandidates = all.filter(el => _norm(_directText(el)) === 'oi');
-        if (!oiCandidates.length) {
-            return {error: 'no-oi-leaves', sections: sectionAnchors.map(a => a.name)};
-        }
 
-        // 4. Rank by DOM-order distance: pick the OI element that appears AFTER
-        //    the Heatmap header but BEFORE the next section header.
+        if (heatmapHeaders.length === 0 || oiCandidates.length === 0) {
+            return {
+                ok: false,
+                error: 'no-anchors',
+                heatmapHeaders: heatmapHeaders.length,
+                oiCandidates: oiCandidates.length,
+                sections: sectionAnchors.map(a => a.name),
+                heatmapAnchorsWithHref: heatmapAnchors.length
+            };
+        }
+        const heatmapAnchor = heatmapHeaders[heatmapHeaders.length - 1];
         const nextSection = sectionAnchors.find(a => a.index > heatmapAnchor.index);
         const nextIndex = nextSection ? nextSection.index : Infinity;
 
         for (const c of oiCandidates) {
-            const idx = allInDocOrder.indexOf(c);
+            const idx = all.indexOf(c);
             if (idx > heatmapAnchor.index && idx < nextIndex) {
-                return _clickClosestClickable(c);
+                const res = _clickClosestClickable(c);
+                return {ok: true, via: 'dom-order', clicked: _describe(c), result: res};
             }
         }
-
-        // Fallback: closest OI to heatmap header regardless of section bounds.
-        let best = null, bestDist = Infinity;
-        for (const c of oiCandidates) {
-            const idx = allInDocOrder.indexOf(c);
-            const d = Math.abs(idx - heatmapAnchor.index);
-            if (d < bestDist) { bestDist = d; best = c; }
-        }
-        if (best) return _clickClosestClickable(best);
-
-        return {error: 'no-match', oiCount: oiCandidates.length};
+        return {ok: false, error: 'no-oi-after-heatmap', oiCandidates: oiCandidates.map(_describe).slice(0, 5)};
     """
     return driver.execute_script(js)
 
@@ -1577,23 +1592,45 @@ def _click_heatmap_expiration_tab(driver, contract_text):
 
 
 def _extract_heatmap_table(driver):
-    """Extract the strike × date table from the currently rendered heatmap."""
+    """
+    Find the strike × date heatmap table on the page and extract it.
+    Prefer tables whose first row contains date-like headers — picking
+    by 'largest table' is unreliable because the OI page may also
+    render a futures term-structure or settlements table.
+    On failure, return a summary of every visible table for diagnosis.
+    """
     return driver.execute_script("""
-        const tables = Array.from(document.querySelectorAll('table'))
-            .filter(t => t.offsetParent !== null && t.rows && t.rows.length > 4);
-        if (!tables.length) return {error: 'No table found'};
-        tables.sort((a,b) =>
-            (b.rows.length * (b.rows[0].cells.length||0)) -
-            (a.rows.length * (a.rows[0].cells.length||0))
-        );
-        const table = tables[0];
-        const rows = Array.from(table.rows);
-
         const dateRe = /^\\s*\\d{1,2}[\\/\\-]\\d{1,2}([\\/\\-]\\d{2,4})?\\s*$/;
+        const allTables = Array.from(document.querySelectorAll('table'))
+            .filter(t => t.offsetParent !== null && t.rows && t.rows.length > 2);
+
+        const summary = [];
+        let best = null, bestScore = 0;
+        for (const t of allTables) {
+            const firstRow = Array.from(t.rows[0].cells).map(c => (c.textContent || '').trim());
+            const dateCount = firstRow.filter(s => dateRe.test(s)).length;
+            summary.push({
+                rows: t.rows.length,
+                cols: firstRow.length,
+                dateCols: dateCount,
+                first: firstRow.slice(0, 6),
+                id: t.id || '',
+                cls: (typeof t.className === 'string') ? t.className.slice(0, 50) : ''
+            });
+            if (dateCount >= 3) {
+                const score = dateCount * t.rows.length;
+                if (score > bestScore) { bestScore = score; best = t; }
+            }
+        }
+
+        if (!best) {
+            return {error: 'No table with date headers', tables: summary.slice(0, 10)};
+        }
+
+        const rows = Array.from(best.rows);
         const headerCells = Array.from(rows[0].cells).map(c => (c.textContent || '').trim());
         const dateCols = [];
         headerCells.forEach((txt, i) => { if (dateRe.test(txt)) dateCols.push({i: i, label: txt}); });
-        if (dateCols.length === 0) return {error: 'No date headers', headerCells: headerCells};
 
         const strikes = [];
         for (let r = 1; r < rows.length; r++) {
@@ -1666,9 +1703,8 @@ def scrape_oi_heatmap_phase(driver, classified, asset_id, output_dir):
     # 2. Click 'OI' under Heatmap sidebar
     print('[HEATMAP] Clicking Heatmap → OI in sidebar...')
     res = _click_sidebar_heatmap_oi(driver)
-    if not res or (isinstance(res, dict) and 'error' in res):
-        print(f'[HEATMAP] ⚠ Could not find Heatmap → OI in sidebar: {res}')
-        # Dump everything we see so we can craft a precise selector next round.
+    if not res or not res.get('ok'):
+        print(f'[HEATMAP] ⚠ Could not click Heatmap → OI: {res}')
         try:
             items = _dump_sidebar_diagnostics(driver) or []
             print(f'[HEATMAP] === Sidebar diagnostics ({len(items)} items) ===')
@@ -1678,13 +1714,16 @@ def scrape_oi_heatmap_phase(driver, classified, asset_id, output_dir):
             print(f'[HEATMAP] diagnostics dump failed: {ee}')
         save_debug(driver, f'heatmap_sidebar_fail_{asset_id}', output_dir=output_dir)
         return
-    print(f'[HEATMAP] Sidebar click: {res}')
-    time.sleep(1.5)
+    clicked = res.get('clicked', {})
+    print(f'[HEATMAP] Sidebar click ({res.get("via")}): tag={clicked.get("tag")} '
+          f'text={clicked.get("text")!r} href={clicked.get("href")!r} '
+          f'onclick={clicked.get("onclick")!r}')
+    time.sleep(2.0)
     try:
         wait_ready(driver, timeout=15)
     except Exception:
         pass
-    time.sleep(0.5)
+    time.sleep(1.0)
 
     # 3. Iterate contracts: click expiration tab → extract table → save
     underlying = get_futures_price(asset_id)
@@ -1708,7 +1747,13 @@ def scrape_oi_heatmap_phase(driver, classified, asset_id, output_dir):
 
         data = _extract_heatmap_table(driver)
         if not data or 'error' in data:
-            print(f'[HEATMAP] ⚠ Extract failed for {prefix}: {data}')
+            print(f'[HEATMAP] ⚠ Extract failed for {prefix}: {data.get("error") if data else "no-data"}')
+            if data and data.get('tables'):
+                print(f'[HEATMAP] === Tables on page ({len(data["tables"])}) ===')
+                for ti, ts in enumerate(data['tables']):
+                    print(f'  table[{ti}] rows={ts.get("rows")} cols={ts.get("cols")} '
+                          f'dateCols={ts.get("dateCols")} id={ts.get("id")!r} '
+                          f'cls={ts.get("cls")!r} first={ts.get("first")}')
             save_debug(driver, f'heatmap_extract_fail_{prefix}', output_dir=output_dir)
             continue
 
@@ -1727,6 +1772,24 @@ def scrape_oi_heatmap_phase(driver, classified, asset_id, output_dir):
             json.dump(payload, f, indent=2)
         print(f'[HEATMAP] ✅ Saved {prefix}_OIHeatmap.json '
               f'({len(data["dates"])} dates × {len(data["strikes"])} strikes)')
+
+    # Restore Vol2Vol view so the next asset's Vol2Vol scrape doesn't break.
+    # QuikStrike preserves the active top tab across URL reloads, and the
+    # Vol2Vol page's ddlV2V dropdown only exists on the QuikOptions Vol2Vol
+    # tab — leaving us on Open Interest breaks the next asset.
+    print('[HEATMAP] Restoring QuikOptions Vol2Vol top tab...')
+    try:
+        back = _click_qs_top_tab(driver, 'QuikOptions Vol2Vol')
+        if not back:
+            back = _click_qs_top_tab(driver, 'Vol2Vol')
+        print(f'[HEATMAP] Vol2Vol restore: {back}')
+        time.sleep(2.0)
+        try:
+            wait_ready(driver, timeout=15)
+        except Exception:
+            pass
+    except Exception as e:
+        print(f'[HEATMAP] ⚠ Vol2Vol restore raised: {e}')
 
 
 def scrape_contract(driver, contract, prefix, output_dir=None, asset_id='gc'):
