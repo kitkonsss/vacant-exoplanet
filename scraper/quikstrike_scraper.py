@@ -1566,27 +1566,61 @@ def _dump_sidebar_diagnostics(driver):
 
 
 def _click_heatmap_expiration_tab(driver, contract_text):
-    """Click an expiration pill (e.g. 'OGM6') on the heatmap matrix page."""
-    js = """
+    """
+    Click an expiration tab (e.g. 'OGM6') on the OI Matrix page.
+
+    The default view after the sidebar click is the 'PRODUCT' tab — its
+    table has futures-contract columns, not date columns. We MUST click
+    an individual expiration tab to get the strike × date heatmap.
+
+    These tabs are ASP.NET LinkButtons that emit __doPostBack — so we
+    filter <a> tags whose href contains __doPostBack to avoid clicking
+    a non-interactive label that just happens to share the text.
+    """
+    js = _CLICK_HELPERS_JS + """
         const target = arguments[0];
-        const candidates = Array.from(document.querySelectorAll('a, span, button, td, li'));
-        for (const el of candidates) {
-            if (!el.offsetParent) continue;
-            if ((el.textContent || '').trim() === target) {
-                let t = el;
-                while (t && t !== document.body) {
-                    if (t.tagName === 'A' || t.onclick ||
-                        (t.getAttribute && (t.getAttribute('onclick') || t.getAttribute('href')))) {
-                        t.click();
-                        return 'clicked:' + t.tagName;
-                    }
-                    t = t.parentElement;
-                }
-                el.click();
-                return 'clicked:leaf';
-            }
+        const anchors = Array.from(document.querySelectorAll('a'));
+        const visExact = anchors.filter(a =>
+            a.offsetParent && (a.textContent || '').trim() === target
+        );
+
+        if (!visExact.length) {
+            // Diagnostic: any anchor whose text contains the symbol
+            const partial = anchors.filter(a =>
+                a.offsetParent && (a.textContent || '').includes(target)
+            ).slice(0, 8).map(a => ({
+                text: (a.textContent || '').trim().slice(0, 40),
+                href: (a.getAttribute('href') || '').slice(0, 120),
+                id: a.id || ''
+            }));
+            return {ok: false, error: 'no-exact-anchor', partial: partial};
         }
-        return null;
+
+        // Prefer anchors with __doPostBack href, then ones whose id mentions
+        // an expiration control name (lbExpiration / Expirations / Tab).
+        visExact.sort((a, b) => {
+            const ah = (a.getAttribute('href') || '');
+            const bh = (b.getAttribute('href') || '');
+            const aPost = ah.includes('__doPostBack') ? 0 : 1;
+            const bPost = bh.includes('__doPostBack') ? 0 : 1;
+            if (aPost !== bPost) return aPost - bPost;
+            const aTab = /Expirat|Tab/i.test(a.id || '') ? 0 : 1;
+            const bTab = /Expirat|Tab/i.test(b.id || '') ? 0 : 1;
+            return aTab - bTab;
+        });
+
+        const target_a = visExact[0];
+        target_a.click();
+        return {
+            ok: true,
+            via: 'a-postback',
+            clicked: {
+                text: (target_a.textContent || '').trim(),
+                href: (target_a.getAttribute('href') || '').slice(0, 120),
+                id: target_a.id || ''
+            },
+            siblingCount: visExact.length
+        };
     """
     return driver.execute_script(js, contract_text)
 
@@ -1732,18 +1766,25 @@ def scrape_oi_heatmap_phase(driver, classified, asset_id, output_dir):
         print(f'\n[HEATMAP] {prefix}: selecting expiration {contract_text}...')
 
         res = _click_heatmap_expiration_tab(driver, contract_text)
-        if not res:
-            print(f'[HEATMAP] ⚠ Could not select expiration {contract_text}')
+        if not res or not res.get('ok'):
+            print(f'[HEATMAP] ⚠ Could not select expiration {contract_text}: {res}')
+            if res and res.get('partial'):
+                print(f'[HEATMAP]   Partial-match anchors ({len(res["partial"])}):')
+                for p in res['partial']:
+                    print(f'    text={p.get("text")!r} href={p.get("href")!r} id={p.get("id")!r}')
             save_debug(driver, f'heatmap_exp_fail_{prefix}', output_dir=output_dir)
             continue
-        print(f'[HEATMAP] Expiration click: {res}')
+        c = res.get('clicked', {})
+        print(f'[HEATMAP] Expiration click: text={c.get("text")!r} '
+              f'href={c.get("href")!r} id={c.get("id")!r} '
+              f'siblings={res.get("siblingCount")}')
 
-        time.sleep(1.0)
+        time.sleep(2.0)
         try:
-            wait_ready(driver, timeout=10)
+            wait_ready(driver, timeout=15)
         except Exception:
             pass
-        time.sleep(0.5)
+        time.sleep(1.0)
 
         data = _extract_heatmap_table(driver)
         if not data or 'error' in data:
