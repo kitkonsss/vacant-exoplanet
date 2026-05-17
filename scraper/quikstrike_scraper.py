@@ -1414,32 +1414,50 @@ def scrape_view(driver, view_type, prefix, header_prefix='', skip_switch=False, 
     return filepath
 
 
+_CLICK_HELPERS_JS = """
+function _directText(el) {
+    let t = '';
+    for (const n of el.childNodes) {
+        if (n.nodeType === 3) t += n.textContent;
+    }
+    return t.trim();
+}
+function _norm(s) { return (s || '').toLowerCase().replace(/\\s+/g, ' ').trim(); }
+function _clickClosestClickable(el) {
+    let t = el;
+    while (t && t !== document.body) {
+        if (t.tagName === 'A' || t.onclick ||
+            (t.getAttribute && (t.getAttribute('onclick') || t.getAttribute('href')))) {
+            t.click();
+            return 'clicked:' + t.tagName;
+        }
+        t = t.parentElement;
+    }
+    el.click();
+    return 'clicked:leaf';
+}
+"""
+
+
 def _click_qs_top_tab(driver, label):
     """
-    Click a QuikStrike top-nav tab by visible label.
-    QuikStrike's top nav reads e.g. 'OPEN INTEREST', 'QUIKOPTIONS VOL2VOL', etc.
-    Labels in markup may span lines ('OPEN\\nINTEREST'), so we match on
-    case-insensitive, whitespace-stripped text.
+    Click a QuikStrike top-nav tab by visible label (e.g. 'Open Interest').
+    Prefers <a> elements so the ASP.NET postback actually fires — falls
+    back to a generic match only if no anchor matched.
     """
-    js = """
-        const target = arguments[0].toLowerCase().replace(/\\s+/g, '');
-        const candidates = Array.from(document.querySelectorAll('a, span, td, button, li, div'));
-        for (const el of candidates) {
+    js = _CLICK_HELPERS_JS + """
+        const target = _norm(arguments[0]);
+        // Strategy A: prefer <a> tags
+        const anchors = Array.from(document.querySelectorAll('a'));
+        for (const a of anchors) {
+            if (!a.offsetParent) continue;
+            if (_norm(a.textContent) === target) { a.click(); return 'A'; }
+        }
+        // Strategy B: any visible element whose direct text matches
+        const all = Array.from(document.querySelectorAll('*'));
+        for (const el of all) {
             if (!el.offsetParent) continue;
-            const norm = (el.textContent || '').toLowerCase().replace(/\\s+/g, '');
-            if (norm === target) {
-                let t = el;
-                while (t && t !== document.body) {
-                    if (t.tagName === 'A' || t.onclick ||
-                        (t.getAttribute && (t.getAttribute('onclick') || t.getAttribute('href')))) {
-                        t.click();
-                        return 'clicked:' + t.tagName;
-                    }
-                    t = t.parentElement;
-                }
-                el.click();
-                return 'clicked:leaf';
-            }
+            if (_norm(_directText(el)) === target) return _clickClosestClickable(el);
         }
         return null;
     """
@@ -1448,39 +1466,84 @@ def _click_qs_top_tab(driver, label):
 
 def _click_sidebar_heatmap_oi(driver):
     """
-    On the Open Interest page, click 'OI' under the 'Heatmap' sidebar section.
-    The sidebar order is Charts → Reports → Heatmap → History → Futures, and
-    both Charts and Heatmap have an 'OI' sub-item, so we disambiguate by
-    walking DOM order past the Heatmap header.
+    On the Open Interest page, click 'OI' under the 'Heatmap' sidebar
+    section. Disambiguates from 'Charts → OI' by finding the Heatmap
+    section header first and then locating an 'OI' link that is closer
+    to that header than to any other section header.
     """
-    js = """
-        const SECTIONS = ['Charts','Reports','Heatmap','History','Futures'];
-        const leaves = Array.from(document.querySelectorAll('*'))
-            .filter(el => el.children.length === 0 && el.offsetParent !== null);
-        let inHeatmap = false;
-        for (const el of leaves) {
-            const txt = (el.textContent || '').trim();
-            if (txt === 'Heatmap') { inHeatmap = true; continue; }
-            if (inHeatmap && SECTIONS.includes(txt) && txt !== 'Heatmap') {
-                inHeatmap = false; continue;
+    js = _CLICK_HELPERS_JS + """
+        const SECTIONS = ['charts','reports','heatmap','history','futures'];
+
+        // 1. Find every visible element whose own direct text is a section header.
+        //    These act as anchors for proximity ranking.
+        const all = Array.from(document.querySelectorAll('*')).filter(el => el.offsetParent !== null);
+        const sectionAnchors = []; // [{el, name, index}]
+        const allInDocOrder = all;
+        all.forEach((el, idx) => {
+            const direct = _norm(_directText(el));
+            if (SECTIONS.includes(direct)) {
+                sectionAnchors.push({el: el, name: direct, index: idx});
             }
-            if (inHeatmap && txt === 'OI') {
-                let t = el;
-                while (t && t !== document.body) {
-                    if (t.tagName === 'A' || t.onclick ||
-                        (t.getAttribute && (t.getAttribute('onclick') || t.getAttribute('href')))) {
-                        t.click();
-                        return 'clicked:' + t.tagName;
-                    }
-                    t = t.parentElement;
-                }
-                el.click();
-                return 'clicked:leaf';
+        });
+
+        // 2. Locate the Heatmap anchor (last occurrence — it's usually a sidebar header).
+        const heatmapAnchors = sectionAnchors.filter(a => a.name === 'heatmap');
+        if (heatmapAnchors.length === 0) {
+            return {error: 'no-heatmap-header', sections: sectionAnchors.map(a => a.name)};
+        }
+        const heatmapAnchor = heatmapAnchors[heatmapAnchors.length - 1];
+
+        // 3. Find all 'OI' candidates (visible, direct text == 'OI').
+        const oiCandidates = all.filter(el => _norm(_directText(el)) === 'oi');
+        if (!oiCandidates.length) {
+            return {error: 'no-oi-leaves', sections: sectionAnchors.map(a => a.name)};
+        }
+
+        // 4. Rank by DOM-order distance: pick the OI element that appears AFTER
+        //    the Heatmap header but BEFORE the next section header.
+        const nextSection = sectionAnchors.find(a => a.index > heatmapAnchor.index);
+        const nextIndex = nextSection ? nextSection.index : Infinity;
+
+        for (const c of oiCandidates) {
+            const idx = allInDocOrder.indexOf(c);
+            if (idx > heatmapAnchor.index && idx < nextIndex) {
+                return _clickClosestClickable(c);
             }
         }
-        return null;
+
+        // Fallback: closest OI to heatmap header regardless of section bounds.
+        let best = null, bestDist = Infinity;
+        for (const c of oiCandidates) {
+            const idx = allInDocOrder.indexOf(c);
+            const d = Math.abs(idx - heatmapAnchor.index);
+            if (d < bestDist) { bestDist = d; best = c; }
+        }
+        if (best) return _clickClosestClickable(best);
+
+        return {error: 'no-match', oiCount: oiCandidates.length};
     """
     return driver.execute_script(js)
+
+
+def _dump_sidebar_diagnostics(driver):
+    """Return a structured snapshot of sidebar-ish links for debugging."""
+    return driver.execute_script("""
+        const items = [];
+        Array.from(document.querySelectorAll('a, span, div, td')).forEach(el => {
+            if (!el.offsetParent) return;
+            let direct = '';
+            for (const n of el.childNodes) if (n.nodeType === 3) direct += n.textContent;
+            direct = direct.trim();
+            if (!direct || direct.length > 30) return;
+            const href = el.getAttribute && el.getAttribute('href');
+            const onclick = el.getAttribute && el.getAttribute('onclick');
+            if (el.tagName === 'A' || href || onclick ||
+                ['Charts','Reports','Heatmap','History','Futures','OI','OI Change','Volume','Summary','Most Actives','Settlements'].includes(direct)) {
+                items.push({tag: el.tagName, text: direct, href: href || '', onclick: onclick ? onclick.slice(0, 80) : ''});
+            }
+        });
+        return items.slice(0, 60);
+    """)
 
 
 def _click_heatmap_expiration_tab(driver, contract_text):
@@ -1587,17 +1650,28 @@ def scrape_oi_heatmap_phase(driver, classified, asset_id, output_dir):
         save_debug(driver, f'heatmap_topnav_fail_{asset_id}', output_dir=output_dir)
         return
     print(f'[HEATMAP] Top-tab click: {res}')
-    time.sleep(2.0)
+    # ASP.NET postback can take a few seconds to swap the page content +
+    # render the sidebar. Wait long enough for the new DOM to appear.
+    time.sleep(4.0)
     try:
-        wait_ready(driver, timeout=15)
+        wait_ready(driver, timeout=20)
     except Exception:
         pass
+    time.sleep(1.0)
 
     # 2. Click 'OI' under Heatmap sidebar
     print('[HEATMAP] Clicking Heatmap → OI in sidebar...')
     res = _click_sidebar_heatmap_oi(driver)
-    if not res:
-        print('[HEATMAP] ⚠ Could not find Heatmap → OI in sidebar')
+    if not res or (isinstance(res, dict) and 'error' in res):
+        print(f'[HEATMAP] ⚠ Could not find Heatmap → OI in sidebar: {res}')
+        # Dump everything we see so we can craft a precise selector next round.
+        try:
+            items = _dump_sidebar_diagnostics(driver) or []
+            print(f'[HEATMAP] === Sidebar diagnostics ({len(items)} items) ===')
+            for it in items:
+                print(f'  [{it.get("tag")}] "{it.get("text")}" href={it.get("href")!r} onclick={it.get("onclick")!r}')
+        except Exception as ee:
+            print(f'[HEATMAP] diagnostics dump failed: {ee}')
         save_debug(driver, f'heatmap_sidebar_fail_{asset_id}', output_dir=output_dir)
         return
     print(f'[HEATMAP] Sidebar click: {res}')
