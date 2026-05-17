@@ -24,10 +24,6 @@
         onChangeContract(key);
     }
 
-    /**
-     * Strikes filtered to ±visibleStrikeRange of underlying, sorted desc.
-     * @returns {Array<{strike:number, values:Array<number|null>}>}
-     */
     const visibleStrikes = $derived.by(() => {
         if (!data?.strikes?.length) return [];
         const underlying = data.underlying || 0;
@@ -51,34 +47,32 @@
         return m;
     });
 
-    const atmStrike = $derived.by(() => {
+    const atmIdx = $derived.by(() => {
         const underlying = data?.underlying || 0;
-        if (underlying <= 0 || !visibleStrikes.length) return null;
-        return visibleStrikes.reduce((prev, curr) =>
-            Math.abs(curr.strike - underlying) < Math.abs(prev.strike - underlying) ? curr : prev,
-            visibleStrikes[0]
-        );
+        if (underlying <= 0 || !visibleStrikes.length) return -1;
+        let best = 0;
+        for (let i = 1; i < visibleStrikes.length; i++) {
+            if (Math.abs(visibleStrikes[i].strike - underlying) < Math.abs(visibleStrikes[best].strike - underlying)) {
+                best = i;
+            }
+        }
+        return best;
     });
 
     /**
-     * Log-scaled cyan gradient — solid (no transparency).
-     * Returns an HSL color computed from the cell value vs the global max.
+     * Log-scaled emerald ramp. Uses the brand hue (142) so the heatmap
+     * matches the rest of the system.
      */
     function cellStyle(value) {
-        if (value == null || !Number.isFinite(value) || value <= 0 || maxVal <= 0) return '';
+        if (value == null || !Number.isFinite(value) || value <= 0 || maxVal <= 0) {
+            return '';
+        }
         const t = Math.log10(value + 1) / Math.log10(maxVal + 1);
         const clamped = Math.max(0, Math.min(1, t));
-        // Lightness ramps 14% (very dark) → 55% (bright cyan), with vivid saturation
-        const lightness = 14 + clamped * 42;
-        const saturation = 70 + clamped * 22;
-        return `background:hsl(188 ${saturation.toFixed(0)}% ${lightness.toFixed(0)}%);`;
-    }
-
-    function strikeTone(strike, underlying) {
-        if (!underlying) return 'text-muted-foreground';
-        if (strike > underlying) return 'text-up';
-        if (strike < underlying) return 'text-down';
-        return 'text-foreground';
+        // 10% (very dark emerald) → 56% (vivid emerald, matches --primary)
+        const lightness = 10 + clamped * 46;
+        const saturation = 60 + clamped * 26;
+        return `background-color:hsl(142 ${saturation.toFixed(0)}% ${lightness.toFixed(0)}%);`;
     }
 </script>
 
@@ -145,45 +139,24 @@
                 </div>
             </div>
         {:else}
-            <table class="w-full border-separate border-spacing-0 font-mono text-[11px] tabular-nums text-foreground">
+            <table class="hm-table">
                 <thead>
                     <tr>
-                        <th
-                            class="sticky left-0 top-0 z-30 min-w-[72px] border-b border-r border-border bg-surface px-3 py-2 text-right text-[9px] font-bold uppercase tracking-widest text-muted-foreground"
-                        >
-                            Strike
-                        </th>
+                        <th class="hm-strike-h">Strike</th>
                         {#each dates as d}
-                            <th
-                                class="sticky top-0 z-20 min-w-[64px] whitespace-nowrap border-b border-border bg-surface px-2 py-2 text-center text-[9px] font-bold uppercase tracking-widest text-muted-foreground"
-                            >
-                                {d}
-                            </th>
+                            <th class="hm-date-h">{d}</th>
                         {/each}
                     </tr>
                 </thead>
                 <tbody>
-                    {#each visibleStrikes as s (s.strike)}
-                        {@const isATM = s === atmStrike}
-                        <tr>
-                            <td
-                                class={cn(
-                                    'sticky left-0 z-10 min-w-[72px] whitespace-nowrap border-b border-r border-border px-3 py-1 text-right font-semibold',
-                                    isATM
-                                        ? 'bg-primary text-primary-foreground'
-                                        : `bg-surface ${strikeTone(s.strike, data?.underlying)}`
-                                )}
-                            >
+                    {#each visibleStrikes as s, rowIdx (s.strike)}
+                        {@const isATM = rowIdx === atmIdx}
+                        <tr class={cn('hm-row', isATM && 'hm-row-atm')}>
+                            <td class={cn('hm-strike', isATM && 'hm-strike-atm')}>
                                 {fmtStrike(s.strike)}
                             </td>
                             {#each s.values as v, i}
-                                <td
-                                    class={cn(
-                                        'whitespace-nowrap border-b border-border px-2 py-1 text-right',
-                                        isATM && 'ring-1 ring-primary ring-inset'
-                                    )}
-                                    style={cellStyle(v)}
-                                >
+                                <td class="hm-cell" style={cellStyle(v)}>
                                     {v == null ? '' : fmtNumber(v, 0)}
                                 </td>
                             {/each}
@@ -194,3 +167,96 @@
         {/if}
     </div>
 </Card>
+
+<style>
+    /* Solid grid lines — black "grout" between cells so each cell is
+       cleanly delimited even when colored. */
+    .hm-table {
+        width: 100%;
+        border-collapse: separate;
+        border-spacing: 0;
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 11px;
+        font-variant-numeric: tabular-nums;
+        color: hsl(var(--foreground));
+    }
+
+    /* Headers */
+    .hm-strike-h,
+    .hm-date-h {
+        position: sticky;
+        top: 0;
+        z-index: 20;
+        background: hsl(var(--surface));
+        color: hsl(var(--muted-foreground));
+        font-size: 9px;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.16em;
+        padding: 8px 8px;
+        border-bottom: 1px solid hsl(var(--border));
+        white-space: nowrap;
+    }
+    .hm-strike-h {
+        left: 0;
+        z-index: 30;
+        min-width: 72px;
+        text-align: right;
+        padding-right: 12px;
+        border-right: 1px solid hsl(var(--border));
+    }
+    .hm-date-h {
+        text-align: center;
+        min-width: 70px;
+    }
+
+    /* Strike column (sticky left) */
+    .hm-strike {
+        position: sticky;
+        left: 0;
+        z-index: 10;
+        background: hsl(var(--surface));
+        color: hsl(var(--muted-foreground));
+        font-weight: 600;
+        text-align: right;
+        padding: 4px 12px 4px 8px;
+        min-width: 72px;
+        border-right: 1px solid hsl(var(--border));
+        border-bottom: 1px solid hsl(var(--background));
+        white-space: nowrap;
+    }
+    .hm-strike-atm {
+        background: hsl(var(--primary));
+        color: hsl(var(--primary-foreground));
+        font-weight: 800;
+    }
+
+    /* Data cells — visible "grout" creates row + column separation */
+    .hm-cell {
+        padding: 4px 8px;
+        text-align: right;
+        min-width: 70px;
+        white-space: nowrap;
+        /* 1px lines in the page background color act as crisp grout */
+        border-right: 1px solid hsl(var(--background));
+        border-bottom: 1px solid hsl(var(--background));
+        background-color: hsl(var(--muted));
+        transition: filter 80ms ease;
+    }
+
+    /* ATM row — strong primary outline so it pops regardless of cell value */
+    .hm-row-atm .hm-cell {
+        box-shadow:
+            inset 0 2px 0 hsl(var(--primary)),
+            inset 0 -2px 0 hsl(var(--primary));
+    }
+
+    /* Row hover — subtle primary outline scoped to the hovered row */
+    .hm-row:hover .hm-cell {
+        filter: brightness(1.15);
+    }
+    .hm-row:hover .hm-strike:not(.hm-strike-atm) {
+        background: hsl(var(--surface-elevated));
+        color: hsl(var(--foreground));
+    }
+</style>
