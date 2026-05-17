@@ -1628,32 +1628,52 @@ def _click_heatmap_expiration_tab(driver, contract_text):
 def _extract_heatmap_table(driver):
     """
     Find the strike × date heatmap table on the page and extract it.
-    Prefer tables whose first row contains date-like headers — picking
-    by 'largest table' is unreliable because the OI page may also
-    render a futures term-structure or settlements table.
-    On failure, return a summary of every visible table for diagnosis.
+
+    QuikStrike's heatmap table puts sort-icon controls in row 0 of the
+    <thead> and the actual date labels in row 1, so we have to scan
+    the first few rows looking for date headers rather than assuming
+    row 0 is the header.
+
+    On failure, return a summary of every visible table — including
+    text from the first three rows — for diagnosis.
     """
     return driver.execute_script("""
         const dateRe = /^\\s*\\d{1,2}[\\/\\-]\\d{1,2}([\\/\\-]\\d{2,4})?\\s*$/;
         const allTables = Array.from(document.querySelectorAll('table'))
             .filter(t => t.offsetParent !== null && t.rows && t.rows.length > 2);
 
+        function rowText(row) {
+            return Array.from(row.cells).map(c => (c.textContent || '').trim());
+        }
+        function findHeaderRow(table) {
+            // Search first 4 rows for one with >= 3 date-like cells
+            const limit = Math.min(4, table.rows.length);
+            for (let i = 0; i < limit; i++) {
+                const cells = rowText(table.rows[i]);
+                const dateCount = cells.filter(s => dateRe.test(s)).length;
+                if (dateCount >= 3) return {idx: i, cells: cells, dateCount: dateCount};
+            }
+            return null;
+        }
+
         const summary = [];
-        let best = null, bestScore = 0;
+        let best = null, bestHeader = null, bestScore = 0;
         for (const t of allTables) {
-            const firstRow = Array.from(t.rows[0].cells).map(c => (c.textContent || '').trim());
-            const dateCount = firstRow.filter(s => dateRe.test(s)).length;
+            const hdr = findHeaderRow(t);
             summary.push({
                 rows: t.rows.length,
-                cols: firstRow.length,
-                dateCols: dateCount,
-                first: firstRow.slice(0, 6),
+                cols: t.rows[0].cells.length,
+                headerIdx: hdr ? hdr.idx : -1,
+                dateCols: hdr ? hdr.dateCount : 0,
+                row0: rowText(t.rows[0]).slice(0, 8),
+                row1: t.rows.length > 1 ? rowText(t.rows[1]).slice(0, 8) : [],
+                row2: t.rows.length > 2 ? rowText(t.rows[2]).slice(0, 8) : [],
                 id: t.id || '',
                 cls: (typeof t.className === 'string') ? t.className.slice(0, 50) : ''
             });
-            if (dateCount >= 3) {
-                const score = dateCount * t.rows.length;
-                if (score > bestScore) { bestScore = score; best = t; }
+            if (hdr) {
+                const score = hdr.dateCount * t.rows.length;
+                if (score > bestScore) { bestScore = score; best = t; bestHeader = hdr; }
             }
         }
 
@@ -1662,12 +1682,12 @@ def _extract_heatmap_table(driver):
         }
 
         const rows = Array.from(best.rows);
-        const headerCells = Array.from(rows[0].cells).map(c => (c.textContent || '').trim());
         const dateCols = [];
-        headerCells.forEach((txt, i) => { if (dateRe.test(txt)) dateCols.push({i: i, label: txt}); });
+        bestHeader.cells.forEach((txt, i) => { if (dateRe.test(txt)) dateCols.push({i: i, label: txt}); });
+        const dataStart = bestHeader.idx + 1;
 
         const strikes = [];
-        for (let r = 1; r < rows.length; r++) {
+        for (let r = dataStart; r < rows.length; r++) {
             const cells = Array.from(rows[r].cells);
             if (!cells.length) continue;
             let strike = null;
@@ -1687,7 +1707,11 @@ def _extract_heatmap_table(driver):
             }
             strikes.push({strike: strike, values: values});
         }
-        return {dates: dateCols.map(d => d.label), strikes: strikes};
+        return {
+            dates: dateCols.map(d => d.label),
+            strikes: strikes,
+            headerRowIdx: bestHeader.idx
+        };
     """)
 
 
@@ -1793,10 +1817,15 @@ def scrape_oi_heatmap_phase(driver, classified, asset_id, output_dir):
                 print(f'[HEATMAP] === Tables on page ({len(data["tables"])}) ===')
                 for ti, ts in enumerate(data['tables']):
                     print(f'  table[{ti}] rows={ts.get("rows")} cols={ts.get("cols")} '
-                          f'dateCols={ts.get("dateCols")} id={ts.get("id")!r} '
-                          f'cls={ts.get("cls")!r} first={ts.get("first")}')
+                          f'headerIdx={ts.get("headerIdx")} dateCols={ts.get("dateCols")} '
+                          f'id={ts.get("id")!r} cls={ts.get("cls")!r}')
+                    print(f'    row0={ts.get("row0")}')
+                    print(f'    row1={ts.get("row1")}')
+                    print(f'    row2={ts.get("row2")}')
             save_debug(driver, f'heatmap_extract_fail_{prefix}', output_dir=output_dir)
             continue
+        if data.get('headerRowIdx', 0) != 0:
+            print(f'[HEATMAP] (header row was at index {data["headerRowIdx"]})')
 
         payload = {
             'asset': asset_id,
