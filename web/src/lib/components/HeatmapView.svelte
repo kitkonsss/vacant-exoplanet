@@ -64,18 +64,21 @@
      * genuinely large positions reach a vivid emerald. Matches CME's
      * QuikStrike feel where most cells fade and the chunky walls pop.
      *
-     * The log-transformed value is mapped to thresholds (not equal width)
-     * so the rare top values get the brightest tier.
+     * `text` is 'light' (white on dark cell) or 'dark' (near-black on
+     * bright cell) — flips at the tier where the green is too bright
+     * for white text to stay readable.
      */
     const TIERS = [
-        // [maxT (inclusive), background HSL]
-        [0.30, 'hsl(0 0% 11%)'],     // tier 1 — gray, dim (empty-ish)
-        [0.50, 'hsl(142 18% 16%)'],  // tier 2 — faintest green tint
-        [0.70, 'hsl(142 32% 22%)'],  // tier 3 — light green
-        [0.84, 'hsl(142 48% 30%)'],  // tier 4 — medium green
-        [0.94, 'hsl(142 62% 40%)'],  // tier 5 — clear green
-        [1.01, 'hsl(142 78% 52%)']   // tier 6 — vivid green (top values only)
+        // [maxT, background, text]
+        [0.30, 'hsl(0 0% 11%)',     'light'],
+        [0.50, 'hsl(142 18% 16%)',  'light'],
+        [0.70, 'hsl(142 32% 22%)',  'light'],
+        [0.84, 'hsl(142 48% 30%)',  'light'],
+        [0.94, 'hsl(142 62% 40%)',  'dark'],
+        [1.01, 'hsl(142 78% 52%)',  'dark']
     ];
+
+    const DARK_TEXT = 'hsl(0 0% 6%)';
 
     function oiStyle(value) {
         if (value == null || !Number.isFinite(value) || value <= 0 || maxVal <= 0) {
@@ -83,10 +86,15 @@
         }
         const t = Math.log10(value + 1) / Math.log10(maxVal + 1);
         const clamped = Math.max(0, Math.min(1, t));
-        for (const [threshold, color] of TIERS) {
-            if (clamped <= threshold) return `background-color:${color};`;
+        for (const [threshold, bg, mode] of TIERS) {
+            if (clamped <= threshold) {
+                return mode === 'dark'
+                    ? `background-color:${bg};color:${DARK_TEXT};font-weight:700;`
+                    : `background-color:${bg};`;
+            }
         }
-        return `background-color:${TIERS[TIERS.length - 1][1]};`;
+        const last = TIERS[TIERS.length - 1];
+        return `background-color:${last[1]};color:${DARK_TEXT};font-weight:700;`;
     }
 </script>
 
