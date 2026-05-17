@@ -19,6 +19,14 @@
         { key: 'monthly', label: 'Monthly' }
     ];
 
+    /** @type {'oi' | 'delta'} */
+    let viewMode = $state('oi');
+
+    const views = [
+        { key: 'oi',    label: 'OI',  hint: 'Absolute open interest' },
+        { key: 'delta', label: 'ΔOI', hint: 'Day-over-day change vs previous date' }
+    ];
+
     function pickContract(key) {
         contractKey = key;
         onChangeContract(key);
@@ -47,6 +55,41 @@
         return m;
     });
 
+    /**
+     * Day-over-day delta for each (strike, date) — dates are sorted recent→old
+     * so the "previous day" for column i is column i+1.
+     * @type {Array<Array<number | null>>}
+     */
+    const deltas = $derived.by(() => {
+        return visibleStrikes.map((s) => {
+            const vals = s.values || [];
+            return vals.map((v, i) => {
+                const prev = vals[i + 1];
+                if (v == null || prev == null) return null;
+                return v - prev;
+            });
+        });
+    });
+
+    /**
+     * Reference magnitude used to normalize the diverging delta ramp.
+     * Use a high quantile rather than absolute max so a single outlier
+     * doesn't wash out the rest of the grid.
+     */
+    const deltaScale = $derived.by(() => {
+        const abs = [];
+        for (const row of deltas) {
+            for (const d of row) {
+                if (d != null && d !== 0) abs.push(Math.abs(d));
+            }
+        }
+        if (!abs.length) return 1;
+        abs.sort((a, b) => a - b);
+        // 90th percentile so the visible range stays meaningful
+        const idx = Math.floor(abs.length * 0.9);
+        return Math.max(abs[idx] || abs[abs.length - 1], 1);
+    });
+
     const atmIdx = $derived.by(() => {
         const underlying = data?.underlying || 0;
         if (underlying <= 0 || !visibleStrikes.length) return -1;
@@ -60,26 +103,56 @@
     });
 
     /**
-     * Log-scaled emerald ramp. Uses the brand hue (142) but stays muted —
-     * even the max value tops out around 34% lightness so the grid is
-     * readable rather than blinding.
+     * Log-scaled emerald ramp for absolute OI values. Muted so the grid
+     * doesn't strain the eyes.
      */
-    function cellStyle(value) {
-        if (value == null || !Number.isFinite(value) || value <= 0 || maxVal <= 0) {
-            return '';
-        }
+    function oiStyle(value) {
+        if (value == null || !Number.isFinite(value) || value <= 0 || maxVal <= 0) return '';
         const t = Math.log10(value + 1) / Math.log10(maxVal + 1);
         const clamped = Math.max(0, Math.min(1, t));
-        // 10% sat / 10% L (barely visible) → 50% sat / 34% L (muted emerald)
         const lightness = 10 + clamped * 24;
         const saturation = 10 + clamped * 40;
         return `background-color:hsl(142 ${saturation.toFixed(0)}% ${lightness.toFixed(0)}%);`;
+    }
+
+    /**
+     * Diverging palette for day-over-day delta.
+     *   - positive delta (added OI) → emerald (hue 142)
+     *   - negative delta (removed OI) → red (hue 0)
+     *   - near-zero → background (no color)
+     * Intensity scales with |delta| / deltaScale, capped at 1.
+     */
+    function deltaStyle(delta) {
+        if (delta == null || !Number.isFinite(delta)) return '';
+        const ratio = Math.max(-1, Math.min(1, delta / deltaScale));
+        const mag = Math.abs(ratio);
+        // Anything below ~3% of the reference magnitude stays neutral
+        if (mag < 0.03) return '';
+        const hue = ratio >= 0 ? 142 : 0;
+        // Cap intensity below "screaming" — saturation 25-65%, lightness 12-36%
+        const saturation = 25 + mag * 40;
+        const lightness = 12 + mag * 24;
+        return `background-color:hsl(${hue} ${saturation.toFixed(0)}% ${lightness.toFixed(0)}%);`;
+    }
+
+    function cellStyle(value, delta) {
+        return viewMode === 'delta' ? deltaStyle(delta) : oiStyle(value);
+    }
+
+    function cellText(value, delta) {
+        if (viewMode === 'delta') {
+            if (delta == null) return '';
+            if (delta === 0) return '0';
+            const sign = delta > 0 ? '+' : '';
+            return `${sign}${fmtNumber(delta, 0)}`;
+        }
+        return value == null ? '' : fmtNumber(value, 0);
     }
 </script>
 
 <Card class="flex flex-1 flex-col overflow-hidden">
     <!-- Top bar -->
-    <div class="flex items-center justify-between gap-3 border-b border-border px-4 py-3">
+    <div class="flex flex-wrap items-center justify-between gap-3 border-b border-border px-4 py-3">
         <div class="flex items-center gap-3 min-w-0">
             <span class="h-3 w-1 rounded-sm bg-primary"></span>
             <span class="text-[11px] font-semibold uppercase tracking-[0.16em] text-foreground">
@@ -95,30 +168,73 @@
             </span>
         </div>
 
-        <!-- Contract pill switcher -->
-        <div class="flex items-center gap-2">
-            <span class="text-[9px] font-semibold uppercase tracking-widest text-muted-foreground">
-                Contract
-            </span>
-            <div class="flex gap-1">
-                {#each contracts as c}
-                    {@const isActive = c.key === contractKey}
-                    <button
-                        type="button"
-                        onclick={() => pickContract(c.key)}
-                        class={cn(
-                            'rounded-md border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider transition-colors',
-                            isActive
-                                ? 'border-primary bg-primary text-primary-foreground'
-                                : 'border-border bg-surface text-muted-foreground hover:bg-surface-elevated hover:text-foreground'
-                        )}
-                    >
-                        {c.label}
-                    </button>
-                {/each}
+        <div class="flex flex-wrap items-center gap-4">
+            <!-- View-mode pills -->
+            <div class="flex items-center gap-2">
+                <span class="text-[9px] font-semibold uppercase tracking-widest text-muted-foreground">
+                    View
+                </span>
+                <div class="flex gap-1">
+                    {#each views as v}
+                        {@const isActive = v.key === viewMode}
+                        <button
+                            type="button"
+                            title={v.hint}
+                            onclick={() => (viewMode = v.key)}
+                            class={cn(
+                                'rounded-md border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider transition-colors',
+                                isActive
+                                    ? 'border-primary bg-primary text-primary-foreground'
+                                    : 'border-border bg-surface text-muted-foreground hover:bg-surface-elevated hover:text-foreground'
+                            )}
+                        >
+                            {v.label}
+                        </button>
+                    {/each}
+                </div>
+            </div>
+
+            <!-- Contract pills -->
+            <div class="flex items-center gap-2">
+                <span class="text-[9px] font-semibold uppercase tracking-widest text-muted-foreground">
+                    Contract
+                </span>
+                <div class="flex gap-1">
+                    {#each contracts as c}
+                        {@const isActive = c.key === contractKey}
+                        <button
+                            type="button"
+                            onclick={() => pickContract(c.key)}
+                            class={cn(
+                                'rounded-md border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider transition-colors',
+                                isActive
+                                    ? 'border-primary bg-primary text-primary-foreground'
+                                    : 'border-border bg-surface text-muted-foreground hover:bg-surface-elevated hover:text-foreground'
+                            )}
+                        >
+                            {c.label}
+                        </button>
+                    {/each}
+                </div>
             </div>
         </div>
     </div>
+
+    <!-- Legend strip (only for delta view, to teach the colors) -->
+    {#if viewMode === 'delta' && visibleStrikes.length}
+        <div class="flex items-center gap-3 border-b border-border bg-surface px-4 py-1.5 text-[10px] text-muted-foreground">
+            <span class="font-semibold uppercase tracking-widest">Legend</span>
+            <span class="inline-flex items-center gap-1.5">
+                <span class="h-2.5 w-4 rounded-sm" style="background:hsl(0 65% 36%);"></span>
+                Removed
+            </span>
+            <span class="inline-flex items-center gap-1.5">
+                <span class="h-2.5 w-4 rounded-sm" style="background:hsl(142 65% 36%);"></span>
+                Added
+            </span>
+            <span class="ml-auto font-mono">scale ±{fmtNumber(deltaScale, 0)} (90p)</span>
+        </div>
+    {/if}
 
     <!-- Body -->
     <div class="flex-1 overflow-auto bg-background">
@@ -157,8 +273,9 @@
                                 {fmtStrike(s.strike)}
                             </td>
                             {#each s.values as v, i}
-                                <td class="hm-cell" style={cellStyle(v)}>
-                                    {v == null ? '' : fmtNumber(v, 0)}
+                                {@const d = deltas[rowIdx]?.[i] ?? null}
+                                <td class="hm-cell" style={cellStyle(v, d)}>
+                                    {cellText(v, d)}
                                 </td>
                             {/each}
                         </tr>
@@ -170,8 +287,6 @@
 </Card>
 
 <style>
-    /* Solid grid lines — black "grout" between cells so each cell is
-       cleanly delimited even when colored. */
     .hm-table {
         width: 100%;
         border-collapse: separate;
@@ -182,7 +297,6 @@
         color: hsl(var(--foreground));
     }
 
-    /* Headers */
     .hm-strike-h,
     .hm-date-h {
         position: sticky;
@@ -211,7 +325,6 @@
         min-width: 70px;
     }
 
-    /* Strike column (sticky left) */
     .hm-strike {
         position: sticky;
         left: 0;
@@ -232,9 +345,6 @@
         font-weight: 800;
     }
 
-    /* Data cells — visible "grout" creates row + column separation.
-       Default (null / no data) stays at page background so empty cells
-       read as voids, not as "very low value". */
     .hm-cell {
         padding: 4px 8px;
         text-align: right;
@@ -247,14 +357,12 @@
         transition: filter 80ms ease;
     }
 
-    /* ATM row — strong primary outline so it pops regardless of cell value */
     .hm-row-atm .hm-cell {
         box-shadow:
             inset 0 2px 0 hsl(var(--primary)),
             inset 0 -2px 0 hsl(var(--primary));
     }
 
-    /* Row hover — subtle primary outline scoped to the hovered row */
     .hm-row:hover .hm-cell {
         filter: brightness(1.15);
     }
