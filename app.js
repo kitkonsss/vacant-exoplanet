@@ -1690,6 +1690,15 @@ function renderHeatmap() {
         subtitleEl.textContent = `${dates.length} days × ${strikes.length} strikes${header}`;
     }
 
+    // Sync DTE badge + footer to the contract this heatmap actually shows
+    const contractCode = data.contract || state.data[contractKey]?.oi?.contract || '';
+    const liveData = state.data[contractKey]?.oi || state.data[contractKey]?.intraday;
+    if (liveData && Number.isFinite(liveData.dte)) {
+        document.getElementById('dteBadge').textContent = `DTE ${liveData.dte.toFixed(2)}`;
+    }
+    document.getElementById('footerContract').textContent = contractCode;
+    document.getElementById('footerDataType').textContent = `${contractCode} OI Heatmap`;
+
     // Build table HTML
     let html = '<table class="heatmap-table">';
     html += '<thead><tr><th class="hm-strike-col">Strike</th>';
