@@ -1,4 +1,4 @@
-import { CONTRACT_OPTIONS, gammaMatrixUrl, heatmapUrl, positionBiasUrl } from './config.js';
+import { CONTRACT_OPTIONS, gammaHeatmapUrl, heatmapUrl, positionBiasUrl } from './config.js';
 
 async function fetchJsonSoft(url) {
     try {
@@ -33,8 +33,8 @@ export async function fetchHeatmap(assetId, contractKey) {
 }
 
 /**
- * Fetches the Gamma (1 Pct) matrix JSON (strike × expiration) for an asset.
+ * Fetches a Gamma (1 Pct) heatmap JSON for one contract (strike × historical day).
  */
-export async function fetchGammaMatrix(assetId) {
-    return fetchJsonSoft(gammaMatrixUrl(assetId));
+export async function fetchGammaHeatmap(assetId, contractKey) {
+    return fetchJsonSoft(gammaHeatmapUrl(assetId, contractKey));
 }

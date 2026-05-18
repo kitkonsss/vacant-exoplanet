@@ -1985,20 +1985,17 @@ def _extract_heatmap_table(driver):
 
 def scrape_oi_heatmap_phase(driver, classified, asset_id, output_dir):
     """
-    After Vol2Vol scraping is done, navigate to the 'Open Interest' top tab,
-    open 'Heatmap → OI' in the sidebar.
+    After Vol2Vol scraping is done, navigate to 'Open Interest → Heatmap → OI'
+    and for each classified contract (current / tomorrow / friday / monthly)
+    extract two strike × historical-day heatmaps:
 
-    Two scrapes happen on this page:
+      {prefix}_OIHeatmap.json    — Greek = None, raw OI counts
+      {prefix}_GammaHeatmap.json — Greek = Gamma (1 Pct), gamma-weighted OI
 
-    1. Per-contract historical view (strike × historical day, one expiration
-       at a time). For each classified contract we click its expiration tab
-       and save '{prefix}_OIHeatmap.json' — this is what the OI Heatmap tab
-       and the Conviction tab consume.
-
-    2. PRODUCT matrix view (strike × all expirations) with Greek=Gamma 1Pct.
-       The user's reference QuikStrike screenshot uses this layout — gamma
-       per strike per expiration, summed across calls+puts. Saved once per
-       asset as 'GammaMatrix.json'.
+    Both are call+put combined. The Greek-change postback can un-check
+    'Call/Put Combined', so it's re-asserted before every extract. The
+    Greek dropdown is reverted to None at the end of each contract so the
+    next contract's OI extract reads raw OI counts.
 
     Non-fatal throughout — a failure on one step skips the rest cleanly.
     """
@@ -2150,120 +2147,89 @@ def scrape_oi_heatmap_phase(driver, classified, asset_id, output_dir):
         print(f'[HEATMAP] ✅ Saved {prefix}_OIHeatmap.json '
               f'({len(data["dates"])} cols × {len(data["strikes"])} strikes, kind={data.get("kind")})')
 
-    # 4. PRODUCT matrix view: gamma per (strike, expiration). One file per
-    #    asset (not per contract). This is what the Gamma Heatmap tab shows.
-    print('\n[HEATMAP] === Gamma matrix scrape ===')
-    print('[HEATMAP] Clicking PRODUCT tab to switch to matrix view...')
-    try:
-        prod_res = driver.execute_script("""
-            const el = document.getElementById(
-                'ctl00_MainContent_ucViewControl_OpenInterestV2_ucExpirationTabs_lbProductTab'
-            );
-            if (el && el.offsetParent !== null) {
-                el.click();
-                return {ok: true, text: (el.textContent || '').trim()};
-            }
-            const a = Array.from(document.querySelectorAll('a'))
-                .find(x => x.offsetParent && /^PRODUCT\\b/i.test((x.textContent || '').trim()));
-            if (a) {
-                a.click();
-                return {ok: true, text: (a.textContent || '').trim(), via: 'text-fallback'};
-            }
-            return {ok: false, error: 'product-tab-not-found'};
-        """)
-        print(f'[HEATMAP] PRODUCT tab: {prod_res}')
-        if prod_res and prod_res.get('ok'):
-            time.sleep(3.0)
-            try:
-                wait_ready(driver, timeout=20)
-            except Exception:
-                pass
-            time.sleep(0.5)
-    except Exception as e:
-        print(f'[HEATMAP] ⚠ PRODUCT tab click raised: {e}')
-
-    # Re-assert Call/Put Combined — switching tabs may toggle it off.
-    try:
-        cb_p = _ensure_call_put_combined(driver)
-        if cb_p and cb_p.get('action') == 'clicked':
-            time.sleep(2.5)
-            try:
-                wait_ready(driver, timeout=15)
-            except Exception:
-                pass
-            time.sleep(0.3)
-    except Exception as e:
-        print(f'[HEATMAP] ⚠ Call/Put Combined (PRODUCT) raised: {e}')
-
-    # Switch Greek to Gamma 1Pct.
-    print('[HEATMAP] Switching Greek → Gamma (1 Pct)...')
-    gamma_ok = False
-    try:
-        greek_res = _set_heatmap_greek(driver, 'Gamma (1 Pct)')
-        print(f'[HEATMAP] Greek: {greek_res}')
-        if greek_res and greek_res.get('ok'):
-            if greek_res.get('action') == 'changed':
-                time.sleep(3.5)
-                try:
-                    wait_ready(driver, timeout=20)
-                except Exception:
-                    pass
-                time.sleep(1.0)
-            gamma_ok = True
-    except Exception as e:
-        print(f'[HEATMAP] ⚠ Greek switch raised: {e}')
-
-    if gamma_ok:
-        # Greek postback can un-check Call/Put Combined — re-assert.
+        # Same expiration, switch Greek → Gamma (1 Pct) and re-extract.
+        # The Greek-change postback can un-check Call/Put Combined, so we
+        # wait for the page to settle then re-assert the checkbox before
+        # extracting. Revert Greek to None for the next contract's OI run.
+        print(f'[HEATMAP] {prefix}: switching Greek → Gamma (1 Pct)...')
+        gamma_ok = False
         try:
-            cb2 = _ensure_call_put_combined(driver)
-            print(f'[HEATMAP] Call/Put Combined (post-Greek): {cb2}')
-            if cb2 and cb2.get('action') == 'clicked':
-                time.sleep(3.0)
-                try:
-                    wait_ready(driver, timeout=20)
-                except Exception:
-                    pass
-                time.sleep(0.5)
+            greek_res = _set_heatmap_greek(driver, 'Gamma (1 Pct)')
+            print(f'[HEATMAP] Greek: {greek_res}')
+            if greek_res and greek_res.get('ok'):
+                if greek_res.get('action') == 'changed':
+                    time.sleep(3.5)
+                    try:
+                        wait_ready(driver, timeout=20)
+                    except Exception:
+                        pass
+                    time.sleep(1.0)
+                gamma_ok = True
         except Exception as e:
-            print(f'[HEATMAP] ⚠ Call/Put Combined re-assert raised: {e}')
+            print(f'[HEATMAP] ⚠ Greek switch raised: {e}')
 
-        gdata = _extract_heatmap_table(driver)
-        if not gdata or 'error' in gdata:
-            print(f'[HEATMAP] ⚠ Gamma matrix extract failed: '
-                  f'{gdata.get("error") if gdata else "no-data"}')
-            save_debug(driver, f'heatmap_gamma_extract_fail_{asset_id}', output_dir=output_dir)
-        else:
-            gpayload = {
-                'asset': asset_id,
-                'view': 'matrix',
-                'header': extract_header(driver) or '',
-                'underlying': underlying,
-                'greek': 'Gamma (1 Pct)',
-                'kind': gdata.get('kind'),
-                'dates': gdata['dates'],
-                'strikes': gdata['strikes'],
-                'scrapedAt': datetime.now(timezone.utc).isoformat(),
-            }
-            gpath = os.path.join(output_dir, 'GammaMatrix.json')
-            with open(gpath, 'w', encoding='utf-8') as f:
-                json.dump(gpayload, f, indent=2)
-            print(f'[HEATMAP] ✅ Saved GammaMatrix.json '
-                  f'({len(gdata["dates"])} cols × {len(gdata["strikes"])} strikes, '
-                  f'kind={gdata.get("kind")})')
+        if gamma_ok:
+            try:
+                cb2 = _ensure_call_put_combined(driver)
+                print(f'[HEATMAP] Call/Put Combined (post-Greek): {cb2}')
+                if cb2 and cb2.get('action') == 'clicked':
+                    time.sleep(3.0)
+                    try:
+                        wait_ready(driver, timeout=20)
+                    except Exception:
+                        pass
+                    time.sleep(0.5)
+            except Exception as e:
+                print(f'[HEATMAP] ⚠ Call/Put Combined re-assert raised: {e}')
 
-        # Revert Greek back to None for clean page state.
-        try:
-            back = _set_heatmap_greek(driver, 'None')
-            if back and back.get('action') == 'changed':
-                time.sleep(2.5)
-                try:
-                    wait_ready(driver, timeout=20)
-                except Exception:
-                    pass
-                time.sleep(0.3)
-        except Exception as e:
-            print(f'[HEATMAP] ⚠ Greek revert raised: {e}')
+            gdata = _extract_heatmap_table(driver)
+            if not gdata or 'error' in gdata:
+                print(f'[HEATMAP] ⚠ Gamma extract failed for {prefix}: '
+                      f'{gdata.get("error") if gdata else "no-data"}')
+                save_debug(driver, f'heatmap_gamma_extract_fail_{prefix}', output_dir=output_dir)
+            else:
+                gpayload = {
+                    'asset': asset_id,
+                    'prefix': prefix,
+                    'contract': contract_text,
+                    'header': extract_header(driver) or '',
+                    'underlying': underlying,
+                    'greek': 'Gamma (1 Pct)',
+                    'kind': gdata.get('kind'),
+                    'dates': gdata['dates'],
+                    'strikes': gdata['strikes'],
+                    'scrapedAt': datetime.now(timezone.utc).isoformat(),
+                }
+                gpath = os.path.join(output_dir, f'{prefix}_GammaHeatmap.json')
+                with open(gpath, 'w', encoding='utf-8') as f:
+                    json.dump(gpayload, f, indent=2)
+                print(f'[HEATMAP] ✅ Saved {prefix}_GammaHeatmap.json '
+                      f'({len(gdata["dates"])} cols × {len(gdata["strikes"])} strikes, '
+                      f'kind={gdata.get("kind")})')
+
+            # Revert Greek back to None for the next contract.
+            try:
+                back = _set_heatmap_greek(driver, 'None')
+                if back and back.get('action') == 'changed':
+                    time.sleep(2.5)
+                    try:
+                        wait_ready(driver, timeout=20)
+                    except Exception:
+                        pass
+                    time.sleep(0.3)
+                    try:
+                        cb3 = _ensure_call_put_combined(driver)
+                        if cb3 and cb3.get('action') == 'clicked':
+                            time.sleep(2.5)
+                            try:
+                                wait_ready(driver, timeout=20)
+                            except Exception:
+                                pass
+                            time.sleep(0.3)
+                    except Exception:
+                        pass
+            except Exception as e:
+                print(f'[HEATMAP] ⚠ Greek revert raised: {e}')
 
     # Restore Vol2Vol view so the next asset's Vol2Vol scrape doesn't break.
     # QuikStrike preserves the active top tab across URL reloads, and the
