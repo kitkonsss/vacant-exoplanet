@@ -2056,6 +2056,13 @@ def scrape_oi_heatmap_phase(driver, classified, asset_id, output_dir):
         # Same expiration, swap Greek dropdown to 'Gamma (1 Pct)' and re-extract.
         # QuikStrike re-renders the same strike × date table with gamma values
         # in place of OI counts, so the extractor and JSON shape stay identical.
+        #
+        # Empirically the Greek-change postback sometimes un-checks 'Call/Put
+        # Combined', which makes each date header span two C/P sub-columns and
+        # the by-date-index extractor reads just one side — values come back
+        # ~½ of the true combined gamma. So after every Greek switch we wait
+        # long enough for the postback to settle, then re-assert the checkbox
+        # before extracting.
         print(f'[HEATMAP] {prefix}: switching Greek → Gamma (1 Pct)...')
         gamma_ok = False
         try:
@@ -2063,17 +2070,31 @@ def scrape_oi_heatmap_phase(driver, classified, asset_id, output_dir):
             print(f'[HEATMAP] Greek: {greek_res}')
             if greek_res and greek_res.get('ok'):
                 if greek_res.get('action') == 'changed':
-                    time.sleep(2.5)
+                    time.sleep(3.5)
                     try:
-                        wait_ready(driver, timeout=15)
+                        wait_ready(driver, timeout=20)
                     except Exception:
                         pass
-                    time.sleep(0.5)
+                    time.sleep(1.0)
                 gamma_ok = True
         except Exception as e:
             print(f'[HEATMAP] ⚠ Greek switch raised: {e}')
 
         if gamma_ok:
+            # Re-assert Call/Put Combined — Greek postback may have reset it.
+            try:
+                cb2 = _ensure_call_put_combined(driver)
+                print(f'[HEATMAP] Call/Put Combined (post-Greek): {cb2}')
+                if cb2 and cb2.get('action') == 'clicked':
+                    time.sleep(3.0)
+                    try:
+                        wait_ready(driver, timeout=20)
+                    except Exception:
+                        pass
+                    time.sleep(0.5)
+            except Exception as e:
+                print(f'[HEATMAP] ⚠ Call/Put Combined re-assert raised: {e}')
+
             gdata = _extract_heatmap_table(driver)
             if not gdata or 'error' in gdata:
                 print(f'[HEATMAP] ⚠ Gamma extract failed for {prefix}: '
@@ -2098,16 +2119,28 @@ def scrape_oi_heatmap_phase(driver, classified, asset_id, output_dir):
                       f'({len(gdata["dates"])} dates × {len(gdata["strikes"])} strikes)')
 
             # Revert Greek back to 'None' so the next contract's OI extract
-            # reads OI counts, not gamma values.
+            # reads OI counts, not gamma values. Same checkbox re-assertion
+            # applies — the revert postback can also reset Call/Put Combined.
             try:
                 back = _set_heatmap_greek(driver, 'None')
                 if back and back.get('action') == 'changed':
-                    time.sleep(2.0)
+                    time.sleep(3.0)
                     try:
-                        wait_ready(driver, timeout=15)
+                        wait_ready(driver, timeout=20)
                     except Exception:
                         pass
-                    time.sleep(0.3)
+                    time.sleep(0.5)
+                    try:
+                        cb3 = _ensure_call_put_combined(driver)
+                        if cb3 and cb3.get('action') == 'clicked':
+                            time.sleep(2.5)
+                            try:
+                                wait_ready(driver, timeout=20)
+                            except Exception:
+                                pass
+                            time.sleep(0.3)
+                    except Exception as ee:
+                        print(f'[HEATMAP] ⚠ Call/Put Combined re-assert after revert raised: {ee}')
             except Exception as e:
                 print(f'[HEATMAP] ⚠ Greek revert raised: {e}')
 
