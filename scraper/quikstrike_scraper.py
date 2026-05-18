@@ -1805,18 +1805,29 @@ def _set_heatmap_greek(driver, greek_label):
 
 def _extract_heatmap_table(driver):
     """
-    Find the strike × date heatmap table on the page and extract it.
+    Find the strike × column heatmap/matrix table on the page and extract it.
 
-    QuikStrike's heatmap table puts sort-icon controls in row 0 of the
-    <thead> and the actual date labels in row 1, so we have to scan
-    the first few rows looking for date headers rather than assuming
-    row 0 is the header.
+    QuikStrike renders this table in one of two layouts depending on which
+    tab/view is active:
+
+    1. PRODUCT (matrix) view — columns are option contracts spread across
+       expirations. Header structure:
+         row N-1: option contract codes  (e.g. 'G3MK6', 'OG4K6', 'OGM6')
+         row N:   DTE labels             (e.g. '0 DTE', '4 DTE', '8 DTE')
+
+    2. Single-expiration view — columns are recent trading days.
+         row N: full dates (e.g. '5/15/2026')
+
+    The extractor picks whichever pattern has more matches. In matrix mode
+    we combine the option code with the DTE into the column label
+    (e.g. 'G3MK6 0DTE') so the dashboard can display both pieces.
 
     On failure, return a summary of every visible table — including
     text from the first three rows — for diagnosis.
     """
     return driver.execute_script("""
         const dateRe = /^\\s*\\d{1,2}[\\/\\-]\\d{1,2}([\\/\\-]\\d{2,4})?\\s*$/;
+        const dteRe  = /^\\s*\\d+\\s+DTE\\s*$/i;
         const allTables = Array.from(document.querySelectorAll('table'))
             .filter(t => t.offsetParent !== null && t.rows && t.rows.length > 2);
 
@@ -1824,14 +1835,23 @@ def _extract_heatmap_table(driver):
             return Array.from(row.cells).map(c => (c.textContent || '').trim());
         }
         function findHeaderRow(table) {
-            // Search first 4 rows for one with >= 3 date-like cells
-            const limit = Math.min(4, table.rows.length);
+            // Search first 5 rows for one with >= 3 date-like OR DTE-like cells.
+            // Prefer the row with the higher count; if tied, prefer DTE row
+            // (matrix view) because that's the layout the user wants.
+            const limit = Math.min(5, table.rows.length);
+            let bestRow = null;
             for (let i = 0; i < limit; i++) {
                 const cells = rowText(table.rows[i]);
                 const dateCount = cells.filter(s => dateRe.test(s)).length;
-                if (dateCount >= 3) return {idx: i, cells: cells, dateCount: dateCount};
+                const dteCount  = cells.filter(s => dteRe.test(s)).length;
+                const kind = dteCount >= dateCount ? 'dte' : 'date';
+                const count = Math.max(dateCount, dteCount);
+                if (count < 3) continue;
+                if (!bestRow || count > bestRow.count) {
+                    bestRow = {idx: i, cells: cells, count: count, kind: kind};
+                }
             }
-            return null;
+            return bestRow;
         }
 
         const summary = [];
@@ -1842,7 +1862,8 @@ def _extract_heatmap_table(driver):
                 rows: t.rows.length,
                 cols: t.rows[0].cells.length,
                 headerIdx: hdr ? hdr.idx : -1,
-                dateCols: hdr ? hdr.dateCount : 0,
+                dateCols: hdr ? hdr.count : 0,
+                kind: hdr ? hdr.kind : '',
                 row0: rowText(t.rows[0]).slice(0, 8),
                 row1: t.rows.length > 1 ? rowText(t.rows[1]).slice(0, 8) : [],
                 row2: t.rows.length > 2 ? rowText(t.rows[2]).slice(0, 8) : [],
@@ -1850,18 +1871,30 @@ def _extract_heatmap_table(driver):
                 cls: (typeof t.className === 'string') ? t.className.slice(0, 50) : ''
             });
             if (hdr) {
-                const score = hdr.dateCount * t.rows.length;
+                const score = hdr.count * t.rows.length;
                 if (score > bestScore) { bestScore = score; best = t; bestHeader = hdr; }
             }
         }
 
         if (!best) {
-            return {error: 'No table with date headers', tables: summary.slice(0, 10)};
+            return {error: 'No table with date/DTE headers', tables: summary.slice(0, 10)};
         }
 
         const rows = Array.from(best.rows);
+        const matcher = bestHeader.kind === 'dte' ? dteRe : dateRe;
         const dateCols = [];
-        bestHeader.cells.forEach((txt, i) => { if (dateRe.test(txt)) dateCols.push({i: i, label: txt}); });
+        bestHeader.cells.forEach((txt, i) => { if (matcher.test(txt)) dateCols.push({i: i, label: txt.trim()}); });
+
+        // For matrix (DTE) layout, the row directly above usually holds the
+        // option contract code per column. Combine them into one label.
+        if (bestHeader.kind === 'dte' && bestHeader.idx > 0) {
+            const codeRow = rowText(rows[bestHeader.idx - 1]);
+            for (const dc of dateCols) {
+                const code = (codeRow[dc.i] || '').trim();
+                if (code) dc.label = code + ' ' + dc.label;
+            }
+        }
+
         const dataStart = bestHeader.idx + 1;
 
         const strikes = [];
@@ -1888,7 +1921,8 @@ def _extract_heatmap_table(driver):
         return {
             dates: dateCols.map(d => d.label),
             strikes: strikes,
-            headerRowIdx: bestHeader.idx
+            headerRowIdx: bestHeader.idx,
+            kind: bestHeader.kind
         };
     """)
 
@@ -1896,17 +1930,28 @@ def _extract_heatmap_table(driver):
 def scrape_oi_heatmap_phase(driver, classified, asset_id, output_dir):
     """
     After Vol2Vol scraping is done, navigate to the 'Open Interest' top tab,
-    open 'Heatmap → OI' in the sidebar, then for each classified contract
-    click its expiration pill and extract the strike × date matrix.
+    open 'Heatmap → OI' in the sidebar.
 
-    Saves one {prefix}_OIHeatmap.json per contract. Non-fatal throughout —
-    a failure on one step skips the rest of this phase cleanly.
+    Two scrapes happen on this page:
+
+    1. Per-contract historical view (strike × historical day, one expiration
+       at a time). For each classified contract we click its expiration tab
+       and save '{prefix}_OIHeatmap.json' — this is what the OI Heatmap tab
+       and the Conviction tab consume.
+
+    2. PRODUCT matrix view (strike × all expirations) with Greek=Gamma 1Pct.
+       The user's reference QuikStrike screenshot uses this layout — gamma
+       per strike per expiration, summed across calls+puts. Saved once per
+       asset as 'GammaMatrix.json'.
+
+    Non-fatal throughout — a failure on one step skips the rest cleanly.
     """
     contracts = [(k, classified.get(k)) for k in CONTRACT_KEYS]
     contracts = [(k, c) for k, c in contracts if c and c.get('text')]
     if not contracts:
-        print('[HEATMAP] No classified contracts — skipping heatmap phase')
-        return
+        print('[HEATMAP] No classified contracts — skipping historical heatmap phase')
+        # Still try the matrix-view Gamma scrape below since it doesn't need
+        # individual expirations.
 
     print(f'\n{"═"*60}')
     print(f'  OI HEATMAP PHASE: {asset_id.upper()}')
@@ -1927,8 +1972,6 @@ def scrape_oi_heatmap_phase(driver, classified, asset_id, output_dir):
         save_debug(driver, f'heatmap_topnav_fail_{asset_id}', output_dir=output_dir)
         return
     print(f'[HEATMAP] Top-tab click: {res}')
-    # ASP.NET postback can take a few seconds to swap the page content +
-    # render the sidebar. Wait long enough for the new DOM to appear.
     time.sleep(4.0)
     try:
         wait_ready(driver, timeout=20)
@@ -1961,15 +2004,12 @@ def scrape_oi_heatmap_phase(driver, classified, asset_id, output_dir):
         pass
     time.sleep(1.0)
 
-    # 2b. Ensure 'Call/Put Combined' checkbox is checked. Otherwise the
-    # heatmap renders date headers with colspan=2 (C, P sub-columns) and
-    # the by-date-index extractor reads only the Put column.
+    # 2b. Ensure 'Call/Put Combined' checkbox is checked.
     print('[HEATMAP] Ensuring Call/Put Combined checkbox is checked...')
     try:
         cb_res = _ensure_call_put_combined(driver)
         print(f'[HEATMAP] Call/Put Combined: {cb_res}')
         if cb_res and cb_res.get('action') == 'clicked':
-            # ASP.NET postback usually fires on checkbox change — let it settle
             time.sleep(2.5)
             try:
                 wait_ready(driver, timeout=15)
@@ -1979,8 +2019,10 @@ def scrape_oi_heatmap_phase(driver, classified, asset_id, output_dir):
     except Exception as e:
         print(f'[HEATMAP] ⚠ Call/Put Combined toggle raised: {e}')
 
-    # 3. Iterate contracts: click expiration tab → extract table → save
     underlying = get_futures_price(asset_id)
+
+    # 3. Per-contract historical OI heatmap (strike × historical day).
+    #    These feed the OI Heatmap tab and the Conviction tab.
     for prefix, contract in contracts:
         contract_text = contract.get('text', '')
         print(f'\n[HEATMAP] {prefix}: selecting expiration {contract_text}...')
@@ -2027,15 +2069,13 @@ def scrape_oi_heatmap_phase(driver, classified, asset_id, output_dir):
                 print(f'[HEATMAP] === Tables on page ({len(data["tables"])}) ===')
                 for ti, ts in enumerate(data['tables']):
                     print(f'  table[{ti}] rows={ts.get("rows")} cols={ts.get("cols")} '
-                          f'headerIdx={ts.get("headerIdx")} dateCols={ts.get("dateCols")} '
+                          f'headerIdx={ts.get("headerIdx")} cols={ts.get("dateCols")} '
                           f'id={ts.get("id")!r} cls={ts.get("cls")!r}')
                     print(f'    row0={ts.get("row0")}')
                     print(f'    row1={ts.get("row1")}')
                     print(f'    row2={ts.get("row2")}')
             save_debug(driver, f'heatmap_extract_fail_{prefix}', output_dir=output_dir)
             continue
-        if data.get('headerRowIdx', 0) != 0:
-            print(f'[HEATMAP] (header row was at index {data["headerRowIdx"]})')
 
         payload = {
             'asset': asset_id,
@@ -2043,6 +2083,7 @@ def scrape_oi_heatmap_phase(driver, classified, asset_id, output_dir):
             'contract': contract_text,
             'header': extract_header(driver) or '',
             'underlying': underlying,
+            'kind': data.get('kind'),
             'dates': data['dates'],
             'strikes': data['strikes'],
             'scrapedAt': datetime.now(timezone.utc).isoformat(),
@@ -2051,98 +2092,122 @@ def scrape_oi_heatmap_phase(driver, classified, asset_id, output_dir):
         with open(filepath, 'w', encoding='utf-8') as f:
             json.dump(payload, f, indent=2)
         print(f'[HEATMAP] ✅ Saved {prefix}_OIHeatmap.json '
-              f'({len(data["dates"])} dates × {len(data["strikes"])} strikes)')
+              f'({len(data["dates"])} cols × {len(data["strikes"])} strikes, kind={data.get("kind")})')
 
-        # Same expiration, swap Greek dropdown to 'Gamma (1 Pct)' and re-extract.
-        # QuikStrike re-renders the same strike × date table with gamma values
-        # in place of OI counts, so the extractor and JSON shape stay identical.
-        #
-        # Empirically the Greek-change postback sometimes un-checks 'Call/Put
-        # Combined', which makes each date header span two C/P sub-columns and
-        # the by-date-index extractor reads just one side — values come back
-        # ~½ of the true combined gamma. So after every Greek switch we wait
-        # long enough for the postback to settle, then re-assert the checkbox
-        # before extracting.
-        print(f'[HEATMAP] {prefix}: switching Greek → Gamma (1 Pct)...')
-        gamma_ok = False
+    # 4. PRODUCT matrix view: gamma per (strike, expiration). One file per
+    #    asset (not per contract). This is what the Gamma Heatmap tab shows.
+    print('\n[HEATMAP] === Gamma matrix scrape ===')
+    print('[HEATMAP] Clicking PRODUCT tab to switch to matrix view...')
+    try:
+        prod_res = driver.execute_script("""
+            const el = document.getElementById(
+                'ctl00_MainContent_ucViewControl_OpenInterestV2_ucExpirationTabs_lbProductTab'
+            );
+            if (el && el.offsetParent !== null) {
+                el.click();
+                return {ok: true, text: (el.textContent || '').trim()};
+            }
+            const a = Array.from(document.querySelectorAll('a'))
+                .find(x => x.offsetParent && /^PRODUCT\\b/i.test((x.textContent || '').trim()));
+            if (a) {
+                a.click();
+                return {ok: true, text: (a.textContent || '').trim(), via: 'text-fallback'};
+            }
+            return {ok: false, error: 'product-tab-not-found'};
+        """)
+        print(f'[HEATMAP] PRODUCT tab: {prod_res}')
+        if prod_res and prod_res.get('ok'):
+            time.sleep(3.0)
+            try:
+                wait_ready(driver, timeout=20)
+            except Exception:
+                pass
+            time.sleep(0.5)
+    except Exception as e:
+        print(f'[HEATMAP] ⚠ PRODUCT tab click raised: {e}')
+
+    # Re-assert Call/Put Combined — switching tabs may toggle it off.
+    try:
+        cb_p = _ensure_call_put_combined(driver)
+        if cb_p and cb_p.get('action') == 'clicked':
+            time.sleep(2.5)
+            try:
+                wait_ready(driver, timeout=15)
+            except Exception:
+                pass
+            time.sleep(0.3)
+    except Exception as e:
+        print(f'[HEATMAP] ⚠ Call/Put Combined (PRODUCT) raised: {e}')
+
+    # Switch Greek to Gamma 1Pct.
+    print('[HEATMAP] Switching Greek → Gamma (1 Pct)...')
+    gamma_ok = False
+    try:
+        greek_res = _set_heatmap_greek(driver, 'Gamma (1 Pct)')
+        print(f'[HEATMAP] Greek: {greek_res}')
+        if greek_res and greek_res.get('ok'):
+            if greek_res.get('action') == 'changed':
+                time.sleep(3.5)
+                try:
+                    wait_ready(driver, timeout=20)
+                except Exception:
+                    pass
+                time.sleep(1.0)
+            gamma_ok = True
+    except Exception as e:
+        print(f'[HEATMAP] ⚠ Greek switch raised: {e}')
+
+    if gamma_ok:
+        # Greek postback can un-check Call/Put Combined — re-assert.
         try:
-            greek_res = _set_heatmap_greek(driver, 'Gamma (1 Pct)')
-            print(f'[HEATMAP] Greek: {greek_res}')
-            if greek_res and greek_res.get('ok'):
-                if greek_res.get('action') == 'changed':
-                    time.sleep(3.5)
-                    try:
-                        wait_ready(driver, timeout=20)
-                    except Exception:
-                        pass
-                    time.sleep(1.0)
-                gamma_ok = True
+            cb2 = _ensure_call_put_combined(driver)
+            print(f'[HEATMAP] Call/Put Combined (post-Greek): {cb2}')
+            if cb2 and cb2.get('action') == 'clicked':
+                time.sleep(3.0)
+                try:
+                    wait_ready(driver, timeout=20)
+                except Exception:
+                    pass
+                time.sleep(0.5)
         except Exception as e:
-            print(f'[HEATMAP] ⚠ Greek switch raised: {e}')
+            print(f'[HEATMAP] ⚠ Call/Put Combined re-assert raised: {e}')
 
-        if gamma_ok:
-            # Re-assert Call/Put Combined — Greek postback may have reset it.
-            try:
-                cb2 = _ensure_call_put_combined(driver)
-                print(f'[HEATMAP] Call/Put Combined (post-Greek): {cb2}')
-                if cb2 and cb2.get('action') == 'clicked':
-                    time.sleep(3.0)
-                    try:
-                        wait_ready(driver, timeout=20)
-                    except Exception:
-                        pass
-                    time.sleep(0.5)
-            except Exception as e:
-                print(f'[HEATMAP] ⚠ Call/Put Combined re-assert raised: {e}')
+        gdata = _extract_heatmap_table(driver)
+        if not gdata or 'error' in gdata:
+            print(f'[HEATMAP] ⚠ Gamma matrix extract failed: '
+                  f'{gdata.get("error") if gdata else "no-data"}')
+            save_debug(driver, f'heatmap_gamma_extract_fail_{asset_id}', output_dir=output_dir)
+        else:
+            gpayload = {
+                'asset': asset_id,
+                'view': 'matrix',
+                'header': extract_header(driver) or '',
+                'underlying': underlying,
+                'greek': 'Gamma (1 Pct)',
+                'kind': gdata.get('kind'),
+                'dates': gdata['dates'],
+                'strikes': gdata['strikes'],
+                'scrapedAt': datetime.now(timezone.utc).isoformat(),
+            }
+            gpath = os.path.join(output_dir, 'GammaMatrix.json')
+            with open(gpath, 'w', encoding='utf-8') as f:
+                json.dump(gpayload, f, indent=2)
+            print(f'[HEATMAP] ✅ Saved GammaMatrix.json '
+                  f'({len(gdata["dates"])} cols × {len(gdata["strikes"])} strikes, '
+                  f'kind={gdata.get("kind")})')
 
-            gdata = _extract_heatmap_table(driver)
-            if not gdata or 'error' in gdata:
-                print(f'[HEATMAP] ⚠ Gamma extract failed for {prefix}: '
-                      f'{gdata.get("error") if gdata else "no-data"}')
-                save_debug(driver, f'heatmap_gamma_extract_fail_{prefix}', output_dir=output_dir)
-            else:
-                gpayload = {
-                    'asset': asset_id,
-                    'prefix': prefix,
-                    'contract': contract_text,
-                    'header': extract_header(driver) or '',
-                    'underlying': underlying,
-                    'greek': 'Gamma (1 Pct)',
-                    'dates': gdata['dates'],
-                    'strikes': gdata['strikes'],
-                    'scrapedAt': datetime.now(timezone.utc).isoformat(),
-                }
-                gpath = os.path.join(output_dir, f'{prefix}_GammaHeatmap.json')
-                with open(gpath, 'w', encoding='utf-8') as f:
-                    json.dump(gpayload, f, indent=2)
-                print(f'[HEATMAP] ✅ Saved {prefix}_GammaHeatmap.json '
-                      f'({len(gdata["dates"])} dates × {len(gdata["strikes"])} strikes)')
-
-            # Revert Greek back to 'None' so the next contract's OI extract
-            # reads OI counts, not gamma values. Same checkbox re-assertion
-            # applies — the revert postback can also reset Call/Put Combined.
-            try:
-                back = _set_heatmap_greek(driver, 'None')
-                if back and back.get('action') == 'changed':
-                    time.sleep(3.0)
-                    try:
-                        wait_ready(driver, timeout=20)
-                    except Exception:
-                        pass
-                    time.sleep(0.5)
-                    try:
-                        cb3 = _ensure_call_put_combined(driver)
-                        if cb3 and cb3.get('action') == 'clicked':
-                            time.sleep(2.5)
-                            try:
-                                wait_ready(driver, timeout=20)
-                            except Exception:
-                                pass
-                            time.sleep(0.3)
-                    except Exception as ee:
-                        print(f'[HEATMAP] ⚠ Call/Put Combined re-assert after revert raised: {ee}')
-            except Exception as e:
-                print(f'[HEATMAP] ⚠ Greek revert raised: {e}')
+        # Revert Greek back to None for clean page state.
+        try:
+            back = _set_heatmap_greek(driver, 'None')
+            if back and back.get('action') == 'changed':
+                time.sleep(2.5)
+                try:
+                    wait_ready(driver, timeout=20)
+                except Exception:
+                    pass
+                time.sleep(0.3)
+        except Exception as e:
+            print(f'[HEATMAP] ⚠ Greek revert raised: {e}')
 
     # Restore Vol2Vol view so the next asset's Vol2Vol scrape doesn't break.
     # QuikStrike preserves the active top tab across URL reloads, and the
@@ -2427,14 +2492,8 @@ def scrape_asset(driver, asset_id):
     # OI Heatmap phase — one navigation, all three contracts
     try:
         scrape_oi_heatmap_phase(driver, classified, asset_id, output_dir)
-        # If friday == current and we got a current heatmap, mirror it
-        if classified.get('friday_is_current'):
-            import shutil
-            for suffix in ('OIHeatmap', 'GammaHeatmap'):
-                src = os.path.join(output_dir, f'current_{suffix}.json')
-                if os.path.exists(src):
-                    shutil.copy(src, os.path.join(output_dir, f'friday_{suffix}.json'))
-                    print(f'[COPY] Mirrored current {suffix} to friday')
+        # Matrix view writes one file per asset (not per contract), so the
+        # old friday==current mirror is no longer needed.
     except Exception as e:
         print(f'[HEATMAP] ⚠ Phase raised: {e}')
         import traceback

@@ -13,7 +13,8 @@
         title = 'OI Heatmap',
         valueDecimals = 0,
         heatScale = 'log', // 'log' for OI counts, 'linear' for small floats like gamma
-        emptyFile = '_OIHeatmap.json'
+        emptyFile = '_OIHeatmap.json',
+        columnLabel = 'Date'    // column-header label shown above each data column
     } = $props();
 
     const profile = $derived(ASSET_PROFILES[assetId]);
@@ -133,7 +134,7 @@
             </span>
             <span class="truncate text-[10px] text-muted-foreground">
                 {#if data}
-                    {dates.length} days × {visibleStrikes.length} strikes
+                    {dates.length} {columnLabel.toLowerCase() === 'expiration' ? 'expirations' : 'days'} × {visibleStrikes.length} strikes
                     {#if data.contract} · <span class="font-mono">{data.contract}</span>{/if}
                 {:else if !loading}
                     No data
@@ -141,29 +142,31 @@
             </span>
         </div>
 
-        <!-- Contract pill switcher -->
-        <div class="flex items-center gap-2">
-            <span class="text-[9px] font-semibold uppercase tracking-widest text-muted-foreground">
-                Contract
-            </span>
-            <div class="flex gap-1">
-                {#each contracts as c}
-                    {@const isActive = c.key === contractKey}
-                    <button
-                        type="button"
-                        onclick={() => pickContract(c.key)}
-                        class={cn(
-                            'rounded-md border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider transition-colors',
-                            isActive
-                                ? 'border-primary bg-primary text-primary-foreground'
-                                : 'border-border bg-surface text-muted-foreground hover:bg-surface-elevated hover:text-foreground'
-                        )}
-                    >
-                        {c.label}
-                    </button>
-                {/each}
+        <!-- Contract pill switcher (only when caller provided contracts) -->
+        {#if contracts.length}
+            <div class="flex items-center gap-2">
+                <span class="text-[9px] font-semibold uppercase tracking-widest text-muted-foreground">
+                    Contract
+                </span>
+                <div class="flex gap-1">
+                    {#each contracts as c}
+                        {@const isActive = c.key === contractKey}
+                        <button
+                            type="button"
+                            onclick={() => pickContract(c.key)}
+                            class={cn(
+                                'rounded-md border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider transition-colors',
+                                isActive
+                                    ? 'border-primary bg-primary text-primary-foreground'
+                                    : 'border-border bg-surface text-muted-foreground hover:bg-surface-elevated hover:text-foreground'
+                            )}
+                        >
+                            {c.label}
+                        </button>
+                    {/each}
+                </div>
             </div>
-        </div>
+        {/if}
     </div>
 
     <!-- Legend: six discrete tiers from low → high -->
@@ -196,7 +199,7 @@
                     <div class="text-sm font-semibold text-foreground">No heatmap data</div>
                     <p class="mt-1 max-w-md text-xs text-muted-foreground">
                         Run the QuikStrike scraper to publish
-                        <span class="font-mono text-foreground">{contractKey}{emptyFile}</span>.
+                        <span class="font-mono text-foreground">{contracts.length ? contractKey + emptyFile : emptyFile}</span>.
                     </p>
                 </div>
             </div>

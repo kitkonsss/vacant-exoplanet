@@ -37,10 +37,15 @@ export function positionBiasUrl(assetId, fileName) {
     return dataUrl(assetId, fileName);
 }
 
+// Per-contract historical OI heatmap (strike × historical day). Feeds the
+// OI Heatmap tab and the Conviction tab.
 export function heatmapUrl(assetId, contractKey) {
     return dataUrl(assetId, `${contractKey}_OIHeatmap.json`);
 }
 
-export function gammaHeatmapUrl(assetId, contractKey) {
-    return dataUrl(assetId, `${contractKey}_GammaHeatmap.json`);
+// Matrix view: one file per asset (strike × expiration). Feeds the
+// Gamma Heatmap tab — gamma values per (strike, expiration) summed
+// across calls+puts.
+export function gammaMatrixUrl(assetId) {
+    return dataUrl(assetId, 'GammaMatrix.json');
 }

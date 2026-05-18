@@ -6,7 +6,7 @@
     import PositionBiasView from '$lib/components/PositionBiasView.svelte';
     import HeatmapView from '$lib/components/HeatmapView.svelte';
     import ConvictionView from '$lib/components/ConvictionView.svelte';
-    import { fetchGammaHeatmap, fetchHeatmap, fetchPositionBias } from '$lib/data.js';
+    import { fetchGammaMatrix, fetchHeatmap, fetchPositionBias } from '$lib/data.js';
     import { ASSET_PROFILES, DEFAULT_CONTRACT_KEY } from '$lib/config.js';
     import { LineChart, Grid3X3, Activity, Target } from 'lucide-svelte';
 
@@ -22,10 +22,8 @@
     let heatmapCache = $state({});
     let heatmapLoading = $state(false);
 
-    // Gamma heatmap has its own per-contract cache and active contract.
-    let gammaContract = $state(DEFAULT_CONTRACT_KEY);
-    /** @type {Record<string, any>} */
-    let gammaCache = $state({});
+    // Gamma matrix is one file per asset (no contract pivot).
+    let gammaMatrix = $state(null);
     let gammaLoading = $state(false);
 
     const profile = $derived(ASSET_PROFILES[asset]);
@@ -40,20 +38,14 @@
         { key: 'conviction', label: 'Conviction',    tone: 'warn',    icon: Target }
     ];
 
-    // Single-contract tabs each pivot on their own contract pill.
-    const singleContractKey = $derived(
-        activeTab === 'heatmap' ? heatmapContract
-            : activeTab === 'gamma' ? gammaContract
-            : 'current'
-    );
-
+    // Heatmap tab pivots on its own contract pill; Gamma matrix doesn't.
     const visibleContract = $derived(
-        payload?.contracts?.find((c) => c.contract_key === singleContractKey)
-        || payload?.contracts?.[0]
+        payload?.contracts?.find(
+            (c) => c.contract_key === (activeTab === 'heatmap' ? heatmapContract : 'current')
+        ) || payload?.contracts?.[0]
     );
 
     const currentHeatmap = $derived(heatmapCache[heatmapContract] ?? null);
-    const currentGamma = $derived(gammaCache[gammaContract] ?? null);
 
     // Conviction tab aggregates all 4 tenors at once — assemble side-by-side
     // bias + heatmap pairs for every contract we've loaded.
@@ -89,9 +81,6 @@
             if (nextKey && nextKey !== heatmapContract) {
                 heatmapContract = nextKey;
             }
-            if (nextKey && nextKey !== gammaContract) {
-                gammaContract = nextKey;
-            }
             lastUpdate = new Date().toLocaleTimeString();
             return nextKey;
         } finally {
@@ -112,13 +101,11 @@
         }
     }
 
-    async function ensureGamma(contractKey) {
-        const cached = untrack(() => gammaCache[contractKey]);
-        if (cached) return;
+    async function ensureGamma() {
+        if (untrack(() => gammaMatrix)) return;
         gammaLoading = true;
         try {
-            const data = await fetchGammaHeatmap(asset, contractKey);
-            gammaCache = { ...untrack(() => gammaCache), [contractKey]: data };
+            gammaMatrix = await fetchGammaMatrix(asset);
         } finally {
             gammaLoading = false;
         }
@@ -142,12 +129,12 @@
 
     async function refresh() {
         heatmapCache = {};
-        gammaCache = {};
+        gammaMatrix = null;
         const nextKey = await load();
         if (activeTab === 'heatmap' && nextKey) {
             await ensureHeatmap(nextKey);
-        } else if (activeTab === 'gamma' && nextKey) {
-            await ensureGamma(nextKey);
+        } else if (activeTab === 'gamma') {
+            await ensureGamma();
         } else if (activeTab === 'conviction') {
             await ensureAllHeatmaps(availableContractKeys);
         }
@@ -160,10 +147,7 @@
             if (nextKey !== heatmapContract) heatmapContract = nextKey;
             void ensureHeatmap(nextKey);
         } else if (key === 'gamma') {
-            const nextKey = resolveContractKey(availableContractKeys, gammaContract);
-            if (!nextKey) return;
-            if (nextKey !== gammaContract) gammaContract = nextKey;
-            void ensureGamma(nextKey);
+            void ensureGamma();
         } else if (key === 'conviction') {
             void ensureAllHeatmaps(availableContractKeys);
         }
@@ -174,23 +158,18 @@
         void ensureHeatmap(key);
     }
 
-    function onGammaContract(key) {
-        gammaContract = key;
-        void ensureGamma(key);
-    }
-
     // React only to asset changes. Wrap side effects in untrack so writes
     // to heatmapCache / reads of activeTab don't subscribe this effect.
     $effect(() => {
         asset; // dep
         untrack(() => {
             heatmapCache = {};
-            gammaCache = {};
+            gammaMatrix = null;
             void load().then((nextKey) => {
                 if (activeTab === 'heatmap' && nextKey) {
                     void ensureHeatmap(nextKey);
-                } else if (activeTab === 'gamma' && nextKey) {
-                    void ensureGamma(nextKey);
+                } else if (activeTab === 'gamma') {
+                    void ensureGamma();
                 } else if (activeTab === 'conviction') {
                     void ensureAllHeatmaps(availableContractKeys);
                 }
@@ -206,7 +185,7 @@
         contractCode={activeTab === 'heatmap'
             ? currentHeatmap?.contract || visibleContract?.contract || ''
             : activeTab === 'gamma'
-                ? currentGamma?.contract || visibleContract?.contract || ''
+                ? `${gammaMatrix?.dates?.length ?? 0}× expirations`
             : activeTab === 'conviction'
                 ? `${convictionContracts.length}× tenors`
                 : visibleContract?.contract || ''}
@@ -235,15 +214,14 @@
         {:else if activeTab === 'gamma'}
             <HeatmapView
                 assetId={asset}
-                bind:contractKey={gammaContract}
-                availableContracts={availableContractKeys}
-                data={currentGamma}
+                availableContracts={[]}
+                data={gammaMatrix}
                 loading={gammaLoading}
-                onChangeContract={onGammaContract}
-                title="Gamma Heatmap (1 Pct)"
-                valueDecimals={2}
-                heatScale="linear"
-                emptyFile="_GammaHeatmap.json"
+                title="Gamma Matrix (1 Pct, Call+Put)"
+                valueDecimals={0}
+                heatScale="log"
+                emptyFile="GammaMatrix.json"
+                columnLabel="Expiration"
             />
         {:else if activeTab === 'conviction'}
             <ConvictionView
@@ -257,13 +235,13 @@
         contract={activeTab === 'heatmap'
             ? currentHeatmap?.contract || visibleContract?.contract || '—'
             : activeTab === 'gamma'
-                ? currentGamma?.contract || visibleContract?.contract || '—'
+                ? 'All Expirations'
             : activeTab === 'conviction'
                 ? 'All Contracts'
                 : visibleContract?.contract || '—'}
         dataType={activeTab === 'analysis' ? 'Position Bias'
             : activeTab === 'heatmap' ? 'OI Heatmap'
-            : activeTab === 'gamma' ? 'Gamma Heatmap'
+            : activeTab === 'gamma' ? 'Gamma Matrix'
             : 'Conviction'}
     />
 </div>
