@@ -40,3 +40,7 @@ export function positionBiasUrl(assetId, fileName) {
 export function heatmapUrl(assetId, contractKey) {
     return dataUrl(assetId, `${contractKey}_OIHeatmap.json`);
 }
+
+export function gammaHeatmapUrl(assetId, contractKey) {
+    return dataUrl(assetId, `${contractKey}_GammaHeatmap.json`);
+}

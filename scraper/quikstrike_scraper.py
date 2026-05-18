@@ -1757,6 +1757,52 @@ def _set_heatmap_strike_window(driver, strike_window):
     """, strike_window)
 
 
+def _set_heatmap_greek(driver, greek_label):
+    """
+    On the Heatmap → OI page, set the 'Greek:' dropdown by visible option label.
+
+    Match is case-insensitive substring on each option's trimmed text — so
+    'Gamma (1 Pct)' matches the QuikStrike option '* Gamma (1 Pct)'. Pass
+    'None' to revert the table to plain open-interest counts.
+
+    Triggers the ASP.NET postback if the selection changed.
+    """
+    return driver.execute_script("""
+        const target = (arguments[0] || '').trim().toLowerCase();
+        if (!target) return {ok: false, error: 'no-target'};
+
+        const selects = Array.from(document.querySelectorAll('select')).filter(sel => {
+            if (sel.offsetParent === null) return false;
+            const id = (sel.id || '').toLowerCase();
+            const name = (sel.name || '').toLowerCase();
+            return id.includes('greek') || name.includes('greek');
+        });
+        if (!selects.length) {
+            return {ok: false, error: 'greek-select-not-found'};
+        }
+
+        const dd = selects[0];
+        const options = Array.from(dd.options).map(opt => ({
+            value: opt.value,
+            text: (opt.textContent || '').trim()
+        }));
+        const match = options.find(opt => opt.text.toLowerCase().includes(target));
+        if (!match) {
+            return {ok: false, error: 'greek-option-not-found', target: target, options: options};
+        }
+        if (dd.value === match.value) {
+            return {ok: true, action: 'already-selected', value: dd.value, text: match.text};
+        }
+        dd.value = match.value;
+        if (typeof dd.onchange === 'function') {
+            dd.onchange();
+        } else {
+            dd.dispatchEvent(new Event('change', {bubbles: true}));
+        }
+        return {ok: true, action: 'changed', value: dd.value, text: match.text};
+    """, greek_label)
+
+
 def _extract_heatmap_table(driver):
     """
     Find the strike × date heatmap table on the page and extract it.
@@ -2006,6 +2052,64 @@ def scrape_oi_heatmap_phase(driver, classified, asset_id, output_dir):
             json.dump(payload, f, indent=2)
         print(f'[HEATMAP] ✅ Saved {prefix}_OIHeatmap.json '
               f'({len(data["dates"])} dates × {len(data["strikes"])} strikes)')
+
+        # Same expiration, swap Greek dropdown to 'Gamma (1 Pct)' and re-extract.
+        # QuikStrike re-renders the same strike × date table with gamma values
+        # in place of OI counts, so the extractor and JSON shape stay identical.
+        print(f'[HEATMAP] {prefix}: switching Greek → Gamma (1 Pct)...')
+        gamma_ok = False
+        try:
+            greek_res = _set_heatmap_greek(driver, 'Gamma (1 Pct)')
+            print(f'[HEATMAP] Greek: {greek_res}')
+            if greek_res and greek_res.get('ok'):
+                if greek_res.get('action') == 'changed':
+                    time.sleep(2.5)
+                    try:
+                        wait_ready(driver, timeout=15)
+                    except Exception:
+                        pass
+                    time.sleep(0.5)
+                gamma_ok = True
+        except Exception as e:
+            print(f'[HEATMAP] ⚠ Greek switch raised: {e}')
+
+        if gamma_ok:
+            gdata = _extract_heatmap_table(driver)
+            if not gdata or 'error' in gdata:
+                print(f'[HEATMAP] ⚠ Gamma extract failed for {prefix}: '
+                      f'{gdata.get("error") if gdata else "no-data"}')
+                save_debug(driver, f'heatmap_gamma_extract_fail_{prefix}', output_dir=output_dir)
+            else:
+                gpayload = {
+                    'asset': asset_id,
+                    'prefix': prefix,
+                    'contract': contract_text,
+                    'header': extract_header(driver) or '',
+                    'underlying': underlying,
+                    'greek': 'Gamma (1 Pct)',
+                    'dates': gdata['dates'],
+                    'strikes': gdata['strikes'],
+                    'scrapedAt': datetime.now(timezone.utc).isoformat(),
+                }
+                gpath = os.path.join(output_dir, f'{prefix}_GammaHeatmap.json')
+                with open(gpath, 'w', encoding='utf-8') as f:
+                    json.dump(gpayload, f, indent=2)
+                print(f'[HEATMAP] ✅ Saved {prefix}_GammaHeatmap.json '
+                      f'({len(gdata["dates"])} dates × {len(gdata["strikes"])} strikes)')
+
+            # Revert Greek back to 'None' so the next contract's OI extract
+            # reads OI counts, not gamma values.
+            try:
+                back = _set_heatmap_greek(driver, 'None')
+                if back and back.get('action') == 'changed':
+                    time.sleep(2.0)
+                    try:
+                        wait_ready(driver, timeout=15)
+                    except Exception:
+                        pass
+                    time.sleep(0.3)
+            except Exception as e:
+                print(f'[HEATMAP] ⚠ Greek revert raised: {e}')
 
     # Restore Vol2Vol view so the next asset's Vol2Vol scrape doesn't break.
     # QuikStrike preserves the active top tab across URL reloads, and the
@@ -2293,10 +2397,11 @@ def scrape_asset(driver, asset_id):
         # If friday == current and we got a current heatmap, mirror it
         if classified.get('friday_is_current'):
             import shutil
-            heatmap_src = os.path.join(output_dir, 'current_OIHeatmap.json')
-            if os.path.exists(heatmap_src):
-                shutil.copy(heatmap_src, os.path.join(output_dir, 'friday_OIHeatmap.json'))
-                print('[COPY] Mirrored current heatmap to friday')
+            for suffix in ('OIHeatmap', 'GammaHeatmap'):
+                src = os.path.join(output_dir, f'current_{suffix}.json')
+                if os.path.exists(src):
+                    shutil.copy(src, os.path.join(output_dir, f'friday_{suffix}.json'))
+                    print(f'[COPY] Mirrored current {suffix} to friday')
     except Exception as e:
         print(f'[HEATMAP] ⚠ Phase raised: {e}')
         import traceback

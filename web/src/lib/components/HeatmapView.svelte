@@ -9,7 +9,11 @@
         availableContracts = [],
         data = null,
         loading = false,
-        onChangeContract = (_key) => {}
+        onChangeContract = (_key) => {},
+        title = 'OI Heatmap',
+        valueDecimals = 0,
+        heatScale = 'log', // 'log' for OI counts, 'linear' for small floats like gamma
+        emptyFile = '_OIHeatmap.json'
     } = $props();
 
     const profile = $derived(ASSET_PROFILES[assetId]);
@@ -84,7 +88,10 @@
         if (value == null || !Number.isFinite(value) || value <= 0 || maxVal <= 0) {
             return 0;
         }
-        return Math.max(0, Math.min(1, Math.log10(value + 1) / Math.log10(maxVal + 1)));
+        const ratio = heatScale === 'linear'
+            ? value / maxVal
+            : Math.log10(value + 1) / Math.log10(maxVal + 1);
+        return Math.max(0, Math.min(1, ratio));
     }
 
     function strikeHeat(strike) {
@@ -122,7 +129,7 @@
         <div class="flex items-center gap-3 min-w-0">
             <span class="h-3 w-1 rounded-sm bg-primary"></span>
             <span class="text-[11px] font-semibold uppercase tracking-[0.16em] text-foreground">
-                OI Heatmap
+                {title}
             </span>
             <span class="truncate text-[10px] text-muted-foreground">
                 {#if data}
@@ -170,7 +177,7 @@
                 {/each}
             </div>
             <span class="font-mono">high</span>
-            <span class="ml-auto font-mono">max {fmtNumber(maxVal, 0)}</span>
+            <span class="ml-auto font-mono">max {fmtNumber(maxVal, valueDecimals)}</span>
         </div>
     {/if}
 
@@ -189,7 +196,7 @@
                     <div class="text-sm font-semibold text-foreground">No heatmap data</div>
                     <p class="mt-1 max-w-md text-xs text-muted-foreground">
                         Run the QuikStrike scraper to publish
-                        <span class="font-mono text-foreground">{contractKey}_OIHeatmap.json</span>.
+                        <span class="font-mono text-foreground">{contractKey}{emptyFile}</span>.
                     </p>
                 </div>
             </div>
@@ -213,7 +220,7 @@
                             </td>
                             {#each s.values as v}
                                 <td class={cn('hm-cell', oiClass(v))} style={oiStyle(v)}>
-                                    {v == null ? '' : fmtNumber(v, 0)}
+                                    {v == null ? '' : fmtNumber(v, valueDecimals)}
                                 </td>
                             {/each}
                         </tr>
