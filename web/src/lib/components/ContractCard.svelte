@@ -1,15 +1,11 @@
 <script>
     import Card from './ui/Card.svelte';
     import Badge from './ui/Badge.svelte';
-    import ScoreMeter from './ScoreMeter.svelte';
     import OILadder from './OILadder.svelte';
-    import { biasVariant, fmtNumber, fmtStrike, toneClasses } from '$lib/utils.js';
+    import { fmtNumber, fmtStrike, toneClasses } from '$lib/utils.js';
 
     let { contract = null } = $props();
 
-    const bias = $derived(biasVariant(contract?.position_bias?.label, contract?.position_bias?.score || 0));
-    const tones = $derived(toneClasses(bias.tone));
-    const score = $derived(contract?.position_bias?.score ?? 0);
     const totals = $derived(contract?.totals || {});
     const walls = $derived(contract?.walls || {});
     const pcr = $derived(totals.oi_put_call_ratio);
@@ -51,17 +47,6 @@
                 </span>
             </div>
         </header>
-
-        <!-- Bias row -->
-        <div class="flex items-center gap-3 min-w-0">
-            <Badge variant={bias.tone === 'up' ? 'up' : bias.tone === 'down' ? 'down' : 'muted'} class="text-[11px]">
-                {bias.label}
-            </Badge>
-            <span class="font-mono text-[11px] tabular-nums {tones.text} shrink-0">
-                {score > 0 ? '+' : ''}{fmtNumber(score, 2)}
-            </span>
-            <ScoreMeter {score} scale={20} />
-        </div>
 
         <!-- OI Ladder -->
         <OILadder positionMap={contract?.position_map} futurePrice={contract?.future_price} />

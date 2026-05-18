@@ -24,29 +24,6 @@ export function fmtK(n) {
     return String(Math.round(n));
 }
 
-export function fmtDateTime(iso) {
-    if (!iso) return '—';
-    try {
-        return new Date(iso).toLocaleString();
-    } catch {
-        return iso;
-    }
-}
-
-/**
- * Map a bias label/score to a visual variant.
- * @param {string | undefined} label
- * @param {number} score
- */
-export function biasVariant(label, score) {
-    const normalized = String(label || 'neutral').toLowerCase();
-    if (normalized.includes('bull')) return { tone: 'up', label: 'BULLISH' };
-    if (normalized.includes('bear')) return { tone: 'down', label: 'BEARISH' };
-    if (score > 0.5) return { tone: 'up', label: 'BULLISH' };
-    if (score < -0.5) return { tone: 'down', label: 'BEARISH' };
-    return { tone: 'muted', label: 'NEUTRAL' };
-}
-
 /**
  * Map "tone" to Tailwind text/bg classes.
  * @param {'up'|'down'|'muted'|'call'|'put'|'warn'|'mag'} tone

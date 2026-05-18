@@ -1,23 +1,21 @@
 <script>
     import Card from './ui/Card.svelte';
     import { cn, fmtNumber, fmtStrike } from '$lib/utils.js';
-    import { ASSET_PROFILES } from '$lib/config.js';
+    import { ASSET_PROFILES, CONTRACT_OPTIONS } from '$lib/config.js';
 
     let {
         assetId = 'gc',
         contractKey = $bindable('current'),
+        availableContracts = [],
         data = null,
         loading = false,
         onChangeContract = (_key) => {}
     } = $props();
 
     const profile = $derived(ASSET_PROFILES[assetId]);
-
-    const contracts = [
-        { key: 'current', label: 'Current' },
-        { key: 'friday',  label: 'Friday' },
-        { key: 'monthly', label: 'Monthly' }
-    ];
+    const contracts = $derived(
+        CONTRACT_OPTIONS.filter(({ key }) => availableContracts.includes(key))
+    );
 
     function pickContract(key) {
         contractKey = key;

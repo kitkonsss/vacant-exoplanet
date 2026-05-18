@@ -6,7 +6,7 @@
     import PositionBiasView from '$lib/components/PositionBiasView.svelte';
     import HeatmapView from '$lib/components/HeatmapView.svelte';
     import { fetchHeatmap, fetchPositionBias } from '$lib/data.js';
-    import { ASSET_PROFILES } from '$lib/config.js';
+    import { ASSET_PROFILES, DEFAULT_CONTRACT_KEY } from '$lib/config.js';
     import { LineChart, Grid3X3 } from 'lucide-svelte';
 
     let asset = $state('gc');
@@ -16,12 +16,15 @@
     let lastUpdate = $state('—');
 
     // Heatmap state
-    let heatmapContract = $state('current');
+    let heatmapContract = $state(DEFAULT_CONTRACT_KEY);
     /** @type {Record<string, any>} */
     let heatmapCache = $state({});
     let heatmapLoading = $state(false);
 
     const profile = $derived(ASSET_PROFILES[asset]);
+    const availableContractKeys = $derived(
+        (payload?.contracts || []).map((contract) => contract.contract_key)
+    );
 
     const tabs = [
         { key: 'analysis', label: 'Position Bias', tone: 'primary', icon: LineChart },
@@ -35,6 +38,23 @@
     );
 
     const currentHeatmap = $derived(heatmapCache[heatmapContract] ?? null);
+
+    $effect(() => {
+        const nextKey = availableContractKeys.includes(heatmapContract)
+            ? heatmapContract
+            : availableContractKeys.includes(DEFAULT_CONTRACT_KEY)
+                ? DEFAULT_CONTRACT_KEY
+                : availableContractKeys[0];
+
+        if (nextKey && nextKey !== heatmapContract) {
+            heatmapContract = nextKey;
+            if (activeTab === 'heatmap') {
+                untrack(() => {
+                    void ensureHeatmap(nextKey);
+                });
+            }
+        }
+    });
 
     async function load() {
         loading = true;
@@ -110,6 +130,7 @@
             <HeatmapView
                 assetId={asset}
                 bind:contractKey={heatmapContract}
+                availableContracts={availableContractKeys}
                 data={currentHeatmap}
                 loading={heatmapLoading}
                 onChangeContract={onHeatmapContract}

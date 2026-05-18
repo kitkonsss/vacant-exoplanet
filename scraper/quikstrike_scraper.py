@@ -594,10 +594,11 @@ def select_contract(driver, contract):
 
 def classify_contracts(contracts, asset_profile):
     """
-    Classify contracts into current/friday/monthly using asset-specific symbol patterns + DTE.
+    Classify contracts into current/tomorrow/friday/monthly using asset-specific symbol patterns + DTE.
 
     Rules:
       current = nearest non-expired daily/Monday contract (DTE >= 0.5); fallback to any active
+      tomorrow = next daily/Monday contract after current (skipped when next expiry is already Friday)
       friday  = nearest Friday (OG+digit) contract with DTE > current's DTE
       monthly = nearest Monthly (OG+letter) contract with DTE > friday's DTE (or > current's)
     """
@@ -605,16 +606,32 @@ def classify_contracts(contracts, asset_profile):
 
     monthly_check = asset_profile['monthly_check']
     friday_check = asset_profile['friday_check']
-    result = {'current': None, 'friday': None, 'monthly': None, 'friday_is_current': False}
+    is_daily = lambda sym: not friday_check(sym) and not monthly_check(sym)
+    result = {key: None for key in CONTRACT_KEYS}
+    result['friday_is_current'] = False
 
     with_dte = [c for c in contracts if c.get('dte') is not None]
     sorted_c = sorted(with_dte, key=lambda c: c['dte'])
 
     if not sorted_c:
         print('[CLASSIFY] No DTE data — using first contracts')
-        if len(contracts) >= 1: result['current'] = contracts[0]
-        if len(contracts) >= 2: result['friday'] = contracts[1]
-        if len(contracts) >= 3: result['monthly'] = contracts[2]
+        raw_dailies = [c for c in contracts if is_daily(c['text'])]
+        raw_fridays = [c for c in contracts if friday_check(c['text'])]
+        raw_monthlies = [c for c in contracts if monthly_check(c['text'])]
+
+        if raw_dailies:
+            result['current'] = raw_dailies[0]
+            result['tomorrow'] = next(
+                (c for c in raw_dailies if c['text'] != result['current']['text']),
+                None,
+            )
+        elif contracts:
+            result['current'] = contracts[0]
+
+        if raw_fridays:
+            result['friday'] = raw_fridays[0]
+        if raw_monthlies:
+            result['monthly'] = raw_monthlies[0]
         return result
 
     # Active = DTE >= MIN_DTE (not already expired/expiring today)
@@ -625,13 +642,22 @@ def classify_contracts(contracts, asset_profile):
         active = sorted_c
 
     # Current = prefer daily/Monday (not OG prefix) among active; else any active
-    dailies = [c for c in active if not friday_check(c['text']) and not monthly_check(c['text'])]
+    dailies = [c for c in active if is_daily(c['text'])]
     if dailies:
         result['current'] = dailies[0]
     else:
         result['current'] = active[0]
 
     current_dte = result['current']['dte']
+
+    # Tomorrow = next daily/Monday contract after current. This intentionally
+    # skips Friday/weeklies so Thursday does not duplicate the dedicated Friday slot.
+    future_dailies = [
+        c for c in dailies
+        if c['dte'] > current_dte and c['text'] != result['current']['text']
+    ]
+    if future_dailies:
+        result['tomorrow'] = future_dailies[0]
 
     # Friday = nearest OG+digit contract with DTE strictly > current's DTE
     fridays = [c for c in active if friday_check(c['text']) and c['dte'] > current_dte]
@@ -657,6 +683,7 @@ def classify_contracts(contracts, asset_profile):
 
     print(f'[CLASSIFY] Found {len(fridays)} Friday and {len(monthlies)} Monthly active contracts')
     print(f'[CLASSIFY] Current candidate: {result["current"].get("text", "?") if result["current"] else "None"} (DTE={result["current"].get("dte") if result["current"] else "?"})')
+    print(f'[CLASSIFY] Tomorrow candidate: {result["tomorrow"].get("text", "?") if result["tomorrow"] else "None"} (DTE={result["tomorrow"].get("dte") if result["tomorrow"] else "?"})')
     print(f'[CLASSIFY] Friday candidate:  {result["friday"].get("text", "?") if result["friday"] else "None"} (DTE={result["friday"].get("dte") if result["friday"] else "?"})')
     print(f'[CLASSIFY] Monthly candidate: {result["monthly"].get("text", "?") if result["monthly"] else "None"} (DTE={result["monthly"].get("dte") if result["monthly"] else "?"})')
 
@@ -955,8 +982,14 @@ def chart_to_text(chart_data, header_line, asset_id='gc'):
 # POSITION BIAS ANALYSIS (Vol2Vol -> position map, no trade setup)
 # ============================================================
 
-CONTRACT_KEYS = ('current', 'friday', 'monthly')
-POSITION_BIAS_VERSION = 1
+CONTRACT_KEYS = ('current', 'tomorrow', 'friday', 'monthly')
+CONTRACT_WEIGHTS = {
+    'current': 0.4,
+    'tomorrow': 0.2,
+    'friday': 0.2,
+    'monthly': 0.2,
+}
+POSITION_BIAS_VERSION = 2
 
 
 def _to_float(value, default=None):
@@ -1331,7 +1364,6 @@ def build_asset_position_bias(asset_id):
     if not contract_analyses:
         return None
 
-    weights = {'current': 0.45, 'friday': 0.25, 'monthly': 0.30}
     seen_contracts = set()
     weighted = []
     for item in contract_analyses:
@@ -1339,7 +1371,7 @@ def build_asset_position_bias(asset_id):
         if identity in seen_contracts:
             continue
         seen_contracts.add(identity)
-        weighted.append((item, weights.get(item['contract_key'], 0.2)))
+        weighted.append((item, CONTRACT_WEIGHTS.get(item['contract_key'], 0.2)))
 
     weight_sum = sum(w for _, w in weighted) or 1
     aggregate_score = round(sum(item['position_bias']['score'] * w for item, w in weighted) / weight_sum, 2)
@@ -1821,7 +1853,7 @@ def scrape_oi_heatmap_phase(driver, classified, asset_id, output_dir):
     Saves one {prefix}_OIHeatmap.json per contract. Non-fatal throughout —
     a failure on one step skips the rest of this phase cleanly.
     """
-    contracts = [(k, classified.get(k)) for k in ('current', 'friday', 'monthly')]
+    contracts = [(k, classified.get(k)) for k in CONTRACT_KEYS]
     contracts = [(k, c) for k, c in contracts if c and c.get('text')]
     if not contracts:
         print('[HEATMAP] No classified contracts — skipping heatmap phase')
@@ -2225,7 +2257,7 @@ def scrape_asset(driver, asset_id):
     classified = classify_contracts(contracts, profile)
 
     print(f'\n[PLAN] {profile["short"]} contract assignments:')
-    for k in ['current', 'friday', 'monthly']:
+    for k in CONTRACT_KEYS:
         c = classified.get(k)
         if c:
             print(f'  OK {k}: {c.get("text", c.get("value", "?"))}')
@@ -2233,7 +2265,7 @@ def scrape_asset(driver, asset_id):
             print(f'  -- {k}: NOT FOUND')
 
     # Scrape each contract type
-    for key in ['current', 'friday', 'monthly']:
+    for key in CONTRACT_KEYS:
         c = classified.get(key)
 
         if key == 'friday' and classified.get('friday_is_current'):

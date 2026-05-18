@@ -18,6 +18,15 @@ export const ASSET_PROFILES = {
     }
 };
 
+export const CONTRACT_OPTIONS = [
+    { key: 'current', label: 'Current' },
+    { key: 'tomorrow', label: 'Tomorrow' },
+    { key: 'friday', label: 'Friday' },
+    { key: 'monthly', label: 'Monthly' }
+];
+
+export const DEFAULT_CONTRACT_KEY = CONTRACT_OPTIONS[0].key;
+
 function dataUrl(assetId, fileName) {
     const profile = ASSET_PROFILES[assetId];
     const folder = profile?.dataFolder || 'data';
