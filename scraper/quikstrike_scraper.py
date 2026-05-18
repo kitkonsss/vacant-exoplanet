@@ -1807,66 +1807,120 @@ def _extract_heatmap_table(driver):
     """
     Find the strike × column heatmap/matrix table on the page and extract it.
 
-    QuikStrike renders this table in one of two layouts depending on which
-    tab/view is active:
+    Two layouts are handled:
 
-    1. PRODUCT (matrix) view — columns are option contracts spread across
-       expirations. Header structure:
-         row N-1: option contract codes  (e.g. 'G3MK6', 'OG4K6', 'OGM6')
-         row N:   DTE labels             (e.g. '0 DTE', '4 DTE', '8 DTE')
+    1. PRODUCT (matrix) view — strike × expiration. Each header cell looks
+       like ``<span>CODE<br><span>N</span> DTE</span>`` (e.g. "G3MK6" plus
+       inner span "0" plus " DTE"). textContent collapses these with no
+       separator ("G3MK60 DTE"), so we parse the DOM directly: the inner
+       <span>'s text is the DTE digit, the outer <span>'s leading text
+       node is the option code.
 
-    2. Single-expiration view — columns are recent trading days.
-         row N: full dates (e.g. '5/15/2026')
+    2. Single-expiration view — strike × historical day. Header cells are
+       just dates like ``5/15/2026`` — match the standard date pattern.
 
-    The extractor picks whichever pattern has more matches. In matrix mode
-    we combine the option code with the DTE into the column label
-    (e.g. 'G3MK6 0DTE') so the dashboard can display both pieces.
+    Data rows often have a strike cell with ``colspan=2`` while header
+    cells don't, so we expand both rows to a visual-column layout to
+    align them correctly.
 
-    On failure, return a summary of every visible table — including
-    text from the first three rows — for diagnosis.
+    On failure returns ``{error, tables: [...summary...]}`` for diagnosis.
     """
     return driver.execute_script("""
         const dateRe = /^\\s*\\d{1,2}[\\/\\-]\\d{1,2}([\\/\\-]\\d{2,4})?\\s*$/;
-        const dteRe  = /^\\s*\\d+\\s+DTE\\s*$/i;
+
+        // For matrix header cells: detect by inner <span> with digit text
+        // and trailing ' DTE'. Returns {code, dte} or null.
+        function parseMatrixHeader(cell) {
+            const innerSpan = cell.querySelector('span > span');
+            if (!innerSpan) return null;
+            const dte = (innerSpan.textContent || '').trim();
+            if (!/^\\d+$/.test(dte)) return null;
+            const outer = innerSpan.parentNode;
+            if (!outer) return null;
+            // The cell text must end with ' DTE' for this to be a
+            // matrix-style header cell (vs. just any nested span).
+            const full = (outer.textContent || '').trim();
+            if (!/\\bDTE\\s*$/i.test(full)) return null;
+            // Option code = text nodes of `outer` BEFORE the inner span.
+            let code = '';
+            for (const node of outer.childNodes) {
+                if (node === innerSpan) break;
+                if (node.nodeType === 3) code += node.textContent || '';
+                else if (node.nodeType === 1 && node !== innerSpan) {
+                    code += node.textContent || '';
+                }
+            }
+            return {code: code.trim(), dte: dte};
+        }
+
+        // Expand a row to one entry per VISUAL column (handles colspan).
+        // Each entry: {cell, text, isLeader} — only the first visual
+        // column for a colspanned cell has isLeader=true.
+        function expandRow(row) {
+            const out = [];
+            for (const cell of row.cells) {
+                const span = parseInt(cell.getAttribute('colspan') || '1', 10);
+                const text = (cell.textContent || '').trim();
+                for (let i = 0; i < span; i++) {
+                    out.push({cell: cell, text: text, isLeader: i === 0});
+                }
+            }
+            return out;
+        }
+
         const allTables = Array.from(document.querySelectorAll('table'))
             .filter(t => t.offsetParent !== null && t.rows && t.rows.length > 2);
 
-        function rowText(row) {
-            return Array.from(row.cells).map(c => (c.textContent || '').trim());
-        }
+        // For each candidate table, find the best header row.
+        // Header row = the row with the highest count of date-pattern OR
+        // matrix-pattern cells. Tie-broken in favor of matrix (since the
+        // matrix view is what the user actually wants when present).
         function findHeaderRow(table) {
-            // Search first 5 rows for one with >= 3 date-like OR DTE-like cells.
-            // Prefer the row with the higher count; if tied, prefer DTE row
-            // (matrix view) because that's the layout the user wants.
             const limit = Math.min(5, table.rows.length);
-            let bestRow = null;
+            let best = null;
             for (let i = 0; i < limit; i++) {
-                const cells = rowText(table.rows[i]);
-                const dateCount = cells.filter(s => dateRe.test(s)).length;
-                const dteCount  = cells.filter(s => dteRe.test(s)).length;
-                const kind = dteCount >= dateCount ? 'dte' : 'date';
-                const count = Math.max(dateCount, dteCount);
+                const expanded = expandRow(table.rows[i]);
+                let dateCount = 0;
+                let matrixCount = 0;
+                const labels = new Array(expanded.length).fill(null);
+                for (let v = 0; v < expanded.length; v++) {
+                    const e = expanded[v];
+                    if (!e.isLeader) continue;
+                    if (dateRe.test(e.text)) {
+                        dateCount++;
+                        labels[v] = {kind: 'date', label: e.text.trim()};
+                        continue;
+                    }
+                    const m = parseMatrixHeader(e.cell);
+                    if (m) {
+                        matrixCount++;
+                        labels[v] = {kind: 'matrix', label: m.code + ' ' + m.dte + ' DTE'};
+                    }
+                }
+                const kind = matrixCount >= dateCount ? 'matrix' : 'date';
+                const count = Math.max(matrixCount, dateCount);
                 if (count < 3) continue;
-                if (!bestRow || count > bestRow.count) {
-                    bestRow = {idx: i, cells: cells, count: count, kind: kind};
+                if (!best || count > best.count) {
+                    best = {idx: i, expanded: expanded, count: count, kind: kind, labels: labels};
                 }
             }
-            return bestRow;
+            return best;
         }
 
         const summary = [];
         let best = null, bestHeader = null, bestScore = 0;
         for (const t of allTables) {
             const hdr = findHeaderRow(t);
+            const sample = (r) => Array.from(r.cells).map(c => (c.textContent || '').trim()).slice(0, 8);
             summary.push({
                 rows: t.rows.length,
                 cols: t.rows[0].cells.length,
                 headerIdx: hdr ? hdr.idx : -1,
-                dateCols: hdr ? hdr.count : 0,
+                colCount: hdr ? hdr.count : 0,
                 kind: hdr ? hdr.kind : '',
-                row0: rowText(t.rows[0]).slice(0, 8),
-                row1: t.rows.length > 1 ? rowText(t.rows[1]).slice(0, 8) : [],
-                row2: t.rows.length > 2 ? rowText(t.rows[2]).slice(0, 8) : [],
+                row0: sample(t.rows[0]),
+                row1: t.rows.length > 1 ? sample(t.rows[1]) : [],
+                row2: t.rows.length > 2 ? sample(t.rows[2]) : [],
                 id: t.id || '',
                 cls: (typeof t.className === 'string') ? t.className.slice(0, 50) : ''
             });
@@ -1880,46 +1934,48 @@ def _extract_heatmap_table(driver):
             return {error: 'No table with date/DTE headers', tables: summary.slice(0, 10)};
         }
 
-        const rows = Array.from(best.rows);
-        const matcher = bestHeader.kind === 'dte' ? dteRe : dateRe;
-        const dateCols = [];
-        bestHeader.cells.forEach((txt, i) => { if (matcher.test(txt)) dateCols.push({i: i, label: txt.trim()}); });
-
-        // For matrix (DTE) layout, the row directly above usually holds the
-        // option contract code per column. Combine them into one label.
-        if (bestHeader.kind === 'dte' && bestHeader.idx > 0) {
-            const codeRow = rowText(rows[bestHeader.idx - 1]);
-            for (const dc of dateCols) {
-                const code = (codeRow[dc.i] || '').trim();
-                if (code) dc.label = code + ' ' + dc.label;
+        // Collect the visual-column indices of the data columns from the
+        // header row's leader cells that produced a label.
+        const dataCols = [];   // [{visualIdx, label}]
+        bestHeader.labels.forEach((info, v) => {
+            if (info) {
+                if (bestHeader.kind === 'matrix' && info.kind !== 'matrix') return;
+                if (bestHeader.kind === 'date' && info.kind !== 'date') return;
+                dataCols.push({visualIdx: v, label: info.label});
             }
-        }
+        });
 
+        const rows = Array.from(best.rows);
         const dataStart = bestHeader.idx + 1;
+        const firstDataVIdx = dataCols[0].visualIdx;
 
         const strikes = [];
         for (let r = dataStart; r < rows.length; r++) {
-            const cells = Array.from(rows[r].cells);
-            if (!cells.length) continue;
+            const dataExp = expandRow(rows[r]);
+            if (!dataExp.length) continue;
+            // Find strike: first leader cell with a parseable number,
+            // BEFORE the first data column.
             let strike = null;
-            for (let c = 0; c < dateCols[0].i + 1 && c < cells.length; c++) {
-                const t = (cells[c].textContent || '').replace(/[, ]/g, '').trim();
-                const v = parseFloat(t);
-                if (Number.isFinite(v)) { strike = v; break; }
+            for (let v = 0; v < firstDataVIdx && v < dataExp.length; v++) {
+                if (!dataExp[v].isLeader) continue;
+                const t = (dataExp[v].text || '').replace(/[, ]/g, '').trim();
+                const n = parseFloat(t);
+                if (Number.isFinite(n)) { strike = n; break; }
             }
             if (strike === null) continue;
             const values = [];
-            for (const dc of dateCols) {
-                const cell = cells[dc.i];
-                if (!cell) { values.push(null); continue; }
-                const t = (cell.textContent || '').replace(/[, ]/g, '').trim();
-                const v = parseFloat(t);
-                values.push(Number.isFinite(v) ? v : null);
+            for (const dc of dataCols) {
+                const entry = dataExp[dc.visualIdx];
+                if (!entry) { values.push(null); continue; }
+                const t = (entry.text || '').replace(/[, ]/g, '').trim();
+                const n = parseFloat(t);
+                values.push(Number.isFinite(n) ? n : null);
             }
             strikes.push({strike: strike, values: values});
         }
+
         return {
-            dates: dateCols.map(d => d.label),
+            dates: dataCols.map(d => d.label),
             strikes: strikes,
             headerRowIdx: bestHeader.idx,
             kind: bestHeader.kind
