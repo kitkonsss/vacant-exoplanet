@@ -68,15 +68,14 @@
      * bright cell) — flips at the tier where the green is too bright
      * for white text to stay readable.
      */
-    // [maxT, background, text, glowColor|null, glowSize]
-    // glowSize: [spread px, blur px, outer opacity, inset opacity]
     const TIERS = [
-        [0.30, 'hsl(0 0% 11%)',     'light', null,                  null],
-        [0.50, 'hsl(142 18% 16%)',  'light', null,                  null],
-        [0.70, 'hsl(142 32% 22%)',  'light', null,                  null],
-        [0.84, 'hsl(142 48% 30%)',  'light', null,                  null],
-        [0.94, 'hsl(142 62% 40%)',  'dark',  'hsl(142 62% 40%)',   [8, 2, 0.50, 0.40]],
-        [1.01, 'hsl(142 78% 52%)',  'dark',  'hsl(142 78% 52%)',   [14, 3, 0.75, 0.65]]
+        // [maxT, background, text]
+        [0.30, 'hsl(0 0% 11%)',     'light'],
+        [0.50, 'hsl(142 18% 16%)',  'light'],
+        [0.70, 'hsl(142 32% 22%)',  'light'],
+        [0.84, 'hsl(142 48% 30%)',  'light'],
+        [0.94, 'hsl(142 62% 40%)',  'dark'],
+        [1.01, 'hsl(142 78% 52%)',  'dark']
     ];
 
     const DARK_TEXT = 'hsl(0 0% 6%)';
@@ -87,20 +86,15 @@
         }
         const t = Math.log10(value + 1) / Math.log10(maxVal + 1);
         const clamped = Math.max(0, Math.min(1, t));
-        for (const [threshold, bg, mode, glow, gs] of TIERS) {
+        for (const [threshold, bg, mode] of TIERS) {
             if (clamped <= threshold) {
-                let style = mode === 'dark'
+                return mode === 'dark'
                     ? `background-color:${bg};color:${DARK_TEXT};font-weight:700;`
                     : `background-color:${bg};`;
-                if (glow && gs) {
-                    const [blur, spread, outerA, insetA] = gs;
-                    const c = (a) => glow.replace(')', ` / ${a})`);
-                    style += `box-shadow:0 0 ${blur}px ${spread}px ${c(outerA)},inset 0 0 0 1px ${c(insetA)};position:relative;z-index:1;`;
-                }
-                return style;
             }
         }
-        return '';
+        const last = TIERS[TIERS.length - 1];
+        return `background-color:${last[1]};color:${DARK_TEXT};font-weight:700;`;
     }
 </script>
 
