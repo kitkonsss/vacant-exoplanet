@@ -93,6 +93,13 @@ CME_EMAIL = os.environ.get('CME_EMAIL', '')
 CME_PASSWORD = os.environ.get('CME_PASSWORD', '')
 BASE_OUTPUT_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'data')
 DATA_REPO_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'atas-data')
+HEATMAP_STRIKE_WINDOW = os.environ.get('QS_HEATMAP_STRIKES', '50').strip()
+
+# QuikStrike's heatmap dropdown values are strikes above/below ATM,
+# so 15 => 31 rows, 25 => 51 rows, and 50 => 101 rows.
+if HEATMAP_STRIKE_WINDOW not in {'10', '15', '25', '50', '-1'}:
+    print(f'[WARN] Invalid QS_HEATMAP_STRIKES={HEATMAP_STRIKE_WINDOW!r} — falling back to 50')
+    HEATMAP_STRIKE_WINDOW = '50'
 
 # Which assets to scrape (can be overridden via CLI args)
 ASSETS_TO_SCRAPE = ['gc', 'nq']
@@ -1672,6 +1679,49 @@ def _ensure_call_put_combined(driver):
     """)
 
 
+def _set_heatmap_strike_window(driver, strike_window):
+    """
+    On the Heatmap → OI page, set the visible strike window around ATM.
+
+    QuikStrike exposes this as a simple <select> whose values represent the
+    number of strikes above and below ATM to render. For example, value 25
+    yields 51 total strike rows.
+    """
+    return driver.execute_script("""
+        const targetValue = arguments[0];
+        const selects = Array.from(document.querySelectorAll('select')).filter(sel => {
+            if (sel.offsetParent === null) return false;
+            const id = sel.id || '';
+            const name = sel.name || '';
+            return id.includes('ddlStrikes') || name.includes('ddlStrikes');
+        });
+
+        if (!selects.length) {
+            return {ok: false, error: 'strike-select-not-found'};
+        }
+
+        const target = selects[0];
+        const options = Array.from(target.options).map(opt => ({
+            value: opt.value,
+            text: (opt.textContent || '').trim()
+        }));
+        if (!options.some(opt => opt.value === targetValue)) {
+            return {ok: false, error: 'strike-option-not-found', current: target.value, options: options};
+        }
+        if (target.value === targetValue) {
+            return {ok: true, action: 'already-selected', value: target.value};
+        }
+
+        target.value = targetValue;
+        if (typeof target.onchange === 'function') {
+            target.onchange();
+        } else {
+            target.dispatchEvent(new Event('change', {bubbles: true}));
+        }
+        return {ok: true, action: 'changed', value: target.value};
+    """, strike_window)
+
+
 def _extract_heatmap_table(driver):
     """
     Find the strike × date heatmap table on the page and extract it.
@@ -1874,6 +1924,20 @@ def scrape_oi_heatmap_phase(driver, classified, asset_id, output_dir):
         except Exception:
             pass
         time.sleep(1.0)
+
+        print(f'[HEATMAP] Ensuring strike window is set to ±{HEATMAP_STRIKE_WINDOW}...')
+        try:
+            strike_res = _set_heatmap_strike_window(driver, HEATMAP_STRIKE_WINDOW)
+            print(f'[HEATMAP] Strike window: {strike_res}')
+            if strike_res and strike_res.get('action') == 'changed':
+                time.sleep(2.5)
+                try:
+                    wait_ready(driver, timeout=15)
+                except Exception:
+                    pass
+                time.sleep(0.5)
+        except Exception as e:
+            print(f'[HEATMAP] ⚠ Strike window change raised: {e}')
 
         data = _extract_heatmap_table(driver)
         if not data or 'error' in data:
