@@ -4,7 +4,7 @@
     import OILadder from './OILadder.svelte';
     import { fmtNumber, fmtStrike, toneClasses } from '$lib/utils.js';
 
-    let { contract = null } = $props();
+    let { contract = null, compact = false } = $props();
 
     const totals = $derived(contract?.totals || {});
     const walls = $derived(contract?.walls || {});
@@ -21,62 +21,62 @@
     const pcrTones = $derived(toneClasses(pcrTone(pcr)));
 </script>
 
-<Card class="overflow-hidden">
-    <div class="flex flex-col gap-4 p-5">
+<Card class="h-full overflow-hidden">
+    <div class={`flex h-full flex-col ${compact ? 'gap-3 p-4' : 'gap-4 p-5'}`}>
         <!-- Header row -->
         <header class="flex items-start justify-between gap-3 min-w-0">
             <div class="flex flex-col gap-1 min-w-0">
-                <div class="flex items-center gap-2">
-                    <Badge variant="muted">{contract?.contract_key?.toUpperCase() || '—'}</Badge>
+                <div class={`flex flex-wrap items-center ${compact ? 'gap-1.5' : 'gap-2'}`}>
+                    <Badge variant="muted" class={compact ? 'px-1.5 text-[9px]' : ''}>{contract?.contract_key?.toUpperCase() || '—'}</Badge>
                     {#if contract?.confidence}
-                        <Badge variant="outline">
+                        <Badge variant="outline" class={compact ? 'px-1.5 text-[9px]' : ''}>
                             {contract.confidence} conf.
                         </Badge>
                     {/if}
                 </div>
-                <span class="truncate font-mono text-xl font-semibold tracking-tight text-foreground">
+                <span class={`truncate font-mono font-semibold tracking-tight leading-none text-foreground ${compact ? 'text-lg' : 'text-xl'}`}>
                     {contract?.contract || '—'}
                 </span>
             </div>
             <div class="flex flex-col items-end gap-0.5 shrink-0">
-                <span class="font-mono text-[10px] tabular-nums text-muted-foreground">
+                <span class={`font-mono tabular-nums text-muted-foreground ${compact ? 'text-[9px]' : 'text-[10px]'}`}>
                     {fmtNumber(contract?.dte, 1)} DTE
                 </span>
-                <span class="font-mono text-base font-medium tabular-nums text-primary">
+                <span class={`font-mono font-medium tabular-nums text-primary ${compact ? 'text-sm' : 'text-base'}`}>
                     {fmtStrike(contract?.future_price)}
                 </span>
             </div>
         </header>
 
         <!-- OI Ladder -->
-        <OILadder positionMap={contract?.position_map} futurePrice={contract?.future_price} />
+        <OILadder positionMap={contract?.position_map} futurePrice={contract?.future_price} {compact} />
 
         <!-- Metrics row -->
-        <div class="grid grid-cols-3 gap-2">
-            <div class="rounded-md border border-border bg-background px-2.5 py-2">
-                <div class="mb-1 text-[9px] font-semibold uppercase tracking-widest text-muted-foreground">
+        <div class={`grid grid-cols-3 ${compact ? 'gap-1.5' : 'gap-2'}`}>
+            <div class={`rounded-md border border-border bg-background ${compact ? 'px-2 py-1.5' : 'px-2.5 py-2'}`}>
+                <div class={`font-semibold uppercase tracking-widest text-muted-foreground ${compact ? 'mb-0.5 text-[8px]' : 'mb-1 text-[9px]'}`}>
                     P/C Ratio
                 </div>
-                <div class="font-mono text-sm font-semibold tabular-nums {pcrTones.text}">
+                <div class={`font-mono font-semibold tabular-nums ${compact ? 'text-xs' : 'text-sm'} ${pcrTones.text}`}>
                     {fmtNumber(pcr, 2)}
                 </div>
             </div>
-            <div class="rounded-md border border-border bg-background px-2.5 py-2">
-                <div class="mb-1 text-[9px] font-semibold uppercase tracking-widest text-muted-foreground">
+            <div class={`rounded-md border border-border bg-background ${compact ? 'px-2 py-1.5' : 'px-2.5 py-2'}`}>
+                <div class={`font-semibold uppercase tracking-widest text-muted-foreground ${compact ? 'mb-0.5 text-[8px]' : 'mb-1 text-[9px]'}`}>
                     Call Wall
                 </div>
-                <div class="font-mono text-sm font-semibold tabular-nums text-call">
+                <div class={`font-mono font-semibold tabular-nums text-call ${compact ? 'text-xs' : 'text-sm'}`}>
                     {nearCall != null ? `+${fmtNumber(Math.abs(nearCall), 0)}` : '—'}
-                    <span class="ml-0.5 font-sans text-[10px] text-muted-foreground">pts</span>
+                    <span class={`ml-0.5 font-sans text-muted-foreground ${compact ? 'text-[9px]' : 'text-[10px]'}`}>pts</span>
                 </div>
             </div>
-            <div class="rounded-md border border-border bg-background px-2.5 py-2">
-                <div class="mb-1 text-[9px] font-semibold uppercase tracking-widest text-muted-foreground">
+            <div class={`rounded-md border border-border bg-background ${compact ? 'px-2 py-1.5' : 'px-2.5 py-2'}`}>
+                <div class={`font-semibold uppercase tracking-widest text-muted-foreground ${compact ? 'mb-0.5 text-[8px]' : 'mb-1 text-[9px]'}`}>
                     Put Wall
                 </div>
-                <div class="font-mono text-sm font-semibold tabular-nums text-put">
+                <div class={`font-mono font-semibold tabular-nums text-put ${compact ? 'text-xs' : 'text-sm'}`}>
                     {nearPut != null ? `${fmtNumber(Math.abs(nearPut), 0)}` : '—'}
-                    <span class="ml-0.5 font-sans text-[10px] text-muted-foreground">pts</span>
+                    <span class={`ml-0.5 font-sans text-muted-foreground ${compact ? 'text-[9px]' : 'text-[10px]'}`}>pts</span>
                 </div>
             </div>
         </div>
