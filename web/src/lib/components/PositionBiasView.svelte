@@ -41,7 +41,7 @@
     <Card class="relative overflow-hidden">
         <!-- top accent strip -->
         <div class="absolute inset-x-0 top-0 h-[2px]" style="background: {accentColor};"></div>
-        <div class="flex flex-wrap items-center gap-x-8 gap-y-5 p-5">
+        <div class="grid gap-5 p-5 xl:grid-cols-[auto_minmax(0,_1fr)_auto] xl:items-center">
             <div class="shrink-0">
                 <div class="flex items-center gap-2">
                     <span class="h-1.5 w-1.5 rounded-full" style="background: {accentColor};"></span>
@@ -54,7 +54,7 @@
                 </div>
             </div>
 
-            <div class="flex flex-1 min-w-[220px] flex-col gap-2">
+            <div class="flex min-w-0 flex-col gap-2">
                 <div class="flex justify-between text-[9px] font-semibold uppercase tracking-widest text-muted-foreground">
                     <span>Bearish</span>
                     <span>Neutral</span>
@@ -66,7 +66,7 @@
                 </div>
             </div>
 
-            <div class="flex shrink-0 flex-col items-end gap-2 text-right">
+            <div class="grid gap-3 text-left sm:grid-cols-2 xl:grid-cols-1 xl:justify-items-end xl:text-right">
                 <div>
                     <div class="text-[9px] font-semibold uppercase tracking-widest text-muted-foreground">
                         Contracts

@@ -28,8 +28,10 @@
         { key: 'heatmap',  label: 'OI Heatmap',    tone: 'mag',     icon: Grid3X3 }
     ];
 
-    const headerContract = $derived(
-        payload?.contracts?.find((c) => c.contract_key === 'current') || payload?.contracts?.[0]
+    const visibleContract = $derived(
+        payload?.contracts?.find(
+            (c) => c.contract_key === (activeTab === 'heatmap' ? heatmapContract : 'current')
+        ) || payload?.contracts?.[0]
     );
 
     const currentHeatmap = $derived(heatmapCache[heatmapContract] ?? null);
@@ -89,10 +91,10 @@
         bind:asset
         contract={profile.label}
         contractCode={activeTab === 'heatmap'
-            ? currentHeatmap?.contract || headerContract?.contract || ''
-            : headerContract?.contract || ''}
-        price={headerContract?.future_price}
-        dte={headerContract?.dte}
+            ? currentHeatmap?.contract || visibleContract?.contract || ''
+            : visibleContract?.contract || ''}
+        price={visibleContract?.future_price}
+        dte={visibleContract?.dte}
         {lastUpdate}
         onRefresh={refresh}
     />
@@ -118,7 +120,7 @@
     <AppFooter
         contract={activeTab === 'heatmap'
             ? currentHeatmap?.contract || '—'
-            : headerContract?.contract || '—'}
+            : visibleContract?.contract || '—'}
         dataType={activeTab === 'analysis' ? 'Position Bias' : 'OI Heatmap'}
     />
 </div>
