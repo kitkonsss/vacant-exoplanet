@@ -55,9 +55,11 @@ fi
 # ── Commit & Push (data/ includes data/nq/ for NQ) ──
 cd "$REPO_DIR"
 if ! git diff --quiet data/; then
+    BRANCH="$(git rev-parse --abbrev-ref HEAD)"
     git add data/
     git commit -m "auto-update data $(date '+%Y-%m-%d %H:%M') [skip ci]" --quiet
-    git push --quiet 2>> "$LOG_FILE"
+    git pull --rebase --quiet origin "$BRANCH" 2>> "$LOG_FILE"
+    git push --quiet origin HEAD:"$BRANCH" 2>> "$LOG_FILE"
     echo "[$(date '+%H:%M:%S')] ✅ Pushed data update" >> "$LOG_FILE"
 else
     echo "[$(date '+%H:%M:%S')] No changes in data/" >> "$LOG_FILE"

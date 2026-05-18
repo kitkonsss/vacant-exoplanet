@@ -39,28 +39,26 @@
 
     const currentHeatmap = $derived(heatmapCache[heatmapContract] ?? null);
 
-    $effect(() => {
-        const nextKey = availableContractKeys.includes(heatmapContract)
-            ? heatmapContract
-            : availableContractKeys.includes(DEFAULT_CONTRACT_KEY)
-                ? DEFAULT_CONTRACT_KEY
-                : availableContractKeys[0];
-
-        if (nextKey && nextKey !== heatmapContract) {
-            heatmapContract = nextKey;
-            if (activeTab === 'heatmap') {
-                untrack(() => {
-                    void ensureHeatmap(nextKey);
-                });
-            }
-        }
-    });
+    function resolveContractKey(contractKeys, preferredKey = heatmapContract) {
+        if (!contractKeys.length) return null;
+        if (contractKeys.includes(preferredKey)) return preferredKey;
+        if (contractKeys.includes(DEFAULT_CONTRACT_KEY)) return DEFAULT_CONTRACT_KEY;
+        return contractKeys[0];
+    }
 
     async function load() {
         loading = true;
         try {
-            payload = await fetchPositionBias(asset);
+            const nextPayload = await fetchPositionBias(asset);
+            const nextContractKeys = (nextPayload?.contracts || []).map((contract) => contract.contract_key);
+            const nextKey = resolveContractKey(nextContractKeys);
+
+            payload = nextPayload;
+            if (nextKey && nextKey !== heatmapContract) {
+                heatmapContract = nextKey;
+            }
             lastUpdate = new Date().toLocaleTimeString();
+            return nextKey;
         } finally {
             loading = false;
         }
@@ -81,12 +79,20 @@
 
     async function refresh() {
         heatmapCache = {};
-        await load();
-        if (activeTab === 'heatmap') await ensureHeatmap(heatmapContract);
+        const nextKey = await load();
+        if (activeTab === 'heatmap' && nextKey) await ensureHeatmap(nextKey);
     }
 
     function onTabChange(key) {
-        if (key === 'heatmap') void ensureHeatmap(heatmapContract);
+        if (key !== 'heatmap') return;
+
+        const nextKey = resolveContractKey(availableContractKeys);
+        if (!nextKey) return;
+
+        if (nextKey !== heatmapContract) {
+            heatmapContract = nextKey;
+        }
+        void ensureHeatmap(nextKey);
     }
 
     function onHeatmapContract(key) {
@@ -100,8 +106,11 @@
         asset; // dep
         untrack(() => {
             heatmapCache = {};
-            void load();
-            if (activeTab === 'heatmap') void ensureHeatmap(heatmapContract);
+            void load().then((nextKey) => {
+                if (activeTab === 'heatmap' && nextKey) {
+                    void ensureHeatmap(nextKey);
+                }
+            });
         });
     });
 </script>
