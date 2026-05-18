@@ -5,7 +5,6 @@
     let { payload = null, loading = false } = $props();
 
     const contracts = $derived(payload?.contracts || []);
-    const compactCards = $derived(contracts.length >= 4);
 </script>
 
 {#if loading}
@@ -23,9 +22,9 @@
         </p>
     </Card>
 {:else}
-    <div class={`grid grid-cols-1 gap-4 md:grid-cols-2 ${compactCards ? 'xl:grid-cols-4 xl:gap-3' : 'xl:grid-cols-3'}`}>
+    <div class="grid grid-cols-1 gap-4 md:grid-cols-2">
         {#each contracts as contract (contract.contract_key)}
-            <ContractCard {contract} compact={compactCards} />
+            <ContractCard {contract} />
         {/each}
     </div>
 {/if}
