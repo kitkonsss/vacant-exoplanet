@@ -79,13 +79,29 @@
     ];
 
     const DARK_TEXT = 'hsl(0 0% 6%)';
+    const WALL_HEAT = 0.92;
+    const HOT_STRIKE_HEAT = 0.80;
+
+    function heatRatio(value) {
+        if (value == null || !Number.isFinite(value) || value <= 0 || maxVal <= 0) {
+            return 0;
+        }
+        return Math.max(0, Math.min(1, Math.log10(value + 1) / Math.log10(maxVal + 1)));
+    }
+
+    function strikeHeat(strike) {
+        let heat = 0;
+        for (const v of strike.values || []) {
+            heat = Math.max(heat, heatRatio(v));
+        }
+        return heat;
+    }
 
     function oiStyle(value) {
-        if (value == null || !Number.isFinite(value) || value <= 0 || maxVal <= 0) {
+        const clamped = heatRatio(value);
+        if (clamped <= 0) {
             return '';
         }
-        const t = Math.log10(value + 1) / Math.log10(maxVal + 1);
-        const clamped = Math.max(0, Math.min(1, t));
         for (const [threshold, bg, mode] of TIERS) {
             if (clamped <= threshold) {
                 return mode === 'dark'
@@ -95,6 +111,10 @@
         }
         const last = TIERS[TIERS.length - 1];
         return `background-color:${last[1]};color:${DARK_TEXT};font-weight:700;`;
+    }
+
+    function oiClass(value) {
+        return heatRatio(value) >= WALL_HEAT ? 'hm-cell-wall' : '';
     }
 </script>
 
@@ -188,12 +208,13 @@
                 <tbody>
                     {#each visibleStrikes as s, rowIdx (s.strike)}
                         {@const isATM = rowIdx === atmIdx}
-                        <tr class={cn('hm-row', isATM && 'hm-row-atm')}>
-                            <td class={cn('hm-strike', isATM && 'hm-strike-atm')}>
+                        {@const isHotStrike = strikeHeat(s) >= HOT_STRIKE_HEAT}
+                        <tr class={cn('hm-row', isATM && 'hm-row-atm', isHotStrike && 'hm-row-hot')}>
+                            <td class={cn('hm-strike', isATM && 'hm-strike-atm', isHotStrike && 'hm-strike-hot')}>
                                 {fmtStrike(s.strike)}
                             </td>
                             {#each s.values as v}
-                                <td class="hm-cell" style={oiStyle(v)}>
+                                <td class={cn('hm-cell', oiClass(v))} style={oiStyle(v)}>
                                     {v == null ? '' : fmtNumber(v, 0)}
                                 </td>
                             {/each}
@@ -265,6 +286,7 @@
     }
 
     .hm-cell {
+        position: relative;
         padding: 4px 8px;
         text-align: right;
         min-width: 70px;
@@ -276,10 +298,41 @@
         transition: filter 80ms ease;
     }
 
+    .hm-row-hot .hm-cell {
+        border-top: 1px solid hsl(142 86% 64%);
+        border-bottom: 1px solid hsl(142 86% 64%);
+    }
+
+    .hm-strike-hot:not(.hm-strike-atm) {
+        background: hsl(142 48% 18%);
+        color: hsl(142 86% 70%);
+        text-shadow: 0 0 10px hsl(142 86% 56%);
+    }
+
+    .hm-cell-wall {
+        z-index: 1;
+        outline: 1px solid hsl(142 92% 72%);
+        outline-offset: -2px;
+        box-shadow:
+            inset 0 0 0 1px hsl(142 92% 72%),
+            inset 0 0 14px hsl(142 86% 30%),
+            0 0 12px hsl(142 86% 42%);
+        text-shadow: 0 0 7px hsl(0 0% 100%);
+    }
+
     .hm-row-atm .hm-cell {
         box-shadow:
             inset 0 2px 0 hsl(var(--primary)),
             inset 0 -2px 0 hsl(var(--primary));
+    }
+
+    .hm-row-atm .hm-cell-wall {
+        box-shadow:
+            inset 0 2px 0 hsl(var(--primary)),
+            inset 0 -2px 0 hsl(var(--primary)),
+            inset 0 0 0 1px hsl(142 92% 72%),
+            inset 0 0 14px hsl(142 86% 30%),
+            0 0 12px hsl(142 86% 42%);
     }
 
     .hm-row:hover .hm-cell {
