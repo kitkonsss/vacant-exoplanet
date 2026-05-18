@@ -4,9 +4,15 @@
     let { positionMap = [], futurePrice = null, compact = false } = $props();
 
     const sorted = $derived([...(positionMap || [])].sort((a, b) => b.strike - a.strike));
+    function callTotal(l) {
+        return (l.call_oi || 0) + (l.call_volume || 0);
+    }
+    function putTotal(l) {
+        return (l.put_oi || 0) + (l.put_volume || 0);
+    }
     const maxOI = $derived(
         Math.max(
-            ...sorted.flatMap((l) => [l.call_oi || 0, l.put_oi || 0]),
+            ...sorted.flatMap((l) => [callTotal(l), putTotal(l)]),
             1
         )
     );
@@ -35,9 +41,9 @@
             class={`grid items-center border-b border-border font-mono font-semibold uppercase tracking-widest text-muted-foreground ${compact ? 'gap-1.5 px-2.5 pb-1 text-[8px]' : 'gap-2 px-3 pb-1.5 text-[9px]'}`}
             style={`grid-template-columns: 1fr ${strikeColumnWidth} 1fr;`}
         >
-            <span class="text-left">Put OI</span>
+            <span class="text-left">Put</span>
             <span class="text-center">Strike</span>
-            <span class="text-right">Call OI</span>
+            <span class="text-right">Call</span>
         </div>
 
         {#each sorted as lv, idx (lv.strike + '-' + idx)}
@@ -67,10 +73,10 @@
                 <!-- Put side -->
                 <div class={`flex items-center min-w-0 ${compact ? 'gap-1.5' : 'gap-2'}`}>
                     <span class={`shrink-0 text-right font-mono tabular-nums text-muted-foreground ${compact ? 'text-[9px]' : 'text-[10px]'}`} style={`min-width:${oiNumberWidth}`}>
-                        {fmtK(lv.put_oi)}
+                        {fmtK(putTotal(lv))}
                     </span>
                     <div class={`flex flex-1 justify-end overflow-hidden rounded-sm bg-muted ${compact ? 'h-1' : 'h-1.5'}`}>
-                        <div class="h-full rounded-sm bg-put" style="width:{pctOf(lv.put_oi)}%"></div>
+                        <div class="h-full rounded-sm bg-put" style="width:{pctOf(putTotal(lv))}%"></div>
                     </div>
                 </div>
 
@@ -84,10 +90,10 @@
                 <!-- Call side -->
                 <div class={`flex items-center min-w-0 ${compact ? 'gap-1.5' : 'gap-2'}`}>
                     <div class={`flex flex-1 justify-start overflow-hidden rounded-sm bg-muted ${compact ? 'h-1' : 'h-1.5'}`}>
-                        <div class="h-full rounded-sm bg-call" style="width:{pctOf(lv.call_oi)}%"></div>
+                        <div class="h-full rounded-sm bg-call" style="width:{pctOf(callTotal(lv))}%"></div>
                     </div>
                     <span class={`shrink-0 text-left font-mono tabular-nums text-muted-foreground ${compact ? 'text-[9px]' : 'text-[10px]'}`} style={`min-width:${oiNumberWidth}`}>
-                        {fmtK(lv.call_oi)}
+                        {fmtK(callTotal(lv))}
                     </span>
                 </div>
             </div>
