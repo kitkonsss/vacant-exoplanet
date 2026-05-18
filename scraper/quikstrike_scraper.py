@@ -597,12 +597,15 @@ def classify_contracts(contracts, asset_profile):
     Classify contracts into current/tomorrow/friday/monthly using asset-specific symbol patterns + DTE.
 
     Rules:
-      current = nearest non-expired daily/Monday contract (DTE >= 0.5); fallback to any active
+      current = nearest non-expired daily/Monday contract (DTE >= 0); fallback to any active
       tomorrow = next daily/Monday contract after current (skipped when next expiry is already Friday)
       friday  = nearest Friday (OG+digit) contract with DTE > current's DTE
       monthly = nearest Monthly (OG+letter) contract with DTE > friday's DTE (or > current's)
     """
-    MIN_DTE = 0.5  # contracts expiring in less than half a day are considered expired
+    # Skip contracts QuikStrike reports as already expired (DTE < 0).
+    # We keep DTE >= 0 so the day-of-expiry contract is still considered "current"
+    # while it is trading (e.g. G3MK6 with 0.4 DTE on its expiration day).
+    MIN_DTE = 0.1
 
     monthly_check = asset_profile['monthly_check']
     friday_check = asset_profile['friday_check']
