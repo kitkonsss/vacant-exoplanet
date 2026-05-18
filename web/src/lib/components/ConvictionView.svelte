@@ -2,30 +2,17 @@
     import Card from './ui/Card.svelte';
     import Badge from './ui/Badge.svelte';
     import { cn, fmtNumber, fmtStrike, fmtK, toneClasses } from '$lib/utils.js';
-    import { ASSET_PROFILES, CONTRACT_OPTIONS } from '$lib/config.js';
-    import { analyzeConviction, TAG_META } from '$lib/conviction.js';
+    import { CONTRACT_OPTIONS } from '$lib/config.js';
+    import { analyzeConvictionMulti, TAG_META, VERDICT_META } from '$lib/conviction.js';
 
     let {
-        assetId = 'gc',
-        contractKey = $bindable('current'),
-        availableContracts = [],
-        bias = null,
-        heatmap = null,
-        loading = false,
-        onChangeContract = (_key) => {}
+        contracts = [],   // [{ key, dte, bias, heatmap }, ...]
+        loading = false
     } = $props();
 
-    const profile = $derived(ASSET_PROFILES[assetId]);
-    const contractPills = $derived(
-        CONTRACT_OPTIONS.filter(({ key }) => availableContracts.includes(key))
-    );
-
-    const analysis = $derived(analyzeConviction({ bias, heatmap }));
-
-    function pickContract(key) {
-        contractKey = key;
-        onChangeContract(key);
-    }
+    const analysis = $derived(analyzeConvictionMulti({ contractsData: contracts }));
+    const TENOR_KEYS = CONTRACT_OPTIONS.map((c) => c.key);
+    const TENOR_LABELS = Object.fromEntries(CONTRACT_OPTIONS.map((c) => [c.key, c.label]));
 
     function fmtPct(value) {
         if (value == null) return '—';
@@ -45,16 +32,7 @@
         if (points == null || !Number.isFinite(points)) return '—';
         const sign = points >= 0 ? '+' : '−';
         const pct = underlying > 0 ? (Math.abs(points) / underlying) * 100 : 0;
-        return `${sign}${fmtNumber(Math.abs(points), 0)} pts (${pct.toFixed(1)}%)`;
-    }
-
-    function deltaTone(deltaPct, tag) {
-        if (tag === 'fading') return 'down';
-        if (!Number.isFinite(deltaPct)) return 'warn';
-        if (deltaPct >= 0.5) return 'warn';
-        if (deltaPct > 0) return 'up';
-        if (deltaPct < -0.1) return 'down';
-        return 'muted';
+        return `${sign}${fmtNumber(Math.abs(points), 0)} (${pct.toFixed(1)}%)`;
     }
 
     function sideTone(side) {
@@ -63,14 +41,19 @@
         return 'muted';
     }
 
-    function verdictMeta(v) {
-        switch (v) {
-            case 'bullish':       return { label: 'Bullish',       tone: 'up' };
-            case 'lean_bullish':  return { label: 'Lean Bullish',  tone: 'up' };
-            case 'bearish':       return { label: 'Bearish',       tone: 'down' };
-            case 'lean_bearish':  return { label: 'Lean Bearish',  tone: 'down' };
-            default:              return { label: 'Neutral',       tone: 'muted' };
+    function confidenceMeta(c) {
+        switch (c) {
+            case 'high':   return { label: 'High',   tone: 'up' };
+            case 'medium': return { label: 'Medium', tone: 'warn' };
+            default:       return { label: 'Low',    tone: 'muted' };
         }
+    }
+
+    function bestTag(tags) {
+        // priority order — show the strongest signal as the row tag
+        const priority = ['growing_wall', 'emerging', 'fresh', 'building', 'established', 'fading', 'normal'];
+        for (const p of priority) if (tags.includes(p)) return p;
+        return 'normal';
     }
 </script>
 
@@ -84,35 +67,11 @@
             </span>
             <span class="truncate text-[10px] text-muted-foreground">
                 {#if analysis}
-                    {analysis.rows.length} signals
-                    {#if analysis.contract} · <span class="font-mono">{analysis.contract}</span>{/if}
+                    aggregated across {analysis.verdict.totalTenors} tenors · underlying <span class="font-mono">{fmtStrike(analysis.underlying)}</span>
                 {:else if !loading}
                     No data
                 {/if}
             </span>
-        </div>
-
-        <div class="flex items-center gap-2">
-            <span class="text-[9px] font-semibold uppercase tracking-widest text-muted-foreground">
-                Contract
-            </span>
-            <div class="flex gap-1">
-                {#each contractPills as c}
-                    {@const isActive = c.key === contractKey}
-                    <button
-                        type="button"
-                        onclick={() => pickContract(c.key)}
-                        class={cn(
-                            'rounded-md border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider transition-colors',
-                            isActive
-                                ? 'border-warn bg-warn text-background'
-                                : 'border-border bg-surface text-muted-foreground hover:bg-surface-elevated hover:text-foreground'
-                        )}
-                    >
-                        {c.label}
-                    </button>
-                {/each}
-            </div>
         </div>
     </div>
 
@@ -125,127 +84,264 @@
                     <span class="text-sm">Loading conviction…</span>
                 </div>
             </div>
-        {:else if !analysis || analysis.rows.length === 0}
+        {:else if !analysis || analysis.walls.length === 0}
             <div class="flex h-64 items-center justify-center">
                 <div class="text-center">
                     <div class="text-sm font-semibold text-foreground">No conviction signals</div>
                     <p class="mt-1 max-w-md text-xs text-muted-foreground">
-                        Need both <span class="font-mono text-foreground">{contractKey}_PositionBias.json</span>
-                        and <span class="font-mono text-foreground">{contractKey}_OIHeatmap.json</span> to compute growth & dominance.
+                        Need PositionBias + OIHeatmap JSON for at least one contract.
                     </p>
                 </div>
             </div>
         {:else}
-            {@const v = verdictMeta(analysis.summary.verdict)}
+            {@const v = VERDICT_META[analysis.verdict.label] || VERDICT_META.neutral}
             {@const vTones = toneClasses(v.tone)}
+            {@const conf = confidenceMeta(analysis.verdict.confidence)}
 
-            <!-- Summary strip -->
-            <div class="grid grid-cols-2 gap-3 border-b border-border bg-surface px-4 py-3 md:grid-cols-4">
-                <div class="rounded-md border border-border bg-background px-3 py-2">
-                    <div class="text-[9px] font-semibold uppercase tracking-widest text-muted-foreground">
-                        Conviction Verdict
+            <!-- ROW 1: verdict + insights -->
+            <div class="grid gap-3 border-b border-border bg-surface px-4 py-3 lg:grid-cols-3">
+                <!-- Big verdict card -->
+                <div class={`rounded-md border ${vTones.border} ${vTones.bg} px-4 py-3`}>
+                    <div class="flex items-baseline justify-between gap-2">
+                        <div class="text-[9px] font-semibold uppercase tracking-widest text-muted-foreground">
+                            Overall Verdict
+                        </div>
+                        <Badge variant={conf.tone}>{conf.label} conf.</Badge>
                     </div>
-                    <div class={`mt-1 font-mono text-base font-semibold ${vTones.text}`}>
+                    <div class={`mt-1 font-mono text-2xl font-semibold ${vTones.text}`}>
                         {v.label}
                     </div>
-                    <div class="mt-0.5 text-[10px] text-muted-foreground">
-                        score {fmtNumber(analysis.summary.score, 0)} · {analysis.summary.count} strikes
+                    <div class="mt-1 text-[10px] text-muted-foreground">
+                        score <span class="font-mono">{fmtNumber(analysis.verdict.score, 0)}</span>
+                        · {analysis.verdict.agreement}/{analysis.verdict.totalTenors} tenors aligned
                     </div>
+                    <!-- Bull vs Bear bar -->
+                    {#if analysis.verdict.bullish + analysis.verdict.bearish > 0}
+                        {@const total = analysis.verdict.bullish + analysis.verdict.bearish}
+                        {@const bullPct = (analysis.verdict.bullish / total) * 100}
+                        <div class="mt-2 flex h-2 overflow-hidden rounded-sm border border-border bg-muted">
+                            <div class="bg-up" style="width:{bullPct}%"></div>
+                            <div class="bg-down" style="width:{100 - bullPct}%"></div>
+                        </div>
+                        <div class="mt-1 flex justify-between text-[9px] font-mono text-muted-foreground">
+                            <span>support {fmtNumber(analysis.verdict.bullish, 0)}</span>
+                            <span>resistance {fmtNumber(analysis.verdict.bearish, 0)}</span>
+                        </div>
+                    {/if}
                 </div>
 
-                <div class="rounded-md border border-border bg-background px-3 py-2">
+                <!-- Insights bullets -->
+                <div class="lg:col-span-2 rounded-md border border-border bg-background px-4 py-3">
                     <div class="text-[9px] font-semibold uppercase tracking-widest text-muted-foreground">
-                        Bullish Support
+                        Key Insights
                     </div>
-                    <div class="mt-1 font-mono text-base font-semibold text-up tabular-nums">
-                        {fmtNumber(analysis.summary.bullish, 0)}
-                    </div>
-                    <div class="mt-0.5 text-[10px] text-muted-foreground">
-                        put walls below price
-                    </div>
-                </div>
-
-                <div class="rounded-md border border-border bg-background px-3 py-2">
-                    <div class="text-[9px] font-semibold uppercase tracking-widest text-muted-foreground">
-                        Bearish Resistance
-                    </div>
-                    <div class="mt-1 font-mono text-base font-semibold text-down tabular-nums">
-                        {fmtNumber(analysis.summary.bearish, 0)}
-                    </div>
-                    <div class="mt-0.5 text-[10px] text-muted-foreground">
-                        call walls above price
-                    </div>
-                </div>
-
-                <div class="rounded-md border border-border bg-background px-3 py-2">
-                    <div class="text-[9px] font-semibold uppercase tracking-widest text-muted-foreground">
-                        Underlying
-                    </div>
-                    <div class="mt-1 font-mono text-base font-semibold text-primary tabular-nums">
-                        {fmtStrike(analysis.underlying)}
-                    </div>
-                    <div class="mt-0.5 text-[10px] text-muted-foreground">
-                        ranked by composite score
-                    </div>
+                    <ul class="mt-2 space-y-1.5 text-[12px] text-foreground">
+                        {#each analysis.insights as ins}
+                            <li class="flex gap-2">
+                                <span class="mt-1 inline-block h-1 w-1 shrink-0 rounded-full bg-warn"></span>
+                                <span>{ins}</span>
+                            </li>
+                        {/each}
+                    </ul>
                 </div>
             </div>
 
-            <!-- Table -->
-            <table class="cv-table">
-                <thead>
-                    <tr>
-                        <th class="cv-h cv-h-strike">Strike</th>
-                        <th class="cv-h">Side</th>
-                        <th class="cv-h cv-h-tag">Signal</th>
-                        <th class="cv-h cv-h-num">Latest OI</th>
-                        <th class="cv-h cv-h-num">Prev Avg</th>
-                        <th class="cv-h cv-h-num">Δ%</th>
-                        <th class="cv-h cv-h-num">Dominance</th>
-                        <th class="cv-h cv-h-num">Distance</th>
-                        <th class="cv-h cv-h-num">Call / Put</th>
-                        <th class="cv-h cv-h-score">Score</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {#each analysis.rows as row (row.strike)}
-                        {@const meta = TAG_META[row.tag] || TAG_META.normal}
-                        {@const sTones = toneClasses(sideTone(row.side))}
-                        {@const dTones = toneClasses(deltaTone(row.deltaPct, row.tag))}
-                        {@const pct = Math.min(100, Math.round((row.score / Math.max(analysis.maxScore, 1)) * 100))}
-                        <tr class="cv-row">
-                            <td class="cv-strike">{fmtStrike(row.strike)}</td>
-                            <td class={`cv-side ${sTones.text}`}>{row.side.toUpperCase()}</td>
-                            <td class="cv-tag">
-                                <Badge variant={meta.tone}>{meta.label}</Badge>
-                            </td>
-                            <td class="cv-num cv-latest">{fmtNumber(row.latest, 0)}</td>
-                            <td class="cv-num cv-muted">{fmtNumber(row.prevAvg, row.prevAvg < 10 ? 1 : 0)}</td>
-                            <td class={`cv-num ${dTones.text}`}>{fmtPct(row.deltaPct)}</td>
-                            <td class="cv-num">{fmtMult(row.dominance)}</td>
-                            <td class="cv-num cv-muted">{fmtDistance(row.distance, analysis.underlying)}</td>
-                            <td class="cv-num cv-muted">
-                                {#if row.callOi != null && row.putOi != null}
-                                    <span class="text-call">{fmtK(row.callOi) || '0'}</span>
-                                    <span class="text-muted-foreground"> / </span>
-                                    <span class="text-put">{fmtK(row.putOi) || '0'}</span>
-                                {:else}
-                                    —
-                                {/if}
-                            </td>
-                            <td class="cv-score">
-                                <div class="cv-bar">
-                                    <div class="cv-bar-fill" style="width:{pct}%"></div>
-                                </div>
-                                <span class="cv-score-num">{fmtNumber(row.score, 0)}</span>
-                            </td>
-                        </tr>
+            <!-- ROW 2: Term Structure -->
+            <div class="border-b border-border bg-background px-4 py-3">
+                <div class="mb-2 flex items-center gap-2">
+                    <span class="text-[9px] font-semibold uppercase tracking-widest text-muted-foreground">
+                        Term Structure
+                    </span>
+                    <span class="text-[10px] text-muted-foreground">
+                        per-contract bias score
+                    </span>
+                </div>
+                <div class="grid grid-cols-2 gap-2 md:grid-cols-4">
+                    {#each analysis.tenorBias as t}
+                        {@const tv = VERDICT_META[t.verdict] || VERDICT_META.neutral}
+                        {@const tones = toneClasses(tv.tone)}
+                        {@const magnitude = Math.min(100, Math.abs(t.score))}
+                        <div class={`rounded-md border ${tones.border} bg-background px-3 py-2`}>
+                            <div class="flex items-baseline justify-between">
+                                <span class="font-mono text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">
+                                    {TENOR_LABELS[t.key] || t.key}
+                                </span>
+                                <span class="font-mono text-[9px] text-muted-foreground">
+                                    {t.dte != null ? `${t.dte.toFixed(1)} DTE` : ''}
+                                </span>
+                            </div>
+                            <div class={`mt-1 font-mono text-base font-semibold ${tones.text}`}>
+                                {tv.label}
+                            </div>
+                            <div class="mt-1 font-mono text-[11px] tabular-nums text-muted-foreground">
+                                {t.score >= 0 ? '+' : ''}{t.score.toFixed(1)}
+                            </div>
+                            <div class="mt-1.5 h-1 overflow-hidden rounded-sm bg-muted">
+                                <div class={`h-full ${tones.bg}`} style="width:{magnitude}%"></div>
+                            </div>
+                        </div>
                     {/each}
-                </tbody>
-            </table>
+                </div>
+            </div>
 
-            <div class="border-t border-border bg-surface px-4 py-2 text-[10px] text-muted-foreground">
-                <span class="font-semibold uppercase tracking-widest">Legend</span>
-                <span class="ml-2">growth Δ vs avg of prior {heatmap?.dates?.length ? heatmap.dates.length - 1 : '~11'} days · dominance = latest ÷ median of ±10 neighboring strikes</span>
+            <!-- ROW 3: Support / Resistance -->
+            <div class="grid gap-3 border-b border-border bg-background px-4 py-3 md:grid-cols-2">
+                <!-- Support -->
+                <div class="rounded-md border border-up/30 bg-background p-3">
+                    <div class="mb-2 flex items-baseline justify-between">
+                        <span class="text-[10px] font-semibold uppercase tracking-widest text-up">
+                            Support Cluster (below price)
+                        </span>
+                        <span class="text-[9px] text-muted-foreground">{analysis.support.length} strikes</span>
+                    </div>
+                    {#if analysis.support.length === 0}
+                        <div class="text-[11px] text-muted-foreground">No high-conviction support strikes detected.</div>
+                    {:else}
+                        <ul class="space-y-1">
+                            {#each analysis.support as s}
+                                <li class="flex items-center gap-2 text-[11px] font-mono tabular-nums">
+                                    <span class="w-14 font-semibold text-foreground">{fmtStrike(s.strike)}</span>
+                                    <span class="w-16 text-[10px] text-muted-foreground">
+                                        {fmtDistance(s.distance, analysis.underlying)}
+                                    </span>
+                                    <span class="flex gap-0.5">
+                                        {#each TENOR_KEYS as tk}
+                                            <span
+                                                class={cn(
+                                                    'h-2 w-2 rounded-full',
+                                                    s.tenors[tk] ? 'bg-up' : 'bg-muted'
+                                                )}
+                                                title={TENOR_LABELS[tk]}
+                                            ></span>
+                                        {/each}
+                                    </span>
+                                    <span class="ml-auto text-muted-foreground">
+                                        {fmtK(s.totalOiSum) || s.totalOiSum} OI
+                                    </span>
+                                    <span class="w-12 text-right font-semibold text-up">
+                                        {fmtNumber(s.aggregateScore, 0)}
+                                    </span>
+                                </li>
+                            {/each}
+                        </ul>
+                    {/if}
+                </div>
+
+                <!-- Resistance -->
+                <div class="rounded-md border border-down/30 bg-background p-3">
+                    <div class="mb-2 flex items-baseline justify-between">
+                        <span class="text-[10px] font-semibold uppercase tracking-widest text-down">
+                            Resistance Cluster (above price)
+                        </span>
+                        <span class="text-[9px] text-muted-foreground">{analysis.resistance.length} strikes</span>
+                    </div>
+                    {#if analysis.resistance.length === 0}
+                        <div class="text-[11px] text-muted-foreground">No high-conviction resistance strikes detected.</div>
+                    {:else}
+                        <ul class="space-y-1">
+                            {#each analysis.resistance as s}
+                                <li class="flex items-center gap-2 text-[11px] font-mono tabular-nums">
+                                    <span class="w-14 font-semibold text-foreground">{fmtStrike(s.strike)}</span>
+                                    <span class="w-16 text-[10px] text-muted-foreground">
+                                        {fmtDistance(s.distance, analysis.underlying)}
+                                    </span>
+                                    <span class="flex gap-0.5">
+                                        {#each TENOR_KEYS as tk}
+                                            <span
+                                                class={cn(
+                                                    'h-2 w-2 rounded-full',
+                                                    s.tenors[tk] ? 'bg-down' : 'bg-muted'
+                                                )}
+                                                title={TENOR_LABELS[tk]}
+                                            ></span>
+                                        {/each}
+                                    </span>
+                                    <span class="ml-auto text-muted-foreground">
+                                        {fmtK(s.totalOiSum) || s.totalOiSum} OI
+                                    </span>
+                                    <span class="w-12 text-right font-semibold text-down">
+                                        {fmtNumber(s.aggregateScore, 0)}
+                                    </span>
+                                </li>
+                            {/each}
+                        </ul>
+                    {/if}
+                </div>
+            </div>
+
+            <!-- ROW 4: Multi-Tenor Walls table -->
+            <div class="px-4 py-3">
+                <div class="mb-2 flex items-baseline justify-between">
+                    <span class="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">
+                        Multi-Tenor Walls
+                    </span>
+                    <span class="text-[9px] text-muted-foreground">
+                        ranked by aggregate score · √tenor_count boost
+                    </span>
+                </div>
+                <table class="cv-table">
+                    <thead>
+                        <tr>
+                            <th class="cv-h cv-h-strike">Strike</th>
+                            <th class="cv-h">Side</th>
+                            <th class="cv-h cv-h-tenor">Tenors</th>
+                            <th class="cv-h cv-h-num">Distance</th>
+                            <th class="cv-h cv-h-num">Sum OI</th>
+                            <th class="cv-h cv-h-num">Max Dom</th>
+                            <th class="cv-h cv-h-num">Avg Δ%</th>
+                            <th class="cv-h">Signal</th>
+                            <th class="cv-h cv-h-score">Score</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {#each analysis.walls as w (w.strike)}
+                            {@const tag = bestTag(w.tags)}
+                            {@const tagMeta = TAG_META[tag] || TAG_META.normal}
+                            {@const sTones = toneClasses(sideTone(w.side))}
+                            {@const dotColor = w.above ? 'bg-down' : 'bg-up'}
+                            {@const pct = Math.min(100, Math.round((w.aggregateScore / Math.max(analysis.walls[0]?.aggregateScore || 1, 1)) * 100))}
+                            <tr class="cv-row">
+                                <td class="cv-strike">{fmtStrike(w.strike)}</td>
+                                <td class={`cv-side ${sTones.text}`}>{w.side.toUpperCase()}</td>
+                                <td>
+                                    <div class="flex items-center gap-0.5">
+                                        {#each TENOR_KEYS as tk}
+                                            <span
+                                                class={cn(
+                                                    'h-2 w-2 rounded-full',
+                                                    w.tenors[tk] ? dotColor : 'bg-muted'
+                                                )}
+                                                title={TENOR_LABELS[tk]}
+                                            ></span>
+                                        {/each}
+                                        <span class="ml-2 font-mono text-[10px] text-muted-foreground">
+                                            {w.tenorCount}/4
+                                        </span>
+                                    </div>
+                                </td>
+                                <td class="cv-num cv-muted">{fmtDistance(w.distance, analysis.underlying)}</td>
+                                <td class="cv-num cv-latest">{fmtNumber(w.totalOiSum, 0)}</td>
+                                <td class="cv-num">{fmtMult(w.maxDominance)}</td>
+                                <td class={`cv-num ${w.avgGrowthPct != null && w.avgGrowthPct >= 0.5 ? 'text-warn' : w.avgGrowthPct != null && w.avgGrowthPct < 0 ? 'text-down' : 'text-muted-foreground'}`}>
+                                    {fmtPct(w.avgGrowthPct)}
+                                </td>
+                                <td>
+                                    <Badge variant={tagMeta.tone}>{tagMeta.label}</Badge>
+                                </td>
+                                <td class="cv-score">
+                                    <div class="cv-bar">
+                                        <div class="cv-bar-fill" style="width:{pct}%"></div>
+                                    </div>
+                                    <span class="cv-score-num">{fmtNumber(w.aggregateScore, 0)}</span>
+                                </td>
+                            </tr>
+                        {/each}
+                    </tbody>
+                </table>
+
+                <div class="mt-2 text-[10px] text-muted-foreground">
+                    Tenor dots = which contracts have qualifying OI at this strike · dominance = latest ÷ median of ±10 neighbors · Δ% = avg growth vs prior days
+                </div>
             </div>
         {/if}
     </div>
@@ -279,7 +375,7 @@
     }
     .cv-h-strike { left: 0; z-index: 30; border-right: 1px solid hsl(var(--border)); }
     .cv-h-num { text-align: right; }
-    .cv-h-tag { text-align: left; }
+    .cv-h-tenor { min-width: 90px; }
     .cv-h-score { text-align: right; min-width: 140px; }
 
     .cv-row td {
@@ -305,7 +401,6 @@
     }
 
     .cv-side { font-weight: 700; letter-spacing: 0.08em; }
-    .cv-tag { padding-right: 12px; }
     .cv-num { text-align: right; }
     .cv-latest { font-weight: 600; }
     .cv-muted { color: hsl(var(--muted-foreground)); }

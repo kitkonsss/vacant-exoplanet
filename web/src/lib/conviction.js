@@ -1,36 +1,33 @@
 // Cross-reference position-bias snapshot with OI-heatmap time-series to surface
 // "conviction" — strikes whose wall stature is backed by clear OI growth or
-// outsized dominance vs neighbors. Pure functions, no Svelte deps.
+// outsized dominance vs neighbors. Aggregates across all 4 expiries (current /
+// tomorrow / friday / monthly) so multi-tenor agreement counts as high-confidence.
+// Pure functions, no Svelte deps.
 
 const NEIGHBOR_WINDOW = 10;       // strikes on each side for dominance baseline
 const MIN_LATEST_OI = 5;          // ignore noise below this absolute OI
-const FRESH_BASELINE_MAX = 2;     // prev_avg at/below this → "fresh" position
-const GROWING_DELTA_PCT = 0.5;    // +50% vs prior days
-const STRONG_DELTA_PCT = 2.0;     // +200%
-const DOMINANCE_STRONG = 3;       // 3x neighbors → established wall
-const DOMINANCE_EMERGING = 1.5;   // 1.5x neighbors → emerging
-const FADING_DELTA_PCT = -0.3;    // -30%
-const TOP_N = 24;                 // table rows
-const HIGH_CONVICTION_THRESHOLD = 55; // composite score gate for net-bias sum
+const FRESH_BASELINE_MAX = 2;
+const GROWING_DELTA_PCT = 0.5;
+const STRONG_DELTA_PCT = 2.0;
+const DOMINANCE_STRONG = 3;
+const DOMINANCE_EMERGING = 1.5;
+const FADING_DELTA_PCT = -0.3;
+
+// Score gates and tuning
+const HIGH_CONVICTION_GATE = 55;  // per-contract score gate for tenor bias sum
+const AGG_GATE = 90;              // aggregate score gate for cluster inclusion
+const TOP_AGG_ROWS = 28;          // table size for multi-tenor wall list
 
 function firstNonNull(values) {
     if (!Array.isArray(values)) return null;
-    for (const v of values) {
-        if (v != null && Number.isFinite(v)) return v;
-    }
+    for (const v of values) if (v != null && Number.isFinite(v)) return v;
     return null;
 }
 
 function avgNonNull(values) {
     if (!Array.isArray(values) || values.length === 0) return null;
-    let sum = 0;
-    let n = 0;
-    for (const v of values) {
-        if (v != null && Number.isFinite(v)) {
-            sum += v;
-            n += 1;
-        }
-    }
+    let sum = 0, n = 0;
+    for (const v of values) if (v != null && Number.isFinite(v)) { sum += v; n += 1; }
     return n === 0 ? null : sum / n;
 }
 
@@ -45,116 +42,86 @@ function medianNonZero(values) {
         : filtered[mid];
 }
 
-function clamp(v, lo, hi) {
-    return Math.max(lo, Math.min(hi, v));
+function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+
+function classifyTag({ prevAvg, latest, deltaPct, dominance }) {
+    const isFresh = prevAvg <= FRESH_BASELINE_MAX && latest >= 3 * MIN_LATEST_OI;
+    const isGrowing = Number.isFinite(deltaPct) && deltaPct >= GROWING_DELTA_PCT;
+    const isStrongGrowth = !Number.isFinite(deltaPct) || deltaPct >= STRONG_DELTA_PCT;
+    const isFading = Number.isFinite(deltaPct) && deltaPct <= FADING_DELTA_PCT;
+    const isDominant = !Number.isFinite(dominance) || dominance >= DOMINANCE_STRONG;
+    const isEmergingDom = !Number.isFinite(dominance) || dominance >= DOMINANCE_EMERGING;
+
+    if (isDominant && isGrowing) return 'growing_wall';
+    if (isFresh && isEmergingDom) return 'fresh';
+    if (isStrongGrowth && isEmergingDom) return 'emerging';
+    if (isDominant) return 'established';
+    if (isFading && isEmergingDom) return 'fading';
+    if (isGrowing) return 'building';
+    return 'normal';
+}
+
+function compositeScore({ latest, deltaPct, dominance }) {
+    const magScore = Math.log10(Math.max(latest, 1)) * 14;
+    const growthScore = clamp(
+        Number.isFinite(deltaPct) ? deltaPct * 12 : 36,
+        -25, 36
+    );
+    const domScore = clamp(
+        Number.isFinite(dominance) ? (dominance - 1) * 6 : 30,
+        -10, 30
+    );
+    return Math.max(0, magScore + growthScore + domScore);
 }
 
 /**
- * Compute a per-strike conviction signal table from heatmap + position bias.
- *
- * @param {{ bias: any, heatmap: any }} params
- * @returns {null | {
- *   contract: string,
- *   underlying: number,
- *   rows: Array<any>,
- *   summary: { bullish: number, bearish: number, verdict: string, score: number, count: number },
- *   maxScore: number
- * }}
+ * Compute every qualified strike row for one (bias, heatmap) pair.
+ * Returns null when heatmap is missing.
  */
-export function analyzeConviction({ bias, heatmap }) {
+function computeStrikeRows({ bias, heatmap }) {
     if (!heatmap?.strikes?.length) return null;
 
     const underlying = heatmap.underlying || bias?.future_price || 0;
     const biasMap = new Map();
-    for (const lv of bias?.position_map || []) {
-        biasMap.set(lv.strike, lv);
-    }
+    for (const lv of bias?.position_map || []) biasMap.set(lv.strike, lv);
 
-    // Precompute per-strike rollups so we can do neighbor lookups in one pass.
-    const computed = heatmap.strikes.map((s) => {
+    const stage1 = heatmap.strikes.map((s) => {
         const values = s.values || [];
-        const latest = firstNonNull(values);
-        const tail = values.slice(1);
-        const prevAvg = avgNonNull(tail);
-        const baseline = prevAvg != null ? prevAvg : 0;
-        const delta = (latest ?? 0) - baseline;
-        const deltaPct = baseline > 0 ? delta / baseline : (latest > 0 ? Infinity : 0);
-        return {
-            strike: s.strike,
-            latest: latest ?? 0,
-            prevAvg: baseline,
-            delta,
-            deltaPct
-        };
+        const latest = firstNonNull(values) ?? 0;
+        const prevAvg = avgNonNull(values.slice(1)) ?? 0;
+        const delta = latest - prevAvg;
+        const deltaPct = prevAvg > 0 ? delta / prevAvg : (latest > 0 ? Infinity : 0);
+        return { strike: s.strike, latest, prevAvg, delta, deltaPct };
     });
 
-    // Dominance: latest vs median of neighboring strikes' latest OI
-    // (window excludes the strike itself).
-    const decorated = computed.map((row, idx) => {
-        const lo = Math.max(0, idx - NEIGHBOR_WINDOW);
-        const hi = Math.min(computed.length, idx + NEIGHBOR_WINDOW + 1);
-        const neighbors = [];
-        for (let i = lo; i < hi; i++) {
-            if (i !== idx) neighbors.push(computed[i].latest);
-        }
-        const med = medianNonZero(neighbors);
-        const dominance = med > 0 ? row.latest / med : (row.latest > 0 ? Infinity : 0);
-        return { ...row, dominance };
-    });
-
-    // Filter, classify, score
     const rows = [];
-    for (const r of decorated) {
+    for (let i = 0; i < stage1.length; i++) {
+        const r = stage1[i];
         if (r.latest < MIN_LATEST_OI) continue;
+
+        const lo = Math.max(0, i - NEIGHBOR_WINDOW);
+        const hi = Math.min(stage1.length, i + NEIGHBOR_WINDOW + 1);
+        const neighbors = [];
+        for (let j = lo; j < hi; j++) if (j !== i) neighbors.push(stage1[j].latest);
+        const med = medianNonZero(neighbors);
+        const dominance = med > 0 ? r.latest / med : (r.latest > 0 ? Infinity : 0);
+
         const biasLv = biasMap.get(r.strike);
         const callOi = biasLv?.call_oi ?? null;
         const putOi = biasLv?.put_oi ?? null;
         const totalOi = biasLv?.total_oi ?? r.latest;
-        const distance = underlying > 0 ? r.strike - underlying : 0;
-        const above = distance > 0;
 
-        // Determine bias side: prefer call/put split from PositionBias.
-        // If absent, fall back to position relative to underlying.
         let side = 'mixed';
-        if (callOi != null && putOi != null) {
-            const total = callOi + putOi;
-            if (total > 0) {
-                const callShare = callOi / total;
-                if (callShare > 0.65) side = 'call';
-                else if (callShare < 0.35) side = 'put';
-                else side = 'mixed';
-            }
+        if (callOi != null && putOi != null && (callOi + putOi) > 0) {
+            const callShare = callOi / (callOi + putOi);
+            if (callShare > 0.65) side = 'call';
+            else if (callShare < 0.35) side = 'put';
         } else {
-            side = above ? 'call' : 'put';
+            side = r.strike > underlying ? 'call' : 'put';
         }
 
-        // Classification tag
-        let tag = 'normal';
-        const isFresh = r.prevAvg <= FRESH_BASELINE_MAX && r.latest >= 3 * MIN_LATEST_OI;
-        const isGrowing = r.deltaPct >= GROWING_DELTA_PCT && Number.isFinite(r.deltaPct);
-        const isStrongGrowth = r.deltaPct >= STRONG_DELTA_PCT || !Number.isFinite(r.deltaPct);
-        const isFading = r.deltaPct <= FADING_DELTA_PCT;
-        const isDominant = r.dominance >= DOMINANCE_STRONG || !Number.isFinite(r.dominance);
-        const isEmergingDom = r.dominance >= DOMINANCE_EMERGING;
-
-        if (isDominant && isGrowing) tag = 'growing_wall';
-        else if (isFresh && isEmergingDom) tag = 'fresh';
-        else if (isStrongGrowth && isEmergingDom) tag = 'emerging';
-        else if (isDominant) tag = 'established';
-        else if (isFading && isEmergingDom) tag = 'fading';
-        else if (isGrowing) tag = 'building';
-
-        // Composite score: log-magnitude × growth × dominance.
-        const magScore = Math.log10(Math.max(r.latest, 1)) * 14;            // ~0..70
-        const growthScore = clamp(
-            Number.isFinite(r.deltaPct) ? r.deltaPct * 12 : 36,             // cap inf-growth contribution
-            -25, 36
-        );
-        const domScore = clamp(
-            Number.isFinite(r.dominance) ? (r.dominance - 1) * 6 : 30,
-            -10, 30
-        );
-        const score = Math.max(0, magScore + growthScore + domScore);
+        const tag = classifyTag({ prevAvg: r.prevAvg, latest: r.latest, deltaPct: r.deltaPct, dominance });
+        const score = compositeScore({ latest: r.latest, deltaPct: r.deltaPct, dominance });
 
         rows.push({
             strike: r.strike,
@@ -162,71 +129,329 @@ export function analyzeConviction({ bias, heatmap }) {
             prevAvg: r.prevAvg,
             delta: r.delta,
             deltaPct: r.deltaPct,
-            dominance: r.dominance,
+            dominance,
             totalOi,
             callOi,
             putOi,
             side,
             tag,
             score,
-            distance,
-            above,
+            distance: underlying > 0 ? r.strike - underlying : 0,
+            above: underlying > 0 ? r.strike > underlying : false,
             fromBias: !!biasLv
         });
     }
 
     rows.sort((a, b) => b.score - a.score);
-    const top = rows.slice(0, TOP_N);
+    return { underlying, rows };
+}
 
-    // Net bias: sum scores on each side from rows that pass the conviction gate.
-    // Position relative to price drives the support/resistance read (matches how
-    // PositionBias frames the "position_pressure" driver). Side label below
-    // refines weight only when it agrees with position.
-    let bullish = 0;
-    let bearish = 0;
+/**
+ * Per-contract conviction analysis (preserved for unit tests / debug use).
+ */
+export function analyzeConviction({ bias, heatmap }) {
+    const computed = computeStrikeRows({ bias, heatmap });
+    if (!computed) return null;
+    const { underlying, rows } = computed;
+
+    let bullish = 0, bearish = 0;
     for (const r of rows) {
-        if (r.score < HIGH_CONVICTION_THRESHOLD) continue;
+        if (r.score < HIGH_CONVICTION_GATE) continue;
         const weight = r.score * (
-            // amplify when side aligns with position (put + below, call + above),
-            // dampen when it contradicts (put above, call below)
             (r.above && r.side === 'call') || (!r.above && r.side === 'put') ? 1.0 :
             (r.above && r.side === 'put') || (!r.above && r.side === 'call') ? 0.5 :
             0.8
         );
-        if (r.above) bearish += weight;        // wall above price = resistance
-        else if (r.strike < underlying) bullish += weight; // wall below = support
+        if (r.above) bearish += weight;
+        else bullish += weight;
     }
     const total = bullish + bearish;
     const score = total > 0 ? ((bullish - bearish) / total) * 100 : 0;
-    let verdict = 'neutral';
-    if (score >= 25) verdict = 'bullish';
-    else if (score >= 8) verdict = 'lean_bullish';
-    else if (score <= -25) verdict = 'bearish';
-    else if (score <= -8) verdict = 'lean_bearish';
-
-    const maxScore = top.length > 0 ? top[0].score : 0;
-
+    const verdict = labelFromScore(score);
     return {
         contract: heatmap.contract || bias?.contract || '',
         underlying,
-        rows: top,
-        summary: {
-            bullish,
-            bearish,
-            verdict,
-            score,
-            count: rows.filter((r) => r.score >= HIGH_CONVICTION_THRESHOLD).length
+        rows: rows.slice(0, 24),
+        summary: { bullish, bearish, verdict, score, count: rows.filter((r) => r.score >= HIGH_CONVICTION_GATE).length },
+        maxScore: rows[0]?.score || 0
+    };
+}
+
+function labelFromScore(score) {
+    if (score >= 25) return 'bullish';
+    if (score >= 8) return 'lean_bullish';
+    if (score <= -25) return 'bearish';
+    if (score <= -8) return 'lean_bearish';
+    return 'neutral';
+}
+
+function verdictSign(label) {
+    if (label === 'bullish' || label === 'lean_bullish') return 1;
+    if (label === 'bearish' || label === 'lean_bearish') return -1;
+    return 0;
+}
+
+/**
+ * Aggregate conviction across all available contracts.
+ *
+ * @param {{ contractsData: Array<{ key: string, dte: number, bias: any, heatmap: any }> }} params
+ * @returns {null | {
+ *   underlying: number,
+ *   tenorBias: Array,
+ *   walls: Array,
+ *   support: Array, resistance: Array,
+ *   verdict: { label: string, score: number, confidence: string, bullish: number, bearish: number, agreement: number, totalTenors: number },
+ *   insights: string[]
+ * }}
+ */
+export function analyzeConvictionMulti({ contractsData }) {
+    if (!contractsData || contractsData.length === 0) return null;
+
+    // 1. Per-contract analysis
+    const perTenor = contractsData
+        .map((c) => {
+            const computed = computeStrikeRows({ bias: c.bias, heatmap: c.heatmap });
+            if (!computed) return null;
+            let bullish = 0, bearish = 0;
+            for (const r of computed.rows) {
+                if (r.score < HIGH_CONVICTION_GATE) continue;
+                const w = r.score * (
+                    (r.above && r.side === 'call') || (!r.above && r.side === 'put') ? 1.0 :
+                    (r.above && r.side === 'put') || (!r.above && r.side === 'call') ? 0.5 :
+                    0.8
+                );
+                if (r.above) bearish += w; else bullish += w;
+            }
+            const total = bullish + bearish;
+            const bScore = total > 0 ? ((bullish - bearish) / total) * 100 : 0;
+            return {
+                key: c.key,
+                dte: c.dte ?? c.bias?.dte ?? null,
+                contract: c.heatmap?.contract || c.bias?.contract || '',
+                underlying: computed.underlying,
+                rows: computed.rows,
+                bullish,
+                bearish,
+                biasScore: bScore,
+                verdict: labelFromScore(bScore)
+            };
+        })
+        .filter(Boolean);
+
+    if (perTenor.length === 0) return null;
+
+    // Use freshest underlying we have (prefer earliest tenor / smallest DTE)
+    const sortedByDte = [...perTenor].sort((a, b) => (a.dte ?? 99) - (b.dte ?? 99));
+    const underlying = sortedByDte[0]?.underlying || 0;
+
+    // 2. Strike-level aggregation across tenors
+    const strikeMap = new Map();
+    for (const t of perTenor) {
+        for (const r of t.rows) {
+            if (!strikeMap.has(r.strike)) {
+                strikeMap.set(r.strike, {
+                    strike: r.strike,
+                    tenors: {},
+                    tenorCount: 0,
+                    totalOiSum: 0,
+                    scoreSum: 0,
+                    maxDominance: 0,
+                    growthSum: 0,
+                    growthN: 0,
+                    callOiSum: 0,
+                    putOiSum: 0,
+                    sideVotes: { call: 0, put: 0, mixed: 0 },
+                    tags: new Set()
+                });
+            }
+            const agg = strikeMap.get(r.strike);
+            agg.tenors[t.key] = r;
+            agg.tenorCount += 1;
+            agg.totalOiSum += r.latest;
+            agg.scoreSum += r.score;
+            agg.maxDominance = Math.max(
+                agg.maxDominance,
+                Number.isFinite(r.dominance) ? r.dominance : 999
+            );
+            if (Number.isFinite(r.deltaPct)) { agg.growthSum += r.deltaPct; agg.growthN += 1; }
+            agg.sideVotes[r.side] = (agg.sideVotes[r.side] || 0) + 1;
+            if (r.callOi != null) agg.callOiSum += r.callOi;
+            if (r.putOi != null) agg.putOiSum += r.putOi;
+            agg.tags.add(r.tag);
+        }
+    }
+
+    const walls = [];
+    for (const agg of strikeMap.values()) {
+        const above = underlying > 0 ? agg.strike > underlying : false;
+        // Side resolution: prefer call/put split if either side dominates; otherwise position vs price.
+        let side = 'mixed';
+        const totalSplit = agg.callOiSum + agg.putOiSum;
+        if (totalSplit > 0) {
+            const callShare = agg.callOiSum / totalSplit;
+            if (callShare > 0.65) side = 'call';
+            else if (callShare < 0.35) side = 'put';
+        } else {
+            side = above ? 'call' : 'put';
+        }
+
+        // sqrt boost rewards multi-tenor agreement sub-linearly
+        const boost = Math.sqrt(agg.tenorCount);
+        const aggregateScore = agg.scoreSum * boost;
+
+        walls.push({
+            strike: agg.strike,
+            tenors: agg.tenors,
+            tenorCount: agg.tenorCount,
+            totalOiSum: agg.totalOiSum,
+            scoreSum: agg.scoreSum,
+            aggregateScore,
+            maxDominance: agg.maxDominance,
+            avgGrowthPct: agg.growthN > 0 ? agg.growthSum / agg.growthN : null,
+            callOiSum: agg.callOiSum,
+            putOiSum: agg.putOiSum,
+            side,
+            above,
+            distance: underlying > 0 ? agg.strike - underlying : 0,
+            tags: Array.from(agg.tags)
+        });
+    }
+    walls.sort((a, b) => b.aggregateScore - a.aggregateScore);
+
+    // 3. Support / Resistance clusters — top-N strong walls each side of price
+    const strongBelow = walls.filter((w) => !w.above && w.aggregateScore >= AGG_GATE);
+    const strongAbove = walls.filter((w) => w.above && w.aggregateScore >= AGG_GATE);
+
+    const support = strongBelow
+        .sort((a, b) => Math.abs(a.distance) - Math.abs(b.distance))
+        .slice(0, 5);
+    const resistance = strongAbove
+        .sort((a, b) => Math.abs(a.distance) - Math.abs(b.distance))
+        .slice(0, 5);
+
+    // 4. Overall verdict — bullish/bearish weights aggregated from all qualified strikes
+    let bullishAll = 0, bearishAll = 0;
+    for (const w of walls) {
+        if (w.aggregateScore < AGG_GATE) continue;
+        const sideWeight = (
+            (w.above && w.side === 'call') || (!w.above && w.side === 'put') ? 1.0 :
+            (w.above && w.side === 'put') || (!w.above && w.side === 'call') ? 0.5 :
+            0.8
+        );
+        const contribution = w.aggregateScore * sideWeight;
+        if (w.above) bearishAll += contribution; else bullishAll += contribution;
+    }
+    const totalAll = bullishAll + bearishAll;
+    const overallScore = totalAll > 0 ? ((bullishAll - bearishAll) / totalAll) * 100 : 0;
+    const overallLabel = labelFromScore(overallScore);
+
+    // Tenor agreement: how many tenors share the overall direction sign
+    const overallSign = verdictSign(overallLabel);
+    const agreeCount = overallSign === 0
+        ? 0
+        : perTenor.filter((t) => verdictSign(t.verdict) === overallSign).length;
+    const totalTenors = perTenor.length;
+
+    let confidence = 'low';
+    if (totalTenors >= 3 && agreeCount === totalTenors) confidence = 'high';
+    else if (totalTenors >= 3 && agreeCount === totalTenors - 1) confidence = 'medium';
+    else if (totalTenors >= 2 && agreeCount === totalTenors) confidence = 'medium';
+
+    // 5. Auto-generated insight bullets
+    const insights = [];
+    if (overallSign !== 0) {
+        const dirText = overallSign > 0 ? 'bullish' : 'bearish';
+        insights.push(`${agreeCount} of ${totalTenors} contracts align ${dirText} (${confidence} agreement).`);
+    } else {
+        insights.push(`Mixed: ${totalTenors} contracts show no dominant direction.`);
+    }
+
+    if (resistance.length > 0) {
+        const top = resistance[0];
+        const cluster = resistance.length > 1
+            ? `${resistance[0].strike}–${resistance[resistance.length - 1].strike}`
+            : `${top.strike}`;
+        insights.push(
+            `Resistance cluster ${cluster} — top strike ${top.strike} active in ${top.tenorCount}/${totalTenors} tenors, ${Math.round(top.totalOiSum)} aggregate OI.`
+        );
+    }
+    if (support.length > 0) {
+        const top = support[0];
+        const cluster = support.length > 1
+            ? `${support[support.length - 1].strike}–${support[0].strike}`
+            : `${top.strike}`;
+        insights.push(
+            `Support cluster ${cluster} — top strike ${top.strike} active in ${top.tenorCount}/${totalTenors} tenors, ${Math.round(top.totalOiSum)} aggregate OI.`
+        );
+    }
+
+    // Skew text — compare strength asymmetry
+    if (bullishAll > 0 || bearishAll > 0) {
+        const ratio = Math.max(bullishAll, bearishAll) / Math.max(1, Math.min(bullishAll, bearishAll));
+        if (ratio > 2 && bearishAll > bullishAll) {
+            insights.push('Skew: upside capped — resistance outweighs support by >2×.');
+        } else if (ratio > 2 && bullishAll > bearishAll) {
+            insights.push('Skew: downside protected — support outweighs resistance by >2×.');
+        }
+    }
+
+    // Term-structure shift (e.g. near-term bearish, monthly bullish)
+    if (totalTenors >= 2) {
+        const byDte = [...perTenor].sort((a, b) => (a.dte ?? 99) - (b.dte ?? 99));
+        const near = byDte[0];
+        const far = byDte[byDte.length - 1];
+        if (near && far && verdictSign(near.verdict) !== 0 && verdictSign(far.verdict) !== 0
+            && verdictSign(near.verdict) !== verdictSign(far.verdict)) {
+            insights.push(
+                `Term-structure shift: near-term ${near.verdict.replace('lean_', 'lean ')} (${near.dte?.toFixed(1) || '?'} DTE) vs longer-dated ${far.verdict.replace('lean_', 'lean ')} (${far.dte?.toFixed(0) || '?'} DTE).`
+            );
+        }
+    }
+
+    return {
+        underlying,
+        tenorBias: perTenor.map((t) => ({
+            key: t.key,
+            dte: t.dte,
+            contract: t.contract,
+            verdict: t.verdict,
+            score: t.biasScore,
+            bullish: t.bullish,
+            bearish: t.bearish,
+            rowCount: t.rows.length
+        })),
+        walls: walls.slice(0, TOP_AGG_ROWS),
+        support,
+        resistance,
+        verdict: {
+            label: overallLabel,
+            score: overallScore,
+            confidence,
+            agreement: agreeCount,
+            totalTenors,
+            bullish: bullishAll,
+            bearish: bearishAll
         },
-        maxScore
+        insights,
+        // expose tenor order for dot indicators
+        tenorOrder: perTenor.map((t) => t.key)
     };
 }
 
 export const TAG_META = {
-    growing_wall:  { label: 'Growing Wall',  tone: 'mag',  description: 'Dominant strike with rising OI' },
-    fresh:         { label: 'Fresh',         tone: 'warn', description: 'New position — prior OI ~ 0' },
-    emerging:      { label: 'Emerging',      tone: 'warn', description: 'Sharp OI growth, becoming dominant' },
-    established:   { label: 'Established',   tone: 'up',   description: 'Dominant wall, stable OI' },
-    building:      { label: 'Building',      tone: 'up',   description: 'OI rising but not yet dominant' },
-    fading:        { label: 'Fading',        tone: 'down', description: 'OI declining at a sizeable strike' },
+    growing_wall:  { label: 'Growing Wall',  tone: 'mag',   description: 'Dominant strike with rising OI' },
+    fresh:         { label: 'Fresh',         tone: 'warn',  description: 'New position — prior OI ~ 0' },
+    emerging:      { label: 'Emerging',      tone: 'warn',  description: 'Sharp OI growth, becoming dominant' },
+    established:   { label: 'Established',   tone: 'up',    description: 'Dominant wall, stable OI' },
+    building:      { label: 'Building',      tone: 'up',    description: 'OI rising but not yet dominant' },
+    fading:        { label: 'Fading',        tone: 'down',  description: 'OI declining at a sizeable strike' },
     normal:        { label: 'Normal',        tone: 'muted', description: '' }
+};
+
+export const VERDICT_META = {
+    bullish:       { label: 'Bullish',       tone: 'up'    },
+    lean_bullish:  { label: 'Lean Bullish',  tone: 'up'    },
+    neutral:       { label: 'Neutral',       tone: 'muted' },
+    lean_bearish:  { label: 'Lean Bearish',  tone: 'down'  },
+    bearish:       { label: 'Bearish',       tone: 'down'  }
 };

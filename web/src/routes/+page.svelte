@@ -33,17 +33,31 @@
         { key: 'conviction', label: 'Conviction',    tone: 'warn',    icon: Target }
     ];
 
-    const tabUsesContract = $derived(activeTab === 'heatmap' || activeTab === 'conviction');
+    // Heatmap pivots on a single contract; Conviction is all-tenor aggregate.
+    const tabUsesSingleContract = $derived(activeTab === 'heatmap');
 
     const visibleContract = $derived(
         payload?.contracts?.find(
-            (c) => c.contract_key === (tabUsesContract ? heatmapContract : 'current')
+            (c) => c.contract_key === (tabUsesSingleContract ? heatmapContract : 'current')
         ) || payload?.contracts?.[0]
     );
 
     const currentHeatmap = $derived(heatmapCache[heatmapContract] ?? null);
-    const currentBias = $derived(
-        payload?.contracts?.find((c) => c.contract_key === heatmapContract) || null
+
+    // Conviction tab aggregates all 4 tenors at once — assemble side-by-side
+    // bias + heatmap pairs for every contract we've loaded.
+    const convictionContracts = $derived(
+        (payload?.contracts || [])
+            .map((c) => ({
+                key: c.contract_key,
+                dte: c.dte,
+                bias: c,
+                heatmap: heatmapCache[c.contract_key] || null
+            }))
+            .filter((c) => c.heatmap)
+    );
+    const convictionLoading = $derived(
+        loading || (activeTab === 'conviction' && convictionContracts.length === 0)
     );
 
     function resolveContractKey(contractKeys, preferredKey = heatmapContract) {
@@ -84,24 +98,41 @@
         }
     }
 
+    async function ensureAllHeatmaps(keys) {
+        const missing = keys.filter((k) => !untrack(() => heatmapCache[k]));
+        if (missing.length === 0) return;
+        heatmapLoading = true;
+        try {
+            const results = await Promise.all(
+                missing.map((k) => fetchHeatmap(asset, k).then((data) => [k, data]))
+            );
+            const next = { ...untrack(() => heatmapCache) };
+            for (const [k, data] of results) next[k] = data;
+            heatmapCache = next;
+        } finally {
+            heatmapLoading = false;
+        }
+    }
+
     async function refresh() {
         heatmapCache = {};
         const nextKey = await load();
-        if ((activeTab === 'heatmap' || activeTab === 'conviction') && nextKey) {
+        if (activeTab === 'heatmap' && nextKey) {
             await ensureHeatmap(nextKey);
+        } else if (activeTab === 'conviction') {
+            await ensureAllHeatmaps(availableContractKeys);
         }
     }
 
     function onTabChange(key) {
-        if (key !== 'heatmap' && key !== 'conviction') return;
-
-        const nextKey = resolveContractKey(availableContractKeys);
-        if (!nextKey) return;
-
-        if (nextKey !== heatmapContract) {
-            heatmapContract = nextKey;
+        if (key === 'heatmap') {
+            const nextKey = resolveContractKey(availableContractKeys);
+            if (!nextKey) return;
+            if (nextKey !== heatmapContract) heatmapContract = nextKey;
+            void ensureHeatmap(nextKey);
+        } else if (key === 'conviction') {
+            void ensureAllHeatmaps(availableContractKeys);
         }
-        void ensureHeatmap(nextKey);
     }
 
     function onHeatmapContract(key) {
@@ -116,8 +147,10 @@
         untrack(() => {
             heatmapCache = {};
             void load().then((nextKey) => {
-                if ((activeTab === 'heatmap' || activeTab === 'conviction') && nextKey) {
+                if (activeTab === 'heatmap' && nextKey) {
                     void ensureHeatmap(nextKey);
+                } else if (activeTab === 'conviction') {
+                    void ensureAllHeatmaps(availableContractKeys);
                 }
             });
         });
@@ -128,9 +161,11 @@
     <Header
         bind:asset
         contract={profile.label}
-        contractCode={tabUsesContract
+        contractCode={activeTab === 'heatmap'
             ? currentHeatmap?.contract || visibleContract?.contract || ''
-            : visibleContract?.contract || ''}
+            : activeTab === 'conviction'
+                ? `${convictionContracts.length}× tenors`
+                : visibleContract?.contract || ''}
         price={visibleContract?.future_price}
         dte={visibleContract?.dte}
         {lastUpdate}
@@ -155,21 +190,18 @@
             />
         {:else if activeTab === 'conviction'}
             <ConvictionView
-                assetId={asset}
-                bind:contractKey={heatmapContract}
-                availableContracts={availableContractKeys}
-                bias={currentBias}
-                heatmap={currentHeatmap}
-                loading={heatmapLoading || loading}
-                onChangeContract={onHeatmapContract}
+                contracts={convictionContracts}
+                loading={convictionLoading}
             />
         {/if}
     </main>
 
     <AppFooter
-        contract={tabUsesContract
+        contract={activeTab === 'heatmap'
             ? currentHeatmap?.contract || visibleContract?.contract || '—'
-            : visibleContract?.contract || '—'}
+            : activeTab === 'conviction'
+                ? 'All Contracts'
+                : visibleContract?.contract || '—'}
         dataType={activeTab === 'analysis' ? 'Position Bias' : activeTab === 'heatmap' ? 'OI Heatmap' : 'Conviction'}
     />
 </div>
