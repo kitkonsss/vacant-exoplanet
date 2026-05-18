@@ -5,9 +5,10 @@
     import AppFooter from '$lib/components/AppFooter.svelte';
     import PositionBiasView from '$lib/components/PositionBiasView.svelte';
     import HeatmapView from '$lib/components/HeatmapView.svelte';
+    import ConvictionView from '$lib/components/ConvictionView.svelte';
     import { fetchHeatmap, fetchPositionBias } from '$lib/data.js';
     import { ASSET_PROFILES, DEFAULT_CONTRACT_KEY } from '$lib/config.js';
-    import { LineChart, Grid3X3 } from 'lucide-svelte';
+    import { LineChart, Grid3X3, Target } from 'lucide-svelte';
 
     let asset = $state('gc');
     let activeTab = $state('analysis');
@@ -15,7 +16,7 @@
     let loading = $state(true);
     let lastUpdate = $state('—');
 
-    // Heatmap state
+    // Heatmap state (shared by Heatmap + Conviction tabs — both pivot on the same contract)
     let heatmapContract = $state(DEFAULT_CONTRACT_KEY);
     /** @type {Record<string, any>} */
     let heatmapCache = $state({});
@@ -27,17 +28,23 @@
     );
 
     const tabs = [
-        { key: 'analysis', label: 'Position Bias', tone: 'primary', icon: LineChart },
-        { key: 'heatmap',  label: 'OI Heatmap',    tone: 'mag',     icon: Grid3X3 }
+        { key: 'analysis',   label: 'Position Bias', tone: 'primary', icon: LineChart },
+        { key: 'heatmap',    label: 'OI Heatmap',    tone: 'mag',     icon: Grid3X3 },
+        { key: 'conviction', label: 'Conviction',    tone: 'warn',    icon: Target }
     ];
+
+    const tabUsesContract = $derived(activeTab === 'heatmap' || activeTab === 'conviction');
 
     const visibleContract = $derived(
         payload?.contracts?.find(
-            (c) => c.contract_key === (activeTab === 'heatmap' ? heatmapContract : 'current')
+            (c) => c.contract_key === (tabUsesContract ? heatmapContract : 'current')
         ) || payload?.contracts?.[0]
     );
 
     const currentHeatmap = $derived(heatmapCache[heatmapContract] ?? null);
+    const currentBias = $derived(
+        payload?.contracts?.find((c) => c.contract_key === heatmapContract) || null
+    );
 
     function resolveContractKey(contractKeys, preferredKey = heatmapContract) {
         if (!contractKeys.length) return null;
@@ -80,11 +87,13 @@
     async function refresh() {
         heatmapCache = {};
         const nextKey = await load();
-        if (activeTab === 'heatmap' && nextKey) await ensureHeatmap(nextKey);
+        if ((activeTab === 'heatmap' || activeTab === 'conviction') && nextKey) {
+            await ensureHeatmap(nextKey);
+        }
     }
 
     function onTabChange(key) {
-        if (key !== 'heatmap') return;
+        if (key !== 'heatmap' && key !== 'conviction') return;
 
         const nextKey = resolveContractKey(availableContractKeys);
         if (!nextKey) return;
@@ -107,7 +116,7 @@
         untrack(() => {
             heatmapCache = {};
             void load().then((nextKey) => {
-                if (activeTab === 'heatmap' && nextKey) {
+                if ((activeTab === 'heatmap' || activeTab === 'conviction') && nextKey) {
                     void ensureHeatmap(nextKey);
                 }
             });
@@ -119,7 +128,7 @@
     <Header
         bind:asset
         contract={profile.label}
-        contractCode={activeTab === 'heatmap'
+        contractCode={tabUsesContract
             ? currentHeatmap?.contract || visibleContract?.contract || ''
             : visibleContract?.contract || ''}
         price={visibleContract?.future_price}
@@ -144,13 +153,23 @@
                 loading={heatmapLoading}
                 onChangeContract={onHeatmapContract}
             />
+        {:else if activeTab === 'conviction'}
+            <ConvictionView
+                assetId={asset}
+                bind:contractKey={heatmapContract}
+                availableContracts={availableContractKeys}
+                bias={currentBias}
+                heatmap={currentHeatmap}
+                loading={heatmapLoading || loading}
+                onChangeContract={onHeatmapContract}
+            />
         {/if}
     </main>
 
     <AppFooter
-        contract={activeTab === 'heatmap'
-            ? currentHeatmap?.contract || '—'
+        contract={tabUsesContract
+            ? currentHeatmap?.contract || visibleContract?.contract || '—'
             : visibleContract?.contract || '—'}
-        dataType={activeTab === 'analysis' ? 'Position Bias' : 'OI Heatmap'}
+        dataType={activeTab === 'analysis' ? 'Position Bias' : activeTab === 'heatmap' ? 'OI Heatmap' : 'Conviction'}
     />
 </div>
