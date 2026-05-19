@@ -40,9 +40,10 @@ export async function fetchGammaHeatmap(assetId, contractKey) {
 }
 
 /**
- * Fetches daily OHLC for the asset's underlying futures.
- * Shape: { candles: [{ time, open, high, low, close, volume? }, ...] }
+ * Fetches OHLC for the asset's underlying futures.
+ * `tf` is '1d' (default) or '1h'.
+ * Shape: { interval, candles: [{ time, open, high, low, close, volume? }, ...] }
  */
-export async function fetchOHLC(assetId) {
-    return fetchJsonSoft(ohlcUrl(assetId));
+export async function fetchOHLC(assetId, tf = '1d') {
+    return fetchJsonSoft(ohlcUrl(assetId, tf));
 }

@@ -28,6 +28,7 @@
     } = $props();
 
     let mode = $state('oi');                 // 'oi' | 'gamma'
+    let timeframe = $state('1h');            // '1h' | '1d' — primary intraday view
     let topN = $state(10);
     let showSupport = $state(true);
     let showResistance = $state(true);
@@ -43,7 +44,7 @@
     let ohlc = $state(null);
     let ohlcLoading = $state(false);
     let ohlcError = $state(false);
-    let lastAssetLoaded = null;
+    /** @type {string | null} */ let lastLoadedKey = null;    // `${asset}|${tf}`
 
     const sourceByContract = $derived(mode === 'gamma' ? gammaByContract : oiByContract);
 
@@ -106,14 +107,15 @@
     );
 
     async function loadOHLC() {
-        if (lastAssetLoaded === assetId && ohlc) return;
+        const key = `${assetId}|${timeframe}`;
+        if (lastLoadedKey === key && ohlc) return;
         ohlcLoading = true;
         ohlcError = false;
         try {
-            const data = await fetchOHLC(assetId);
+            const data = await fetchOHLC(assetId, timeframe);
             ohlc = data;
             ohlcError = !data?.candles?.length;
-            lastAssetLoaded = assetId;
+            lastLoadedKey = key;
         } catch {
             ohlcError = true;
         } finally {
@@ -149,7 +151,9 @@
                 timeScale: {
                     borderColor: 'hsl(0 0% 18%)',
                     rightOffset: 4,
-                    barSpacing: 8
+                    barSpacing: timeframe === '1h' ? 4 : 8,
+                    timeVisible: timeframe === '1h',
+                    secondsVisible: false
                 },
                 crosshair: {
                     mode: 1,
@@ -220,13 +224,22 @@
         }
     });
 
-    // Reload OHLC when asset switches.
+    // Reload OHLC when asset OR timeframe switches.
     $effect(() => {
-        assetId;
+        assetId; timeframe;
         untrack(() => {
             ohlc = null;
-            lastAssetLoaded = null;
-            void loadOHLC().then(() => ensureChart());
+            void loadOHLC().then(() => {
+                // setData() with a different time format (string -> number)
+                // confuses Lightweight Charts; recreate the series cleanly.
+                if (chart) {
+                    chart.remove();
+                    chart = null;
+                    candleSeries = null;
+                    priceLines = [];
+                }
+                void ensureChart();
+            });
         });
     });
 
@@ -247,7 +260,10 @@
             </span>
             <span class="truncate text-[10px] text-muted-foreground">
                 {#if ohlc?.candles?.length}
-                    {ohlc.candles.length} candles · {ohlc.symbol || assetId.toUpperCase()}
+                    {ohlc.candles.length} {ohlc.interval || timeframe} candles · {ohlc.symbol || assetId.toUpperCase()}
+                    {#if ohlc.rollovers_adjusted}
+                        · <span class="text-warn">{ohlc.rollovers_adjusted} rollover{ohlc.rollovers_adjusted === 1 ? '' : 's'} adjusted</span>
+                    {/if}
                     {#if referencePrice > 0} · ref <span class="font-mono">{fmtStrike(referencePrice)}</span>{/if}
                     · top <span class="font-mono">{visibleWalls.length}</span> {mode === 'gamma' ? 'gamma' : 'OI'} walls
                 {:else if !ohlcLoading}
@@ -257,6 +273,28 @@
         </div>
 
         <div class="flex items-center gap-3">
+            <!-- Timeframe toggle -->
+            <div class="flex items-center gap-1.5">
+                <span class="text-[9px] font-semibold uppercase tracking-widest text-muted-foreground">TF</span>
+                <div class="flex gap-1">
+                    {#each [{ k: '1h', l: '1H' }, { k: '1d', l: '1D' }] as t}
+                        {@const isActive = timeframe === t.k}
+                        <button
+                            type="button"
+                            onclick={() => (timeframe = t.k)}
+                            class={cn(
+                                'rounded-md border px-2.5 py-1 font-mono text-[10px] font-semibold transition-colors',
+                                isActive
+                                    ? 'border-primary bg-primary text-primary-foreground'
+                                    : 'border-border bg-surface text-muted-foreground hover:bg-surface-elevated hover:text-foreground'
+                            )}
+                        >
+                            {t.l}
+                        </button>
+                    {/each}
+                </div>
+            </div>
+
             <!-- Source toggle -->
             <div class="flex items-center gap-1.5">
                 <span class="text-[9px] font-semibold uppercase tracking-widest text-muted-foreground">Walls</span>

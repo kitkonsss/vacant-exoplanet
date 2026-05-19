@@ -48,7 +48,9 @@ export function gammaHeatmapUrl(assetId, contractKey) {
     return dataUrl(assetId, `${contractKey}_GammaHeatmap.json`);
 }
 
-// Daily OHLC for the asset's underlying futures (yfinance-sourced).
-export function ohlcUrl(assetId) {
-    return dataUrl(assetId, 'OHLC.json');
+// OHLC for the asset's underlying futures (yfinance-sourced, rollover back-adjusted).
+// `tf` is '1d' (default, file=OHLC.json) or '1h' (file=OHLC_1h.json).
+export function ohlcUrl(assetId, tf = '1d') {
+    const fname = tf === '1h' ? 'OHLC_1h.json' : 'OHLC.json';
+    return dataUrl(assetId, fname);
 }

@@ -1077,65 +1077,123 @@ def get_futures_price(asset_id):
     return None
 
 
-def save_ohlc(asset_id, output_dir, period='3mo', interval='1d'):
-    """Fetch daily OHLC for the asset's futures from yfinance and write OHLC.json.
+def _backadjust_rollovers(candles, threshold_pct):
+    """Detect futures rollover gaps and back-adjust earlier candles to remove them.
 
-    Output shape matches TradingView Lightweight Charts:
-      { asset, symbol, interval, period, generated_at, candles: [{time, open, high, low, close, volume}] }
+    Yahoo's `GC=F` / `NQ=F` are front-month futures, *unadjusted* — when the
+    front contract rolls (e.g. June -> August), the price series shows a large
+    overnight gap that isn't a real price move. Standard fix (what TradingView,
+    Stooq continuous, etc. do): shift everything before the rollover by the
+    gap so the series joins smoothly at the rollover point.
 
-    `time` is an ISO date string ('YYYY-MM-DD') for daily bars.
+    Walks newest -> oldest. Any open-vs-prior-close gap above `threshold_pct`
+    is treated as a rollover. Applying from latest to earliest avoids double
+    counting when there are multiple rollovers in the window.
+    """
+    if len(candles) < 2:
+        return 0
+    rollovers = []                           # list of (index, gap_value)
+    for i in range(1, len(candles)):
+        prev_close = candles[i - 1]['close']
+        cur_open   = candles[i]['open']
+        if prev_close <= 0:
+            continue
+        gap = cur_open - prev_close
+        if abs(gap) / prev_close > threshold_pct:
+            rollovers.append((i, gap))
+    rollovers.sort(reverse=True)             # apply latest first
+    for idx, gap in rollovers:
+        for j in range(idx):
+            for k in ('open', 'high', 'low', 'close'):
+                candles[j][k] = round(candles[j][k] + gap, 2)
+    return len(rollovers)
+
+
+def _fetch_ohlc_candles(symbol, period, interval):
+    """Fetch yfinance OHLC and return list of candle dicts, or None on failure."""
+    if not HAS_YFINANCE:
+        return None
+    ticker = yf.Ticker(symbol)
+    df = ticker.history(period=period, interval=interval, auto_adjust=False)
+    if df is None or df.empty:
+        return None
+    candles = []
+    for ts, row in df.iterrows():
+        o, h, l, c = row.get('Open'), row.get('High'), row.get('Low'), row.get('Close')
+        if None in (o, h, l, c):
+            continue
+        try:
+            if any(map(lambda x: x != x, (o, h, l, c))):  # NaN check (NaN != NaN)
+                continue
+        except Exception:
+            pass
+        # Lightweight Charts wants seconds-since-epoch for intraday bars,
+        # 'YYYY-MM-DD' for daily — give it whichever matches the interval.
+        if interval.endswith('d') or interval.endswith('wk') or interval.endswith('mo'):
+            time_val = ts.strftime('%Y-%m-%d')
+        else:
+            time_val = int(ts.timestamp())
+        candle = {
+            'time': time_val,
+            'open': round(float(o), 2),
+            'high': round(float(h), 2),
+            'low':  round(float(l), 2),
+            'close': round(float(c), 2),
+        }
+        vol = row.get('Volume')
+        if vol is not None and vol == vol:
+            try:
+                candle['volume'] = int(vol)
+            except Exception:
+                pass
+        candles.append(candle)
+    return candles
+
+
+def save_ohlc(asset_id, output_dir):
+    """Fetch daily + hourly OHLC for the asset's futures, back-adjust rollover gaps,
+    and write OHLC.json (1d) + OHLC_1h.json (1h).
+
+    Both files share shape: { asset, symbol, interval, period, generated_at,
+                              rollovers_adjusted, candles: [...] }
     """
     if not HAS_YFINANCE:
         print(f'[OHLC] yfinance not installed — skipping {asset_id}')
         return False
     profile = ASSET_PROFILES[asset_id]
     symbol = profile['yahoo_symbol']
-    try:
-        ticker = yf.Ticker(symbol)
-        df = ticker.history(period=period, interval=interval, auto_adjust=False)
-        if df is None or df.empty:
-            print(f'[OHLC] No data returned for {symbol}')
-            return False
-        candles = []
-        for ts, row in df.iterrows():
-            o, h, l, c = row.get('Open'), row.get('High'), row.get('Low'), row.get('Close')
-            if None in (o, h, l, c):
+    success = False
+
+    # (interval, yfinance period, rollover threshold, output filename)
+    jobs = [
+        ('1d', '3mo', 0.025, 'OHLC.json'),
+        ('1h', '60d', 0.015, 'OHLC_1h.json'),
+    ]
+    for interval, period, threshold, fname in jobs:
+        try:
+            candles = _fetch_ohlc_candles(symbol, period, interval)
+            if not candles:
+                print(f'[OHLC] {profile["short"]} {interval}: no data returned')
                 continue
-            try:
-                if any(map(lambda x: x != x, (o, h, l, c))):  # NaN check (NaN != NaN)
-                    continue
-            except Exception:
-                pass
-            candle = {
-                'time': ts.strftime('%Y-%m-%d'),
-                'open': round(float(o), 2),
-                'high': round(float(h), 2),
-                'low':  round(float(l), 2),
-                'close': round(float(c), 2),
+            adjusted = _backadjust_rollovers(candles, threshold)
+            payload = {
+                'asset': asset_id,
+                'symbol': symbol,
+                'interval': interval,
+                'period': period,
+                'generated_at': datetime.now().isoformat(timespec='seconds'),
+                'rollovers_adjusted': adjusted,
+                'candles': candles,
             }
-            vol = row.get('Volume')
-            if vol is not None and vol == vol:
-                try:
-                    candle['volume'] = int(vol)
-                except Exception:
-                    pass
-            candles.append(candle)
-        payload = {
-            'asset': asset_id,
-            'symbol': symbol,
-            'interval': interval,
-            'period': period,
-            'generated_at': datetime.now().isoformat(timespec='seconds'),
-            'candles': candles,
-        }
-        out_path = os.path.join(output_dir, 'OHLC.json')
-        with open(out_path, 'w', encoding='utf-8') as f:
-            json.dump(payload, f, separators=(',', ':'))
-        print(f'[OHLC] Wrote {len(candles)} candles for {profile["short"]} -> {out_path}')
-        return True
-    except Exception as e:
-        print(f'[OHLC] yfinance error ({profile["short"]}): {e}')
-        return False
+            out_path = os.path.join(output_dir, fname)
+            with open(out_path, 'w', encoding='utf-8') as f:
+                json.dump(payload, f, separators=(',', ':'))
+            note = f' (back-adjusted {adjusted} rollover{"s" if adjusted != 1 else ""})' if adjusted else ''
+            print(f'[OHLC] {profile["short"]} {interval}: wrote {len(candles)} candles{note} -> {fname}')
+            success = True
+        except Exception as e:
+            print(f'[OHLC] {profile["short"]} {interval} error: {e}')
+    return success
 
 
 def chart_to_text(chart_data, header_line, asset_id='gc'):
