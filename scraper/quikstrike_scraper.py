@@ -326,6 +326,83 @@ def wait_ready(driver, timeout=15):
     time.sleep(0.5)
 
 
+# ─────────────────────────────────────────────────────────────
+# CHART-AWARE CONDITION WAITS
+# Replaces blind time.sleep() after chart-changing actions.
+# Safer than wait_ready alone: wait_ready returns when ASP.NET
+# postback flag is false, but Highcharts redraws via a separate
+# async callback that can complete LATER. Fingerprint-based wait
+# subsumes both signals — it only returns when the chart has
+# actually re-rendered with new data.
+# ─────────────────────────────────────────────────────────────
+
+_CHART_FP_JS = """
+    if (typeof Highcharts === 'undefined') return 'no-hc';
+    var charts = (Highcharts.charts || []).filter(c => c != null);
+    if (!charts.length) return 'no-charts';
+    var c = null;
+    for (var i = 0; i < charts.length; i++) {
+        if (charts[i].series && charts[i].series.length > 0) { c = charts[i]; break; }
+    }
+    if (!c) return 'no-series';
+    var title = (c.title && c.title.textStr) || '';
+    var sub = (c.subtitle && c.subtitle.textStr) || '';
+    var sLen = c.series.length;
+    var pts = (c.series[0] && c.series[0].data) ? c.series[0].data.length : 0;
+    return title + '|' + sub + '|' + sLen + '|' + pts;
+"""
+
+_FP_NOT_READY = {'no-hc', 'no-charts', 'no-series', 'error', ''}
+
+
+def _chart_fingerprint(driver):
+    """Cheap snapshot of current Highcharts state. Returns 'no-*' sentinels when not ready."""
+    try:
+        return driver.execute_script(_CHART_FP_JS) or 'error'
+    except Exception:
+        return 'error'
+
+
+def _fp_has_data(fp):
+    """True when fingerprint represents a rendered chart with ≥1 data point."""
+    if fp in _FP_NOT_READY:
+        return False
+    parts = fp.rsplit('|', 1)
+    if len(parts) != 2:
+        return False
+    try:
+        return int(parts[-1]) > 0
+    except ValueError:
+        return False
+
+
+def wait_for_chart_ready(driver, timeout=10, poll=0.15):
+    """Wait until Highcharts has rendered at least one data point. Returns True on success."""
+    end = time.time() + timeout
+    while time.time() < end:
+        if _fp_has_data(_chart_fingerprint(driver)):
+            return True
+        time.sleep(poll)
+    return False
+
+
+def wait_for_chart_change(driver, baseline, timeout=15, poll=0.15):
+    """Wait until chart fingerprint differs from baseline AND has data.
+
+    Requires non-empty data in the new state to avoid returning during the
+    transient empty window mid-postback. Returns new fingerprint or None
+    on timeout — caller may proceed anyway (matches prior blind-sleep
+    behavior) but the timeout itself is loud and debuggable.
+    """
+    end = time.time() + timeout
+    while time.time() < end:
+        current = _chart_fingerprint(driver)
+        if current != baseline and _fp_has_data(current):
+            return current
+        time.sleep(poll)
+    return None
+
+
 def debug_page(driver, label=''):
     """Print comprehensive debug info about current page."""
     print(f'\n{"─"*50}')
@@ -562,9 +639,12 @@ def select_contract(driver, contract):
     if contract_id:
         try:
             el = driver.find_element(By.ID, contract_id)
+            baseline_fp = _chart_fingerprint(driver)
             driver.execute_script('arguments[0].click();', el)
             print(f'[SELECT] ✅ Clicked: {contract_text} (by ID)')
             wait_ready(driver, timeout=10)
+            if wait_for_chart_change(driver, baseline_fp, timeout=15) is None:
+                print(f'[SELECT] ⚠ Chart did not change after click (baseline_fp={baseline_fp!r})')
             return True
         except Exception as e:
             print(f'[SELECT] ID click failed: {e}')
@@ -576,9 +656,12 @@ def select_contract(driver, contract):
         link_id = link.get_attribute('id') or ''
         if txt == contract_text and 'ExpirationTab' in link_id:
             try:
+                baseline_fp = _chart_fingerprint(driver)
                 driver.execute_script('arguments[0].click();', link)
                 print(f'[SELECT] ✅ Clicked: {contract_text} (by text+ID)')
                 wait_ready(driver, timeout=10)
+                if wait_for_chart_change(driver, baseline_fp, timeout=15) is None:
+                    print(f'[SELECT] ⚠ Chart did not change after click (baseline_fp={baseline_fp!r})')
                 return True
             except Exception as e:
                 print(f'[SELECT] Click failed: {e}')
@@ -587,9 +670,12 @@ def select_contract(driver, contract):
     for link in links:
         if link.text.strip() == contract_text:
             try:
+                baseline_fp = _chart_fingerprint(driver)
                 driver.execute_script('arguments[0].click();', link)
                 print(f'[SELECT] ✅ Clicked: {contract_text} (fallback)')
                 wait_ready(driver, timeout=10)
+                if wait_for_chart_change(driver, baseline_fp, timeout=15) is None:
+                    print(f'[SELECT] ⚠ Chart did not change after click (baseline_fp={baseline_fp!r})')
                 return True
             except:
                 continue
@@ -780,23 +866,29 @@ def switch_to_view(driver, view_type):
              print(f'[VIEW] Already on {target_label}')
              return True
 
+        # Snapshot chart before triggering postback so we can detect re-render.
+        baseline_fp = _chart_fingerprint(driver)
+
         # Select by value
         sel.select_by_value(target_value)
         print(f'[VIEW] ✅ Selected dropdown option: {target_label} (value={target_value})')
-        
-        # Wait for ASP.NET Postback
-        time.sleep(0.5)
-        wait_ready(driver)
-        
-        # Verify header update
+
+        # Wait for chart re-render (subsumes blind sleep + wait_ready since
+        # Highcharts only updates AFTER the ASP.NET postback completes).
+        if wait_for_chart_change(driver, baseline_fp, timeout=15) is None:
+            print(f'[VIEW] ⚠ Chart did not change after dropdown select (baseline_fp={baseline_fp!r})')
+
+        # Verify header update — tighter poll, generous total budget.
         expected = 'Open Interest' if view_type == 'oi' else 'Volume'
-        for _ in range(10):
-            time.sleep(0.3)
+        end_t = time.time() + 5
+        hdr = ''
+        while time.time() < end_t:
             hdr = extract_header(driver)
             if expected in hdr:
                 print(f'[VIEW] Verified header updated to: {hdr}')
                 return True
-        
+            time.sleep(0.15)
+
         print(f'[VIEW] ⚠ Header did not update after dropdown select (Got: {hdr})')
         save_debug(driver, f'header_fail_dropdown_{view_type}')
         # Fallthrough to other strategies if verification failed (though unlikely if dropdown worked)
@@ -833,6 +925,7 @@ def switch_to_view(driver, view_type):
             els = driver.find_elements(By.XPATH, xpath)
             for el in els:
                 if el.is_displayed() and len(el.text.strip()) < 30:
+                    baseline_fp = _chart_fingerprint(driver)
                     # Try native click first
                     try:
                         el.click()
@@ -840,16 +933,21 @@ def switch_to_view(driver, view_type):
                     except:
                         driver.execute_script('arguments[0].click();', el)
                         print(f'[VIEW] ✅ JS Click via XPath: "{el.text}" ({xpath})')
-                    
-                    # WAIT FOR HEADER TO UPDATE
+
+                    # Wait for chart re-render before reading header.
+                    if wait_for_chart_change(driver, baseline_fp, timeout=15) is None:
+                        print(f'[VIEW] ⚠ Chart did not change after click (baseline_fp={baseline_fp!r})')
+
                     expected = 'Open Interest' if view_type == 'oi' else 'Volume'
-                    for _ in range(10):  # Wait up to 3 seconds
-                        time.sleep(0.3)
+                    end_t = time.time() + 5
+                    hdr = ''
+                    while time.time() < end_t:
                         hdr = extract_header(driver)
                         if expected in hdr:
                             print(f'[VIEW] Verified header updated to: {hdr}')
                             return True
-                    
+                        time.sleep(0.15)
+
                     print(f'[VIEW] ⚠ Header did not update to "{expected}" (Got: {hdr})')
                     save_debug(driver, f'header_fail_{view_type}')
         except Exception as e:
@@ -867,7 +965,7 @@ def switch_to_view(driver, view_type):
 
 def extract_chart(driver, min_price=1000):
     """Extract data from all Highcharts charts on the page."""
-    time.sleep(0.5)
+    wait_for_chart_ready(driver, timeout=10)
     return driver.execute_script("""
         if (typeof Highcharts === 'undefined') return {error: 'No Highcharts'};
         var charts = (Highcharts.charts || []).filter(c => c != null);
