@@ -22,6 +22,10 @@ import subprocess
 import csv
 import io
 from datetime import datetime, timezone
+try:
+    from zoneinfo import ZoneInfo
+except ImportError:
+    ZoneInfo = None
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
@@ -449,8 +453,11 @@ def get_expiration_contracts(driver, asset_profile):
                 var dte = null;
                 var match = title.match(/([\\d.]+)\\s*DTE/i);
                 if (match) dte = parseFloat(match[1]);
+                var dateStr = null;
+                var dateMatch = title.match(/(\\d{1,2}\\/\\d{1,2}\\/\\d{4})/);
+                if (dateMatch) dateStr = dateMatch[1];
                 if (!result.find(c => c.text === txt)) {
-                    result.push({text: txt, id: id, title: title, dte: dte});
+                    result.push({text: txt, id: id, title: title, dte: dte, date_str: dateStr});
                 }
             }
         });
@@ -490,8 +497,11 @@ def get_expiration_contracts(driver, asset_profile):
                     var dte = null;
                     var match = title.match(/([\\d.]+)\\s*DTE/i);
                     if (match) dte = parseFloat(match[1]);
+                    var dateStr = null;
+                    var dateMatch = title.match(/(\\d{1,2}\\/\\d{1,2}\\/\\d{4})/);
+                    if (dateMatch) dateStr = dateMatch[1];
                     if (!result.find(c => c.text === txt)) {
-                        result.push({text: txt, id: id, title: title, dte: dte});
+                        result.push({text: txt, id: id, title: title, dte: dte, date_str: dateStr});
                     }
                 }
             });
@@ -607,6 +617,32 @@ def classify_contracts(contracts, asset_profile):
     # while it is trading (e.g. G3MK6 with 0.4 DTE on its expiration day).
     MIN_DTE = 0.1
 
+    # Primary filter: drop contracts whose listed expiration date is strictly
+    # before "today" in NY time. This handles the case where DTE alone is
+    # ambiguous because settlement times differ per asset (NQ 4pm ET,
+    # GC 1:30pm ET) — e.g. on Mon 1pm ET, NQ Mon-weekly still has DTE 0.13
+    # but is logically yesterday's contract for someone viewing on Tuesday.
+    today_ny = None
+    if ZoneInfo is not None:
+        try:
+            today_ny = datetime.now(ZoneInfo('America/New_York')).date()
+        except Exception:
+            today_ny = None
+    if today_ny is None:
+        today_ny = datetime.now(timezone.utc).date()
+
+    def _parse_date(c):
+        s = c.get('date_str')
+        if not s:
+            return None
+        try:
+            return datetime.strptime(s, '%m/%d/%Y').date()
+        except (ValueError, TypeError):
+            return None
+
+    for c in contracts:
+        c['exp_date'] = _parse_date(c)
+
     monthly_check = asset_profile['monthly_check']
     friday_check = asset_profile['friday_check']
     is_daily = lambda sym: not friday_check(sym) and not monthly_check(sym)
@@ -637,12 +673,23 @@ def classify_contracts(contracts, asset_profile):
             result['monthly'] = raw_monthlies[0]
         return result
 
-    # Active = DTE >= MIN_DTE (not already expired/expiring today)
-    active = [c for c in sorted_c if c['dte'] >= MIN_DTE]
+    # Active = DTE >= MIN_DTE AND (no parsed date OR date >= today_ny).
+    # The date check filters out the previous-day daily that is still in
+    # post-trade settlement window (DTE 0..1) so we don't pick it as "current".
+    def _is_active(c):
+        if c['dte'] < MIN_DTE:
+            return False
+        exp = c.get('exp_date')
+        if exp is not None and exp < today_ny:
+            return False
+        return True
+
+    active = [c for c in sorted_c if _is_active(c)]
     if not active:
         # Everything is expiring — fall back to taking them as-is
         print('[CLASSIFY] Warning: all contracts below MIN_DTE threshold, using raw sort')
         active = sorted_c
+    print(f'[CLASSIFY] today_ny={today_ny.isoformat()}, {len(active)}/{len(sorted_c)} contracts pass active filter')
 
     # Current = prefer daily/Monday (not OG prefix) among active; else any active
     dailies = [c for c in active if is_daily(c['text'])]
