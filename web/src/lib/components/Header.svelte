@@ -1,4 +1,5 @@
 <script>
+    import { onMount, onDestroy } from 'svelte';
     import Select from './ui/Select.svelte';
     import Button from './ui/Button.svelte';
     import { ASSET_PROFILES } from '$lib/config.js';
@@ -12,8 +13,32 @@
         price = null,
         dte = null,
         lastUpdate = '—',
+        lastUpdateAt = null,   // optional Date — drives "Xs ago" timer
+        refreshing = false,
         onRefresh = () => {}
     } = $props();
+
+    // Live "Xs ago" ticker — re-renders every second while mounted.
+    let now = $state(Date.now());
+    let timer;
+    onMount(() => {
+        timer = setInterval(() => { now = Date.now(); }, 1000);
+    });
+    onDestroy(() => {
+        if (timer) clearInterval(timer);
+    });
+
+    const ago = $derived.by(() => {
+        if (!lastUpdateAt) return null;
+        const seconds = Math.max(0, Math.floor((now - lastUpdateAt.getTime()) / 1000));
+        if (seconds < 5)  return 'just now';
+        if (seconds < 60) return `${seconds}s ago`;
+        const minutes = Math.floor(seconds / 60);
+        if (minutes < 60) return `${minutes}m ago`;
+        const hours = Math.floor(minutes / 60);
+        if (hours < 24) return `${hours}h ago`;
+        return `${Math.floor(hours / 24)}d ago`;
+    });
 </script>
 
 <header class="relative border-b border-border bg-surface">
@@ -68,15 +93,30 @@
                 </span>
             {/if}
 
-            <Button variant="ghost" size="sm" onclick={onRefresh}>
-                <RefreshCw class="h-3.5 w-3.5" strokeWidth={2.2} />
-                Refresh
+            <Button
+                variant="ghost"
+                size="sm"
+                onclick={onRefresh}
+                disabled={refreshing}
+                title="Refresh data (R)"
+                aria-label="Refresh data"
+            >
+                <RefreshCw
+                    class={`h-3.5 w-3.5 ${refreshing ? 'animate-spin-slow text-primary' : ''}`}
+                    strokeWidth={2.2}
+                />
+                {refreshing ? 'Refreshing…' : 'Refresh'}
             </Button>
 
             <div class="hidden items-center gap-2 rounded-md border border-border bg-surface px-2.5 py-1 font-mono text-[10px] text-muted-foreground sm:flex">
-                <span class="h-1.5 w-1.5 rounded-full bg-primary"></span>
-                <span>{lastUpdate}</span>
+                <span class={`h-1.5 w-1.5 rounded-full ${refreshing ? 'bg-warn animate-pulse-dot' : 'bg-primary animate-pulse-dot'}`}></span>
+                <span title={lastUpdate}>{ago ?? lastUpdate}</span>
             </div>
         </div>
     </div>
+
+    <!-- Indeterminate progress bar shown while refreshing -->
+    {#if refreshing}
+        <div class="v2-progress-bar absolute inset-x-0 bottom-0 h-[2px]"></div>
+    {/if}
 </header>

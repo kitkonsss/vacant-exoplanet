@@ -17,7 +17,16 @@
         <span>Data Type</span>
         <span class="font-mono text-foreground/80">{dataType}</span>
     </div>
-    <div class="ml-auto flex items-center gap-1.5 opacity-70">
+    <div class="ml-auto flex items-center gap-3 opacity-70">
+        <div class="hidden items-center gap-1.5 md:flex">
+            <kbd class="rounded-sm border border-border bg-background px-1 font-mono text-[9px] text-foreground/80">R</kbd>
+            <span>refresh</span>
+            <span class="opacity-50">·</span>
+            <kbd class="rounded-sm border border-border bg-background px-1 font-mono text-[9px] text-foreground/80">1</kbd>
+            <span class="opacity-50">–</span>
+            <kbd class="rounded-sm border border-border bg-background px-1 font-mono text-[9px] text-foreground/80">4</kbd>
+            <span>tabs</span>
+        </div>
         <span class="font-mono">v2</span>
     </div>
 </footer>

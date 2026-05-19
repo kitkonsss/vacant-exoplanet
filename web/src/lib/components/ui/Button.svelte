@@ -27,9 +27,9 @@
 <button
     {type}
     class={cn(
-        'inline-flex items-center justify-center gap-1.5 rounded-md font-semibold transition-colors',
+        'inline-flex items-center justify-center gap-1.5 rounded-md font-semibold transition-all duration-150',
         'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background',
-        'disabled:pointer-events-none disabled:opacity-50',
+        'active:scale-[0.97] disabled:pointer-events-none disabled:opacity-50',
         variants[variant] || variants.default,
         sizes[size] || sizes.default,
         className

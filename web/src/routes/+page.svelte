@@ -14,7 +14,10 @@
     let activeTab = $state('analysis');
     let payload = $state(null);
     let loading = $state(true);
+    let refreshing = $state(false);
     let lastUpdate = $state('—');
+    /** @type {Date | null} */
+    let lastUpdateAt = $state(null);
 
     // Per-contract OI heatmap state (also feeds Conviction tab).
     let heatmapContract = $state(DEFAULT_CONTRACT_KEY);
@@ -85,7 +88,9 @@
             payload = nextPayload;
             if (nextKey && nextKey !== heatmapContract) heatmapContract = nextKey;
             if (nextKey && nextKey !== gammaContract) gammaContract = nextKey;
-            lastUpdate = new Date().toLocaleTimeString();
+            const stamp = new Date();
+            lastUpdate = stamp.toLocaleTimeString();
+            lastUpdateAt = stamp;
             return nextKey;
         } finally {
             loading = false;
@@ -133,15 +138,46 @@
     }
 
     async function refresh() {
-        heatmapCache = {};
-        gammaCache = {};
-        const nextKey = await load();
-        if (activeTab === 'heatmap' && nextKey) {
-            await ensureHeatmap(nextKey);
-        } else if (activeTab === 'gamma' && nextKey) {
-            await ensureGamma(nextKey);
-        } else if (activeTab === 'conviction') {
-            await ensureAllHeatmaps(availableContractKeys);
+        if (refreshing) return;
+        refreshing = true;
+        try {
+            heatmapCache = {};
+            gammaCache = {};
+            const nextKey = await load();
+            if (activeTab === 'heatmap' && nextKey) {
+                await ensureHeatmap(nextKey);
+            } else if (activeTab === 'gamma' && nextKey) {
+                await ensureGamma(nextKey);
+            } else if (activeTab === 'conviction') {
+                await ensureAllHeatmaps(availableContractKeys);
+            }
+        } finally {
+            refreshing = false;
+        }
+    }
+
+    function onKeydown(event) {
+        // Ignore when user is typing in a form field
+        const t = event.target;
+        if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable)) {
+            return;
+        }
+        if (event.metaKey || event.ctrlKey || event.altKey) return;
+        const key = event.key.toLowerCase();
+        if (key === 'r') {
+            event.preventDefault();
+            void refresh();
+            return;
+        }
+        // Number keys 1-4 switch tabs
+        const idx = Number(event.key);
+        if (Number.isInteger(idx) && idx >= 1 && idx <= tabs.length) {
+            event.preventDefault();
+            const t = tabs[idx - 1];
+            if (t && t.key !== activeTab) {
+                activeTab = t.key;
+                onTabChange(t.key);
+            }
         }
     }
 
@@ -189,6 +225,8 @@
     });
 </script>
 
+<svelte:window onkeydown={onKeydown} />
+
 <div class="flex h-screen flex-col overflow-hidden">
     <Header
         bind:asset
@@ -203,44 +241,50 @@
         price={visibleContract?.future_price}
         dte={visibleContract?.dte}
         {lastUpdate}
+        {lastUpdateAt}
+        refreshing={refreshing || loading}
         onRefresh={refresh}
     />
 
     <TabNav {tabs} bind:active={activeTab} onChange={onTabChange} />
 
     <main class="flex flex-1 min-h-0 flex-col overflow-hidden px-6 py-5">
-        {#if activeTab === 'analysis'}
-            <div class="flex flex-col gap-4 overflow-y-auto">
-                <PositionBiasView {payload} {loading} />
+        {#key activeTab}
+            <div class="flex flex-1 min-h-0 flex-col overflow-hidden animate-fade-in">
+                {#if activeTab === 'analysis'}
+                    <div class="flex flex-col gap-4 overflow-y-auto">
+                        <PositionBiasView {payload} {loading} />
+                    </div>
+                {:else if activeTab === 'heatmap'}
+                    <HeatmapView
+                        assetId={asset}
+                        bind:contractKey={heatmapContract}
+                        availableContracts={availableContractKeys}
+                        data={currentHeatmap}
+                        loading={heatmapLoading}
+                        onChangeContract={onHeatmapContract}
+                    />
+                {:else if activeTab === 'gamma'}
+                    <HeatmapView
+                        assetId={asset}
+                        bind:contractKey={gammaContract}
+                        availableContracts={availableContractKeys}
+                        data={currentGamma}
+                        loading={gammaLoading}
+                        onChangeContract={onGammaContract}
+                        title="Gamma Heatmap (1 Pct, Call+Put)"
+                        valueDecimals={0}
+                        heatScale="log"
+                        emptyFile="_GammaHeatmap.json"
+                    />
+                {:else if activeTab === 'conviction'}
+                    <ConvictionView
+                        contracts={convictionContracts}
+                        loading={convictionLoading}
+                    />
+                {/if}
             </div>
-        {:else if activeTab === 'heatmap'}
-            <HeatmapView
-                assetId={asset}
-                bind:contractKey={heatmapContract}
-                availableContracts={availableContractKeys}
-                data={currentHeatmap}
-                loading={heatmapLoading}
-                onChangeContract={onHeatmapContract}
-            />
-        {:else if activeTab === 'gamma'}
-            <HeatmapView
-                assetId={asset}
-                bind:contractKey={gammaContract}
-                availableContracts={availableContractKeys}
-                data={currentGamma}
-                loading={gammaLoading}
-                onChangeContract={onGammaContract}
-                title="Gamma Heatmap (1 Pct, Call+Put)"
-                valueDecimals={0}
-                heatScale="log"
-                emptyFile="_GammaHeatmap.json"
-            />
-        {:else if activeTab === 'conviction'}
-            <ConvictionView
-                contracts={convictionContracts}
-                loading={convictionLoading}
-            />
-        {/if}
+        {/key}
     </main>
 
     <AppFooter
