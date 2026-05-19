@@ -6,10 +6,10 @@
     import PositionBiasView from '$lib/components/PositionBiasView.svelte';
     import HeatmapView from '$lib/components/HeatmapView.svelte';
     import ConvictionView from '$lib/components/ConvictionView.svelte';
-    import TopStrikesView from '$lib/components/TopStrikesView.svelte';
+    import PriceChartView from '$lib/components/PriceChartView.svelte';
     import { fetchGammaHeatmap, fetchHeatmap, fetchPositionBias } from '$lib/data.js';
     import { ASSET_PROFILES, DEFAULT_CONTRACT_KEY } from '$lib/config.js';
-    import { LineChart, Grid3X3, Activity, Target, BarChart3 } from 'lucide-svelte';
+    import { LineChart, Grid3X3, Activity, Target, CandlestickChart } from 'lucide-svelte';
 
     let asset = $state('gc');
     let activeTab = $state('analysis');
@@ -41,7 +41,7 @@
         { key: 'analysis',   label: 'Position Bias', tone: 'primary', icon: LineChart },
         { key: 'heatmap',    label: 'OI Heatmap',    tone: 'mag',     icon: Grid3X3 },
         { key: 'gamma',      label: 'Gamma Heatmap', tone: 'mag',     icon: Activity },
-        { key: 'topstrikes', label: 'Top Strikes',   tone: 'mag',     icon: BarChart3 },
+        { key: 'pricechart', label: 'Price Chart',   tone: 'mag',     icon: CandlestickChart },
         { key: 'conviction', label: 'Conviction',    tone: 'warn',    icon: Target }
     ];
 
@@ -168,7 +168,7 @@
                 await ensureGamma(nextKey);
             } else if (activeTab === 'conviction') {
                 await ensureAllHeatmaps(availableContractKeys);
-            } else if (activeTab === 'topstrikes') {
+            } else if (activeTab === 'pricechart') {
                 await Promise.all([
                     ensureAllHeatmaps(availableContractKeys),
                     ensureAllGamma(availableContractKeys)
@@ -217,7 +217,7 @@
             void ensureGamma(nextKey);
         } else if (key === 'conviction') {
             void ensureAllHeatmaps(availableContractKeys);
-        } else if (key === 'topstrikes') {
+        } else if (key === 'pricechart') {
             void ensureAllHeatmaps(availableContractKeys);
             void ensureAllGamma(availableContractKeys);
         }
@@ -245,7 +245,7 @@
                     void ensureGamma(nextKey);
                 } else if (activeTab === 'conviction') {
                     void ensureAllHeatmaps(availableContractKeys);
-                } else if (activeTab === 'topstrikes') {
+                } else if (activeTab === 'pricechart') {
                     void ensureAllHeatmaps(availableContractKeys);
                     void ensureAllGamma(availableContractKeys);
                 }
@@ -266,8 +266,8 @@
                 ? currentGamma?.contract || visibleContract?.contract || ''
             : activeTab === 'conviction'
                 ? `${convictionContracts.length}× tenors`
-            : activeTab === 'topstrikes'
-                ? `${availableContractKeys.length}× tenors`
+            : activeTab === 'pricechart'
+                ? `${asset.toUpperCase()} futures`
                 : visibleContract?.contract || ''}
         price={visibleContract?.future_price}
         dte={visibleContract?.dte}
@@ -308,8 +308,8 @@
                         heatScale="log"
                         emptyFile="_GammaHeatmap.json"
                     />
-                {:else if activeTab === 'topstrikes'}
-                    <TopStrikesView
+                {:else if activeTab === 'pricechart'}
+                    <PriceChartView
                         assetId={asset}
                         oiByContract={heatmapCache}
                         gammaByContract={gammaCache}
@@ -332,13 +332,13 @@
                 ? currentGamma?.contract || visibleContract?.contract || '—'
             : activeTab === 'conviction'
                 ? 'All Contracts'
-            : activeTab === 'topstrikes'
-                ? 'All Contracts'
+            : activeTab === 'pricechart'
+                ? `${asset.toUpperCase()} futures`
                 : visibleContract?.contract || '—'}
         dataType={activeTab === 'analysis' ? 'Position Bias'
             : activeTab === 'heatmap' ? 'OI Heatmap'
             : activeTab === 'gamma' ? 'Gamma Heatmap'
-            : activeTab === 'topstrikes' ? 'Top Strikes'
+            : activeTab === 'pricechart' ? 'Price Chart'
             : 'Conviction'}
     />
 </div>

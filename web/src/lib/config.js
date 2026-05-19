@@ -47,3 +47,8 @@ export function heatmapUrl(assetId, contractKey) {
 export function gammaHeatmapUrl(assetId, contractKey) {
     return dataUrl(assetId, `${contractKey}_GammaHeatmap.json`);
 }
+
+// Daily OHLC for the asset's underlying futures (yfinance-sourced).
+export function ohlcUrl(assetId) {
+    return dataUrl(assetId, 'OHLC.json');
+}

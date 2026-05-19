@@ -1,4 +1,4 @@
-import { CONTRACT_OPTIONS, gammaHeatmapUrl, heatmapUrl, positionBiasUrl } from './config.js';
+import { CONTRACT_OPTIONS, gammaHeatmapUrl, heatmapUrl, ohlcUrl, positionBiasUrl } from './config.js';
 
 async function fetchJsonSoft(url) {
     try {
@@ -37,4 +37,12 @@ export async function fetchHeatmap(assetId, contractKey) {
  */
 export async function fetchGammaHeatmap(assetId, contractKey) {
     return fetchJsonSoft(gammaHeatmapUrl(assetId, contractKey));
+}
+
+/**
+ * Fetches daily OHLC for the asset's underlying futures.
+ * Shape: { candles: [{ time, open, high, low, close, volume? }, ...] }
+ */
+export async function fetchOHLC(assetId) {
+    return fetchJsonSoft(ohlcUrl(assetId));
 }

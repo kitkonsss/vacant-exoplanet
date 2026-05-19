@@ -1077,6 +1077,67 @@ def get_futures_price(asset_id):
     return None
 
 
+def save_ohlc(asset_id, output_dir, period='3mo', interval='1d'):
+    """Fetch daily OHLC for the asset's futures from yfinance and write OHLC.json.
+
+    Output shape matches TradingView Lightweight Charts:
+      { asset, symbol, interval, period, generated_at, candles: [{time, open, high, low, close, volume}] }
+
+    `time` is an ISO date string ('YYYY-MM-DD') for daily bars.
+    """
+    if not HAS_YFINANCE:
+        print(f'[OHLC] yfinance not installed — skipping {asset_id}')
+        return False
+    profile = ASSET_PROFILES[asset_id]
+    symbol = profile['yahoo_symbol']
+    try:
+        ticker = yf.Ticker(symbol)
+        df = ticker.history(period=period, interval=interval, auto_adjust=False)
+        if df is None or df.empty:
+            print(f'[OHLC] No data returned for {symbol}')
+            return False
+        candles = []
+        for ts, row in df.iterrows():
+            o, h, l, c = row.get('Open'), row.get('High'), row.get('Low'), row.get('Close')
+            if None in (o, h, l, c):
+                continue
+            try:
+                if any(map(lambda x: x != x, (o, h, l, c))):  # NaN check (NaN != NaN)
+                    continue
+            except Exception:
+                pass
+            candle = {
+                'time': ts.strftime('%Y-%m-%d'),
+                'open': round(float(o), 2),
+                'high': round(float(h), 2),
+                'low':  round(float(l), 2),
+                'close': round(float(c), 2),
+            }
+            vol = row.get('Volume')
+            if vol is not None and vol == vol:
+                try:
+                    candle['volume'] = int(vol)
+                except Exception:
+                    pass
+            candles.append(candle)
+        payload = {
+            'asset': asset_id,
+            'symbol': symbol,
+            'interval': interval,
+            'period': period,
+            'generated_at': datetime.now().isoformat(timespec='seconds'),
+            'candles': candles,
+        }
+        out_path = os.path.join(output_dir, 'OHLC.json')
+        with open(out_path, 'w', encoding='utf-8') as f:
+            json.dump(payload, f, separators=(',', ':'))
+        print(f'[OHLC] Wrote {len(candles)} candles for {profile["short"]} -> {out_path}')
+        return True
+    except Exception as e:
+        print(f'[OHLC] yfinance error ({profile["short"]}): {e}')
+        return False
+
+
 def chart_to_text(chart_data, header_line, asset_id='gc'):
     """Convert chart data to text format compatible with the dashboard."""
     if not chart_data or 'charts' not in chart_data:
@@ -2623,6 +2684,7 @@ def scrape_asset(driver, asset_id):
         scrape_view(driver, 'intraday', 'current', skip_switch=True, output_dir=output_dir, asset_id=asset_id)
         scrape_view(driver, 'oi', 'current', output_dir=output_dir, asset_id=asset_id)
         build_asset_position_bias(asset_id)
+        save_ohlc(asset_id, output_dir)
         return True
 
     # Classify
@@ -2667,6 +2729,7 @@ def scrape_asset(driver, asset_id):
         traceback.print_exc()
 
     build_asset_position_bias(asset_id)
+    save_ohlc(asset_id, output_dir)
     return True
 
 
@@ -2695,6 +2758,7 @@ def main():
         print('='*60)
         for asset_id in assets:
             build_asset_position_bias(asset_id)
+            save_ohlc(asset_id, get_output_dir(asset_id))
         return
 
     print('='*60)
