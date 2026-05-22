@@ -777,12 +777,13 @@ def classify_contracts(contracts, asset_profile):
         active = sorted_c
     print(f'[CLASSIFY] today_ny={today_ny.isoformat()}, {len(active)}/{len(sorted_c)} contracts pass active filter')
 
-    # Current = prefer daily/Monday (not OG prefix) among active; else any active
+    # Current = lowest-DTE active contract overall, regardless of type.
+    # On Mon-Thu the nearest daily wins (it has the lowest DTE). On Fridays,
+    # today's expiring Friday weekly (e.g. OG4K6 with ~0.3 DTE) has a lower
+    # DTE than any future daily, so it correctly becomes CURRENT instead of
+    # being skipped in favour of next week's Wed/Thu daily.
     dailies = [c for c in active if is_daily(c['text'])]
-    if dailies:
-        result['current'] = dailies[0]
-    else:
-        result['current'] = active[0]
+    result['current'] = active[0]
 
     current_dte = result['current']['dte']
 
