@@ -2366,9 +2366,13 @@ def scrape_oi_heatmap_phase(driver, classified, asset_id, output_dir):
             pass
         time.sleep(1.0)
 
-        print(f'[HEATMAP] Ensuring strike window is set to ±{HEATMAP_STRIKE_WINDOW}...')
+        # Monthly heatmap covers a much wider strike range than weeklies/dailies,
+        # so ±50 clips the wings. Use 'All' (-1) for monthly; default for the rest.
+        strike_target = '-1' if prefix == 'monthly' else HEATMAP_STRIKE_WINDOW
+        strike_label = 'All' if strike_target == '-1' else f'±{strike_target}'
+        print(f'[HEATMAP] Ensuring strike window is set to {strike_label}...')
         try:
-            strike_res = _set_heatmap_strike_window(driver, HEATMAP_STRIKE_WINDOW)
+            strike_res = _set_heatmap_strike_window(driver, strike_target)
             print(f'[HEATMAP] Strike window: {strike_res}')
             if strike_res and strike_res.get('action') == 'changed':
                 time.sleep(2.5)
