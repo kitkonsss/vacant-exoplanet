@@ -688,6 +688,18 @@ def select_contract(driver, contract):
 # CONTRACT CLASSIFICATION
 # ============================================================
 
+def _today_ny():
+    """Today's date in US/Eastern (the exchange clock), with a UTC fallback
+    when tzdata is unavailable. Used both for classification and the
+    incomplete-list guard so they always agree on what 'today' is."""
+    if ZoneInfo is not None:
+        try:
+            return datetime.now(ZoneInfo('America/New_York')).date()
+        except Exception:
+            pass
+    return datetime.now(timezone.utc).date()
+
+
 def classify_contracts(contracts, asset_profile):
     """
     Classify contracts into current/tomorrow/friday/monthly using asset-specific symbol patterns + DTE.
@@ -708,14 +720,7 @@ def classify_contracts(contracts, asset_profile):
     # ambiguous because settlement times differ per asset (NQ 4pm ET,
     # GC 1:30pm ET) — e.g. on Mon 1pm ET, NQ Mon-weekly still has DTE 0.13
     # but is logically yesterday's contract for someone viewing on Tuesday.
-    today_ny = None
-    if ZoneInfo is not None:
-        try:
-            today_ny = datetime.now(ZoneInfo('America/New_York')).date()
-        except Exception:
-            today_ny = None
-    if today_ny is None:
-        today_ny = datetime.now(timezone.utc).date()
+    today_ny = _today_ny()
 
     def _parse_date(c):
         s = c.get('date_str')
@@ -843,6 +848,72 @@ def classify_contracts(contracts, asset_profile):
             print(f'[CLASSIFY] Note: Current contract is also the Friday contract ({result["current"]["text"]})')
 
     return result
+
+
+def _saved_current_exp(output_dir):
+    """Expiration date of the last successfully-saved 'current' contract,
+    parsed from the existing current_OIData.txt header. Returns a date or
+    None (no prior file / unparseable)."""
+    path = os.path.join(output_dir, 'current_OIData.txt')
+    try:
+        with open(path, 'r', encoding='utf-8', errors='replace') as fh:
+            header = fh.readline()
+    except OSError:
+        return None
+    m = re.search(r'Expiration:\s*(\d{1,2}/\d{1,2}/\d{4})', header)
+    if not m:
+        return None
+    try:
+        return datetime.strptime(m.group(1), '%m/%d/%Y').date()
+    except (ValueError, TypeError):
+        return None
+
+
+# A holiday-adjusted "long weekend" front contract is at most +3 calendar days
+# ahead of today (e.g. Good Friday -> the Monday contract). Anything farther on
+# a regular scrape means the near-dated contracts simply were not listed yet.
+MAX_FRONT_GAP_DAYS = 4
+
+
+def current_pick_looks_incomplete(classified, output_dir):
+    """Detect a truncated/incomplete contract listing (common in the overnight
+    and early-morning hours when QuikStrike has not yet published the near-dated
+    contracts). In that state `current` points at a far contract instead of
+    today's expiry, e.g. a +5d daily on a Friday morning.
+
+    Returns a human-readable reason string when the pick looks wrong (caller
+    should skip the overwrite to preserve last-good data), or None when it
+    looks fine. Conservative by design: it only fires on high-confidence
+    signals so legitimate holidays are never skipped.
+    """
+    cur = classified.get('current')
+    if not cur:
+        return None  # nothing picked — handled elsewhere
+    new_exp = cur.get('exp_date')
+    if new_exp is None:
+        return None  # no date info → cannot judge, let it through
+
+    today = _today_ny()
+
+    # (A) Regression check: the previously-saved current contract has NOT
+    #     expired yet (its expiry is today or later) but this scrape picked a
+    #     *later* expiry. That means a still-valid nearer contract was missing
+    #     from the list — e.g. the early-Monday transient that briefly showed
+    #     Tuesday's contract before the Monday one reappeared.
+    old_exp = _saved_current_exp(output_dir)
+    if old_exp is not None and old_exp >= today and new_exp > old_exp:
+        return (f'picked {cur.get("text","?")} exp {new_exp} but last-good '
+                f'contract exp {old_exp} has not expired yet')
+
+    # (B) Absolute sanity: the front contract is implausibly far ahead. Allows
+    #     single market holidays (up to +3 over a Good-Friday long weekend) and
+    #     fires only beyond that.
+    gap = (new_exp - today).days
+    if gap >= MAX_FRONT_GAP_DAYS:
+        return (f'front contract {cur.get("text","?")} exp {new_exp} is {gap} '
+                f'days ahead of today {today} — near contracts not listed yet')
+
+    return None
 
 
 # ============================================================
@@ -2765,6 +2836,19 @@ def scrape_asset(driver, asset_id):
 
     # Classify
     classified = classify_contracts(contracts, profile)
+
+    # Guard: if the listing is incomplete (near contracts not yet published,
+    # common overnight/early-morning) `current` points at a far contract. Skip
+    # the overwrite so the last-good per-contract files are preserved rather
+    # than replaced with the wrong day's data. Price data (OHLC) is independent
+    # of contract selection, so it is still refreshed.
+    incomplete = current_pick_looks_incomplete(classified, output_dir)
+    if incomplete:
+        print(f'[GUARD] Skipping {profile["short"]} contract write — {incomplete}')
+        print('[GUARD] Keeping last-good contract data files untouched.')
+        save_debug(driver, f'guard_incomplete_{asset_id}', output_dir=output_dir)
+        save_ohlc(asset_id, output_dir)
+        return True
 
     print(f'\n[PLAN] {profile["short"]} contract assignments:')
     for k in CONTRACT_KEYS:
