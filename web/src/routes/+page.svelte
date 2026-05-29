@@ -65,12 +65,14 @@
                 key: c.contract_key,
                 dte: c.dte,
                 bias: c,
-                heatmap: heatmapCache[c.contract_key] || null
+                heatmap: heatmapCache[c.contract_key] || null,
+                gamma: gammaCache[c.contract_key] || null
             }))
             .filter((c) => c.heatmap)
     );
     const convictionLoading = $derived(
         loading || (activeTab === 'conviction' && convictionContracts.length === 0)
+            || (activeTab === 'conviction' && (heatmapLoading || gammaLoading))
     );
 
     function resolveContractKey(contractKeys, preferredKey = heatmapContract) {
@@ -167,7 +169,10 @@
             } else if (activeTab === 'gamma' && nextKey) {
                 await ensureGamma(nextKey);
             } else if (activeTab === 'conviction') {
-                await ensureAllHeatmaps(availableContractKeys);
+                await Promise.all([
+                    ensureAllHeatmaps(availableContractKeys),
+                    ensureAllGamma(availableContractKeys)
+                ]);
             } else if (activeTab === 'pricechart') {
                 await Promise.all([
                     ensureAllHeatmaps(availableContractKeys),
@@ -217,6 +222,7 @@
             void ensureGamma(nextKey);
         } else if (key === 'conviction') {
             void ensureAllHeatmaps(availableContractKeys);
+            void ensureAllGamma(availableContractKeys);
         } else if (key === 'pricechart') {
             void ensureAllHeatmaps(availableContractKeys);
             void ensureAllGamma(availableContractKeys);
@@ -245,6 +251,7 @@
                     void ensureGamma(nextKey);
                 } else if (activeTab === 'conviction') {
                     void ensureAllHeatmaps(availableContractKeys);
+                    void ensureAllGamma(availableContractKeys);
                 } else if (activeTab === 'pricechart') {
                     void ensureAllHeatmaps(availableContractKeys);
                     void ensureAllGamma(availableContractKeys);
