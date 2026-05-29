@@ -759,16 +759,29 @@ def classify_contracts(contracts, asset_profile):
             result['monthly'] = raw_monthlies[0]
         return result
 
-    # Active = DTE >= MIN_DTE AND (no parsed date OR date >= today_ny).
-    # The date check filters out the previous-day daily that is still in
-    # post-trade settlement window (DTE 0..1) so we don't pick it as "current".
+    # A contract is "active" (eligible to be picked as current/tomorrow/etc.) when:
+    #   - its expiration is not before today in NY time, AND
+    #   - it is not in the MIN_DTE floor *unless* it still expires today.
+    #
+    # The NY-date check is the primary filter: it drops the previous-day daily
+    # that is still in its post-trade settlement window (DTE 0..1) so we don't
+    # pick yesterday's contract as "current".
+    #
+    # The MIN_DTE floor must NOT evict a contract that still expires *today*.
+    # GC settles 1:30pm ET, so its same-day contract dips under MIN_DTE from
+    # ~11:06am ET onward; NQ settles 4pm ET. Applying the floor unconditionally
+    # made "current" wrongly jump to *tomorrow's* contract every day around
+    # 11:19am ET (and Friday -> Monday). We keep a same-day contract eligible
+    # until QuikStrike marks it actually expired (DTE < 0). The floor still
+    # applies to undated / future-dated contracts to skip an unparseable
+    # post-settlement leftover.
     def _is_active(c):
-        if c['dte'] < MIN_DTE:
-            return False
         exp = c.get('exp_date')
         if exp is not None and exp < today_ny:
             return False
-        return True
+        if exp == today_ny:
+            return c['dte'] >= 0  # keep today's contract through its final hours
+        return c['dte'] >= MIN_DTE
 
     active = [c for c in sorted_c if _is_active(c)]
     if not active:
