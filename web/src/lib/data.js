@@ -1,4 +1,4 @@
-import { CONTRACT_OPTIONS, cotUrl, gammaHeatmapUrl, heatmapUrl, macroUrl, ohlcUrl, positionBiasUrl } from './config.js';
+import { CONTRACT_OPTIONS, cotUrl, gammaHeatmapUrl, heatmapUrl, macroUrl, ohlcUrl, positionBiasUrl, strategyUrl } from './config.js';
 
 async function fetchJsonSoft(url) {
     try {
@@ -63,4 +63,12 @@ export async function fetchMacro() {
  */
 export async function fetchCot(assetId) {
     return fetchJsonSoft(cotUrl(assetId));
+}
+
+/**
+ * Fetches the auto-synthesized daily strategy for an asset.
+ * Shape: { directional_bias, components, key_levels, scenarios, ... }.
+ */
+export async function fetchStrategy(assetId) {
+    return fetchJsonSoft(strategyUrl(assetId));
 }

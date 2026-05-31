@@ -65,3 +65,8 @@ export function macroUrl() {
 export function cotUrl(assetId) {
     return dataUrl(assetId, 'cot.json');
 }
+
+// Auto-synthesized daily strategy per asset (positioning + macro + COT blend).
+export function strategyUrl(assetId) {
+    return dataUrl(assetId, 'daily_strategy.json');
+}

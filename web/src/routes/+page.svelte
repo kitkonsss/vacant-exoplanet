@@ -8,12 +8,13 @@
     import ConvictionView from '$lib/components/ConvictionView.svelte';
     import PriceChartView from '$lib/components/PriceChartView.svelte';
     import MacroView from '$lib/components/MacroView.svelte';
-    import { fetchGammaHeatmap, fetchHeatmap, fetchPositionBias, fetchMacro, fetchCot } from '$lib/data.js';
+    import StrategyView from '$lib/components/StrategyView.svelte';
+    import { fetchGammaHeatmap, fetchHeatmap, fetchPositionBias, fetchMacro, fetchCot, fetchStrategy } from '$lib/data.js';
     import { ASSET_PROFILES, DEFAULT_CONTRACT_KEY } from '$lib/config.js';
-    import { LineChart, Grid3X3, Activity, Target, CandlestickChart, Landmark } from 'lucide-svelte';
+    import { LineChart, Grid3X3, Activity, Target, CandlestickChart, Landmark, Compass } from 'lucide-svelte';
 
     let asset = $state('gc');
-    let activeTab = $state('analysis');
+    let activeTab = $state('strategy');
     let payload = $state(null);
     let loading = $state(true);
     let refreshing = $state(false);
@@ -38,12 +39,17 @@
     let cot = $state(null);
     let macroLoading = $state(false);
 
+    // Auto-synthesized daily strategy (positioning + macro + COT) per asset.
+    let strategy = $state(null);
+    let strategyLoading = $state(false);
+
     const profile = $derived(ASSET_PROFILES[asset]);
     const availableContractKeys = $derived(
         (payload?.contracts || []).map((contract) => contract.contract_key)
     );
 
     const tabs = [
+        { key: 'strategy',   label: 'Daily Strategy', tone: 'warn',   icon: Compass },
         { key: 'analysis',   label: 'Position Bias', tone: 'primary', icon: LineChart },
         { key: 'heatmap',    label: 'OI Heatmap',    tone: 'mag',     icon: Grid3X3 },
         { key: 'gamma',      label: 'Gamma Heatmap', tone: 'mag',     icon: Activity },
@@ -176,6 +182,15 @@
         }
     }
 
+    async function ensureStrategy() {
+        strategyLoading = true;
+        try {
+            strategy = await fetchStrategy(asset);
+        } finally {
+            strategyLoading = false;
+        }
+    }
+
     async function refresh() {
         if (refreshing) return;
         refreshing = true;
@@ -196,6 +211,8 @@
                 ]);
             } else if (activeTab === 'macro') {
                 await ensureMacro({ force: true });
+            } else if (activeTab === 'strategy') {
+                await ensureStrategy();
             }
         } finally {
             refreshing = false;
@@ -245,6 +262,8 @@
             void ensureAllGamma(availableContractKeys);
         } else if (key === 'macro') {
             void ensureMacro();
+        } else if (key === 'strategy') {
+            void ensureStrategy();
         }
     }
 
@@ -275,6 +294,8 @@
                     void ensureAllGamma(availableContractKeys);
                 } else if (activeTab === 'macro') {
                     void ensureMacro();   // refetch COT for the new asset (macro is shared/cached)
+                } else if (activeTab === 'strategy') {
+                    void ensureStrategy();
                 }
             });
         });
@@ -297,6 +318,8 @@
                 ? `${asset.toUpperCase()} futures`
             : activeTab === 'macro'
                 ? 'Macro · COT'
+            : activeTab === 'strategy'
+                ? 'Daily Strategy'
                 : visibleContract?.contract || ''}
         price={visibleContract?.future_price}
         dte={visibleContract?.dte}
@@ -311,7 +334,11 @@
     <main class="flex flex-1 min-h-0 flex-col overflow-hidden px-6 py-5">
         {#key activeTab}
             <div class="flex flex-1 min-h-0 flex-col overflow-hidden animate-fade-in">
-                {#if activeTab === 'analysis'}
+                {#if activeTab === 'strategy'}
+                    <div class="flex flex-col gap-4 overflow-y-auto">
+                        <StrategyView {strategy} loading={strategyLoading} />
+                    </div>
+                {:else if activeTab === 'analysis'}
                     <div class="flex flex-col gap-4 overflow-y-auto">
                         <PositionBiasView {payload} {loading} />
                     </div>
@@ -373,6 +400,7 @@
             : activeTab === 'gamma' ? 'Gamma Heatmap'
             : activeTab === 'pricechart' ? 'Price Chart'
             : activeTab === 'macro' ? 'Macro / COT'
+            : activeTab === 'strategy' ? 'Daily Strategy'
             : 'Conviction'}
     />
 </div>
