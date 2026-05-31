@@ -1,0 +1,61 @@
+name: Fetch Macro + COT
+
+# Phase 0 light data layer: macro drivers (yields / real yields / DXY / VIX) and
+# weekly CFTC COT positioning. No Selenium / no CME login / no secrets required —
+# all sources are public (FRED CSV, yfinance, CFTC Socrata). Runs fast and cheap,
+# independent of the heavy QuikStrike scrape (scrape.yml).
+#
+# Trigger via cron-job.org (like scrape.yml) to avoid double-billing GitHub's
+# scheduler. Suggested cadence:
+#   - macro+COT: hourly on trading days (macro moves intraday; COT only weekly,
+#     but re-running is a no-op when unchanged thanks to the git-diff guard).
+
+on:
+  workflow_dispatch:
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+
+    - name: Install dependencies
+      # Only yfinance (for fresh DXY/VIX). Everything else is Python stdlib.
+      run: |
+        python -m pip install --upgrade pip
+        pip install yfinance
+
+    - name: Fetch macro
+      run: python scraper/macro_fetch.py
+      continue-on-error: true
+
+    - name: Fetch COT
+      run: python scraper/cot_fetch.py --asset all
+      continue-on-error: true
+
+    - name: Commit and push changes
+      run: |
+        git config --global user.name "github-actions[bot]"
+        git config --global user.email "github-actions[bot]@users.noreply.github.com"
+        branch="${GITHUB_REF_NAME:-main}"
+
+        if git diff --quiet data/; then
+          echo "No changes to commit in data/"
+        else
+          git add data/macro.json data/cot.json data/nq/cot.json
+          git commit -m "Auto-update macro + COT data [skip ci]"
+          git pull --rebase origin "$branch"
+          git push origin HEAD:"$branch"
+        fi
