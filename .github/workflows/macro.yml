@@ -45,6 +45,12 @@ jobs:
       run: python scraper/cot_fetch.py --asset all
       continue-on-error: true
 
+    - name: Build daily strategy
+      # Blends the freshly-fetched macro + COT with the latest committed options
+      # positioning (position_bias_summary.json from the heavy scrape.yml run).
+      run: python scraper/strategy_fetch.py --asset all
+      continue-on-error: true
+
     - name: Commit and push changes
       run: |
         git config --global user.name "github-actions[bot]"
@@ -54,8 +60,9 @@ jobs:
         if git diff --quiet data/; then
           echo "No changes to commit in data/"
         else
-          git add data/macro.json data/cot.json data/nq/cot.json
-          git commit -m "Auto-update macro + COT data [skip ci]"
+          git add data/macro.json data/cot.json data/nq/cot.json \
+                  data/daily_strategy.json data/nq/daily_strategy.json
+          git commit -m "Auto-update macro + COT + strategy [skip ci]"
           git pull --rebase origin "$branch"
           git push origin HEAD:"$branch"
         fi
