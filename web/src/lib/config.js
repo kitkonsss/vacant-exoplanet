@@ -54,3 +54,14 @@ export function ohlcUrl(assetId, tf = '1d') {
     const fname = tf === '1h' ? 'OHLC_1h.json' : 'OHLC.json';
     return dataUrl(assetId, fname);
 }
+
+// Macro snapshot (yields / real yields / DXY / VIX + per-asset interpretation).
+// Shared across assets — always at the root data/ folder (Phase 0 macro layer).
+export function macroUrl() {
+    return `${DATA_BASE}/data/macro.json`;
+}
+
+// CFTC COT positioning per asset — data/cot.json (GC) or data/nq/cot.json (NQ).
+export function cotUrl(assetId) {
+    return dataUrl(assetId, 'cot.json');
+}

@@ -1,4 +1,4 @@
-import { CONTRACT_OPTIONS, gammaHeatmapUrl, heatmapUrl, ohlcUrl, positionBiasUrl } from './config.js';
+import { CONTRACT_OPTIONS, cotUrl, gammaHeatmapUrl, heatmapUrl, macroUrl, ohlcUrl, positionBiasUrl } from './config.js';
 
 async function fetchJsonSoft(url) {
     try {
@@ -46,4 +46,21 @@ export async function fetchGammaHeatmap(assetId, contractKey) {
  */
 export async function fetchOHLC(assetId, tf = '1d') {
     return fetchJsonSoft(ohlcUrl(assetId, tf));
+}
+
+/**
+ * Fetches the shared macro snapshot (yields / real yields / DXY / VIX + per-asset
+ * tailwind/headwind interpretation). Shape: { series, interpretation: { gold, nq } }.
+ */
+export async function fetchMacro() {
+    return fetchJsonSoft(macroUrl());
+}
+
+/**
+ * Fetches CFTC COT positioning for an asset.
+ * GC shape: { managed_money, producer_merchant, swap_dealer, interpretation }.
+ * NQ shape: { leveraged_funds, asset_manager, dealer, interpretation }.
+ */
+export async function fetchCot(assetId) {
+    return fetchJsonSoft(cotUrl(assetId));
 }

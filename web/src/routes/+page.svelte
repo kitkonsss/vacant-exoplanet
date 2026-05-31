@@ -7,9 +7,10 @@
     import HeatmapView from '$lib/components/HeatmapView.svelte';
     import ConvictionView from '$lib/components/ConvictionView.svelte';
     import PriceChartView from '$lib/components/PriceChartView.svelte';
-    import { fetchGammaHeatmap, fetchHeatmap, fetchPositionBias } from '$lib/data.js';
+    import MacroView from '$lib/components/MacroView.svelte';
+    import { fetchGammaHeatmap, fetchHeatmap, fetchPositionBias, fetchMacro, fetchCot } from '$lib/data.js';
     import { ASSET_PROFILES, DEFAULT_CONTRACT_KEY } from '$lib/config.js';
-    import { LineChart, Grid3X3, Activity, Target, CandlestickChart } from 'lucide-svelte';
+    import { LineChart, Grid3X3, Activity, Target, CandlestickChart, Landmark } from 'lucide-svelte';
 
     let asset = $state('gc');
     let activeTab = $state('analysis');
@@ -32,6 +33,11 @@
     let gammaCache = $state({});
     let gammaLoading = $state(false);
 
+    // Macro snapshot (shared across assets) + per-asset COT positioning.
+    let macro = $state(null);
+    let cot = $state(null);
+    let macroLoading = $state(false);
+
     const profile = $derived(ASSET_PROFILES[asset]);
     const availableContractKeys = $derived(
         (payload?.contracts || []).map((contract) => contract.contract_key)
@@ -42,7 +48,8 @@
         { key: 'heatmap',    label: 'OI Heatmap',    tone: 'mag',     icon: Grid3X3 },
         { key: 'gamma',      label: 'Gamma Heatmap', tone: 'mag',     icon: Activity },
         { key: 'pricechart', label: 'Price Chart',   tone: 'mag',     icon: CandlestickChart },
-        { key: 'conviction', label: 'Conviction',    tone: 'warn',    icon: Target }
+        { key: 'conviction', label: 'Conviction',    tone: 'warn',    icon: Target },
+        { key: 'macro',      label: 'Macro / COT',   tone: 'primary', icon: Landmark }
     ];
 
     const singleContractKey = $derived(
@@ -155,6 +162,20 @@
         }
     }
 
+    async function ensureMacro({ force = false } = {}) {
+        macroLoading = true;
+        try {
+            const [m, c] = await Promise.all([
+                (!force && macro) ? Promise.resolve(macro) : fetchMacro(),
+                fetchCot(asset)
+            ]);
+            macro = m;
+            cot = c;
+        } finally {
+            macroLoading = false;
+        }
+    }
+
     async function refresh() {
         if (refreshing) return;
         refreshing = true;
@@ -173,6 +194,8 @@
                     ensureAllHeatmaps(availableContractKeys),
                     ensureAllGamma(availableContractKeys)
                 ]);
+            } else if (activeTab === 'macro') {
+                await ensureMacro({ force: true });
             }
         } finally {
             refreshing = false;
@@ -220,6 +243,8 @@
         } else if (key === 'pricechart') {
             void ensureAllHeatmaps(availableContractKeys);
             void ensureAllGamma(availableContractKeys);
+        } else if (key === 'macro') {
+            void ensureMacro();
         }
     }
 
@@ -248,6 +273,8 @@
                 } else if (activeTab === 'pricechart') {
                     void ensureAllHeatmaps(availableContractKeys);
                     void ensureAllGamma(availableContractKeys);
+                } else if (activeTab === 'macro') {
+                    void ensureMacro();   // refetch COT for the new asset (macro is shared/cached)
                 }
             });
         });
@@ -268,6 +295,8 @@
                 ? `${convictionContracts.length}× tenors`
             : activeTab === 'pricechart'
                 ? `${asset.toUpperCase()} futures`
+            : activeTab === 'macro'
+                ? 'Macro · COT'
                 : visibleContract?.contract || ''}
         price={visibleContract?.future_price}
         dte={visibleContract?.dte}
@@ -320,6 +349,10 @@
                         contracts={convictionContracts}
                         loading={convictionLoading}
                     />
+                {:else if activeTab === 'macro'}
+                    <div class="flex flex-col gap-4 overflow-y-auto">
+                        <MacroView assetId={asset} {macro} {cot} loading={macroLoading} />
+                    </div>
                 {/if}
             </div>
         {/key}
@@ -339,6 +372,7 @@
             : activeTab === 'heatmap' ? 'OI Heatmap'
             : activeTab === 'gamma' ? 'Gamma Heatmap'
             : activeTab === 'pricechart' ? 'Price Chart'
+            : activeTab === 'macro' ? 'Macro / COT'
             : 'Conviction'}
     />
 </div>
