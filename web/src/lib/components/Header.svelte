@@ -1,6 +1,5 @@
 <script>
     import { onMount, onDestroy } from 'svelte';
-    import Select from './ui/Select.svelte';
     import Button from './ui/Button.svelte';
     import { ASSET_PROFILES } from '$lib/config.js';
     import { fmtNumber } from '$lib/utils.js';
@@ -59,12 +58,10 @@
                 </div>
             </div>
 
-            <!-- Asset selector -->
-            <Select bind:value={asset}>
-                {#each Object.values(ASSET_PROFILES) as profile}
-                    <option value={profile.id}>{profile.label}</option>
-                {/each}
-            </Select>
+            <!-- Asset label (single instrument — GC only) -->
+            <span class="shrink-0 rounded-md border border-border bg-surface px-3 py-1.5 text-sm font-semibold text-foreground">
+                {ASSET_PROFILES[asset]?.label ?? asset.toUpperCase()}
+            </span>
 
             <!-- Contract + price -->
             <div class="hidden items-center gap-4 md:flex min-w-0">
