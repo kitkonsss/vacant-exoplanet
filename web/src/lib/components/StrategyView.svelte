@@ -1,13 +1,11 @@
 <script>
     import Card from './ui/Card.svelte';
     import Badge from './ui/Badge.svelte';
-    import { marked } from 'marked';
-    import { TrendingUp, TrendingDown, ArrowRight, ShieldAlert, Sparkles, Activity, Crosshair, Gauge, Layers } from 'lucide-svelte';
+    import BriefInfographic from './BriefInfographic.svelte';
+    import { fmtBangkok } from '$lib/utils.js';
+    import { TrendingUp, TrendingDown, ArrowRight, ShieldAlert, Activity, Crosshair, Gauge, Layers } from 'lucide-svelte';
 
     let { strategy = null, brief = null, loading = false } = $props();
-
-    // LLM narrative brief (markdown text) -> HTML. Trusted (our own repo content).
-    const briefHtml = $derived(brief ? marked.parse(brief) : null);
 
     const bias = $derived(strategy?.directional_bias || null);
 
@@ -73,14 +71,9 @@
     </Card>
 {:else}
     <div class="flex flex-col gap-4">
-        <!-- ===== LLM narrative brief (top) ===== -->
-        {#if briefHtml}
-            <Card class="p-5">
-                <div class="mb-2 flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-warn">
-                    <Sparkles class="h-3.5 w-3.5" /> บทวิเคราะห์ประจำวัน (AI)
-                </div>
-                <div class="brief-prose text-sm text-foreground">{@html briefHtml}</div>
-            </Card>
+        <!-- ===== LLM narrative brief (top) — rendered as an infographic ===== -->
+        {#if brief}
+            <BriefInfographic {brief} {bias} generatedAt={strategy.generated_at} />
         {/if}
 
         <!-- ===== Headline directional read ===== -->
@@ -110,7 +103,7 @@
                         <div class="font-mono text-lg font-semibold tabular-nums text-foreground">{fmtNum(strategy.future_price)}</div>
                     {/if}
                     {#if strategy.generated_at}
-                        <div class="font-mono text-[10px] text-muted-foreground">{new Date(strategy.generated_at).toLocaleString()}</div>
+                        <div class="font-mono text-[10px] text-muted-foreground">{fmtBangkok(strategy.generated_at)}</div>
                     {/if}
                 </div>
             </div>
@@ -376,24 +369,3 @@
         {/if}
     </div>
 {/if}
-
-<style>
-    /* Style the marked-rendered brief HTML. Scoped to .brief-prose; :global
-       reaches the {@html} content Svelte's scoping otherwise can't touch. */
-    .brief-prose :global(h1) { font-size: 1rem; font-weight: 700; margin: 0.25rem 0 0.5rem; }
-    .brief-prose :global(h2) { font-size: 0.95rem; font-weight: 700; margin: 1rem 0 0.4rem; }
-    .brief-prose :global(h3) { font-size: 0.9rem; font-weight: 600; margin: 0.75rem 0 0.3rem; }
-    .brief-prose :global(p) { margin: 0.4rem 0; line-height: 1.65; }
-    .brief-prose :global(ul) { margin: 0.4rem 0; padding-left: 1.15rem; list-style: disc; }
-    .brief-prose :global(ol) { margin: 0.4rem 0; padding-left: 1.3rem; list-style: decimal; }
-    .brief-prose :global(li) { margin: 0.2rem 0; line-height: 1.55; }
-    .brief-prose :global(strong) { font-weight: 700; }
-    .brief-prose :global(a) { text-decoration: underline; }
-    .brief-prose :global(code) { font-family: ui-monospace, monospace; font-size: 0.85em; }
-    .brief-prose :global(blockquote) {
-        border-left: 2px solid rgba(255, 255, 255, 0.18);
-        padding-left: 0.6rem; margin: 0.5rem 0;
-        font-size: 0.82rem; opacity: 0.85;
-    }
-    .brief-prose :global(hr) { border: 0; border-top: 1px solid rgba(255, 255, 255, 0.12); margin: 0.9rem 0; }
-</style>

@@ -18,6 +18,29 @@ export function fmtStrike(value) {
     return value.toLocaleString(undefined, { maximumFractionDigits: 0 });
 }
 
+/**
+ * Format an ISO timestamp (any tz, our data is UTC) as Thailand / Bangkok local time.
+ * Forces Gregorian calendar so the year stays 2026 (Thai locale defaults to the
+ * Buddhist era). Returns the raw input if it isn't a parseable date.
+ * @param {string|null|undefined} iso
+ * @param {{ withTz?: boolean }} [opts]
+ */
+export function fmtBangkok(iso, { withTz = true } = {}) {
+    if (!iso) return '—';
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return iso;
+    const s = new Intl.DateTimeFormat('th-TH-u-ca-gregory', {
+        timeZone: 'Asia/Bangkok',
+        day: 'numeric',
+        month: 'short',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: false
+    }).format(d);
+    return withTz ? `${s} น. (เวลาไทย)` : s;
+}
+
 export function fmtK(n) {
     if (!n || n === 0) return '';
     if (n >= 1000) return (n / 1000).toFixed(1).replace(/\.0$/, '') + 'K';
