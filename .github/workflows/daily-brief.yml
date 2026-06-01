@@ -69,13 +69,16 @@ jobs:
 
             อ่าน (ใช้ Read เท่านั้น อย่าเดาตัวเลข):
             - ทอง: data/daily_strategy.json, data/macro.json, data/cot.json, data/position_bias_summary.json
+            - daily_strategy.json มี field สำคัญใหม่: heatmap_contract_flow, gamma_1pct, vol2vol_walls, execution_read
 
             ถ้ามี WebSearch: ค้นข่าว/แคตาลิสต์ที่ขับทองสัปดาห์นี้ + ปฏิทินเศรษฐกิจสหรัฐ
             (FOMC/CPI/PCE/NFP/ISM) แยกหัวข้อละ 1 ครั้ง อย่าใส่วันที่เอง. ถ้าไม่มีให้ข้าม.
 
             เขียน data/daily_brief.md สำหรับ GC: บรรทัดสรุป 1 ประโยค (ทิศ+ความมั่นใจ+แก่นเหตุผล);
             เหตุผล 3 ชั้น positioning vs macro vs COT (ชั้นไหนหนุน/สวน + ตัวเลขจริง เช่น real yield, Managed Money net, call/put wall);
-            Key levels (resistance/magnet/support จาก key_levels); Scenarios ขึ้น/ลง (trigger → then → invalidation);
+            เพิ่มหัวข้อ "Execution read" ที่ตอบ 3 เรื่อง: contract เพิ่มตรงไหนจาก heatmap, ไปต่อได้ถึงไหนจาก Gamma 1 Pct,
+            และ Vol2Vol wall ใกล้สุดอยู่ตรงไหน; Key levels (resistance/magnet/support จาก key_levels);
+            Scenarios ขึ้น/ลง (trigger → then → invalidation);
             อะไรจะเปลี่ยนมุมมอง; ข้อควรระวัง. ปิดท้ายด้วยหัวข้อ "## 📰 ข่าว & แคตาลิสต์สัปดาห์นี้" (ถ้าค้นข่าวได้)
             และ disclaimer 1 บรรทัด (เชิงการศึกษา ไม่ใช่คำแนะนำลงทุน ไม่มีคำสั่ง entry/stop/target จริง).
             ใส่วันที่จาก generated_at ของ daily_strategy.json บนหัวไฟล์. ต้องเขียนไฟล์จริงให้เสร็จ.

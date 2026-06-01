@@ -31,6 +31,7 @@ ASSETS = {
 W_POSITIONING = 0.45
 W_MACRO = 0.35
 W_COT = 0.20
+CONTRACT_KEYS = ('current', 'tomorrow', 'friday', 'monthly')
 
 
 def _clamp(v, lo, hi):
@@ -60,6 +61,12 @@ def _label_from_score(s):
     if s <= -10:
         return 'lean_bearish'
     return 'neutral'
+
+
+def _fmt_level(v):
+    if v is None:
+        return None
+    return f'{float(v):.0f}' if float(v).is_integer() else f'{float(v):.1f}'
 
 
 def _sign(s):
@@ -97,6 +104,183 @@ def load_positioning(asset_id):
         }
         return float(pb.get('score', 0)), pb.get('label', 'neutral'), [contract]
     return None, None, []
+
+
+def load_position_detail(asset_id, contract_key):
+    return _load_json(os.path.join(_data_dir(asset_id), f'{contract_key}_PositionBias.json'))
+
+
+def load_heatmap(asset_id, contract_key, gamma=False):
+    suffix = 'GammaHeatmap.json' if gamma else 'OIHeatmap.json'
+    return _load_json(os.path.join(_data_dir(asset_id), f'{contract_key}_{suffix}'))
+
+
+def _num(v):
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return None
+
+
+def _latest_change(values):
+    """Return latest, previous, and latest-prev from a newest-first heatmap row."""
+    latest_idx = next((i for i, v in enumerate(values or []) if _num(v) is not None), None)
+    if latest_idx is None:
+        return None, None, None
+    prev_idx = next((i for i in range(latest_idx + 1, len(values or [])) if _num(values[i]) is not None), None)
+    latest = _num(values[latest_idx])
+    prev = _num(values[prev_idx]) if prev_idx is not None else None
+    change = None if prev is None else latest - prev
+    return latest, prev, change
+
+
+def analyze_heatmap_flow(asset_id):
+    """Find where contracts are being added in the OI heatmap.
+
+    The heatmap is call/put combined, so this is treated as a location/magnet read
+    rather than a pure long/short direction by itself.
+    """
+    contracts = []
+    all_additions = []
+    for key in CONTRACT_KEYS:
+        hm = load_heatmap(asset_id, key, gamma=False)
+        if not hm:
+            continue
+        price = hm.get('underlying')
+        additions = []
+        for row in hm.get('strikes') or []:
+            strike = _num(row.get('strike'))
+            latest, prev, change = _latest_change(row.get('values') or [])
+            if strike is None or latest is None or change is None or change <= 0:
+                continue
+            item = {
+                'contract_key': key,
+                'contract': hm.get('contract'),
+                'strike': strike,
+                'latest_oi': round(latest, 2),
+                'change_1d': round(change, 2),
+                'distance_points': None if price is None else round(strike - float(price), 2),
+                'side': 'above' if price is not None and strike > float(price) else ('below' if price is not None and strike < float(price) else 'at_price'),
+            }
+            additions.append(item)
+            all_additions.append(item)
+        additions.sort(key=lambda x: x['change_1d'], reverse=True)
+        above = sum(x['change_1d'] for x in additions if x['side'] == 'above')
+        below = sum(x['change_1d'] for x in additions if x['side'] == 'below')
+        contracts.append({
+            'contract_key': key,
+            'contract': hm.get('contract'),
+            'underlying': price,
+            'latest_date': (hm.get('dates') or [None])[0],
+            'added_above_price': round(above, 2),
+            'added_below_price': round(below, 2),
+            'net_added_above_minus_below': round(above - below, 2),
+            'top_additions': additions[:5],
+        })
+
+    all_additions.sort(key=lambda x: x['change_1d'], reverse=True)
+    above_total = sum(x['change_1d'] for x in all_additions if x['side'] == 'above')
+    below_total = sum(x['change_1d'] for x in all_additions if x['side'] == 'below')
+    if above_total > below_total * 1.2:
+        bias = 'upside_magnet'
+    elif below_total > above_total * 1.2:
+        bias = 'downside_magnet'
+    else:
+        bias = 'balanced'
+    return {
+        'method': 'latest OI heatmap build-up: newest non-null date minus previous non-null date',
+        'bias': bias,
+        'added_above_price': round(above_total, 2),
+        'added_below_price': round(below_total, 2),
+        'top_additions': all_additions[:8],
+        'contracts': contracts,
+        'note': 'OI heatmap is call/put combined; use it as where contracts are building, then confirm direction with gamma, Vol2Vol walls, macro, and COT.',
+    }
+
+
+def analyze_gamma_1pct(asset_id):
+    walls = []
+    for key in CONTRACT_KEYS:
+        hm = load_heatmap(asset_id, key, gamma=True)
+        if not hm:
+            continue
+        price = hm.get('underlying')
+        for row in hm.get('strikes') or []:
+            strike = _num(row.get('strike'))
+            latest, _, _ = _latest_change(row.get('values') or [])
+            if strike is None or latest is None or latest <= 0:
+                continue
+            walls.append({
+                'contract_key': key,
+                'contract': hm.get('contract'),
+                'strike': strike,
+                'gamma_1pct': round(latest, 2),
+                'distance_points': None if price is None else round(strike - float(price), 2),
+                'side': 'above' if price is not None and strike > float(price) else ('below' if price is not None and strike < float(price) else 'at_price'),
+            })
+    walls.sort(key=lambda x: x['gamma_1pct'], reverse=True)
+    top_gamma = walls[0]['gamma_1pct'] if walls else 0
+    significant_floor = max(50, top_gamma * 0.25)
+    significant = [w for w in walls if w['gamma_1pct'] >= significant_floor]
+    above = sorted((w for w in significant if w['side'] == 'above'), key=lambda x: (abs(x['distance_points'] or 0), -x['gamma_1pct']))
+    below = sorted((w for w in significant if w['side'] == 'below'), key=lambda x: (abs(x['distance_points'] or 0), -x['gamma_1pct']))
+    return {
+        'method': 'Gamma (1 Pct) heatmap latest non-null value by strike',
+        'significant_floor': round(significant_floor, 2),
+        'nearest_upside_wall': above[0] if above else None,
+        'nearest_downside_wall': below[0] if below else None,
+        'top_walls': walls[:10],
+        'upside_room_points': (above[0].get('distance_points') if above else None),
+        'downside_room_points': (abs(below[0].get('distance_points')) if below else None),
+        'note': 'Nearest gamma wall is the first likely speed bump; a clean break can shift attention to the next high-gamma strike.',
+    }
+
+
+def analyze_vol2vol_walls(asset_id):
+    levels = []
+    for key in CONTRACT_KEYS:
+        detail = load_position_detail(asset_id, key)
+        if not detail:
+            continue
+        for row in detail.get('position_map') or []:
+            strike = _num(row.get('strike'))
+            if strike is None:
+                continue
+            levels.append({
+                'contract_key': key,
+                'contract': detail.get('contract'),
+                'strike': strike,
+                'side': row.get('side'),
+                'total_oi': row.get('total_oi') or 0,
+                'call_oi': row.get('call_oi') or 0,
+                'put_oi': row.get('put_oi') or 0,
+                'intraday_volume': row.get('intraday_volume') or 0,
+                'activity_vs_oi': row.get('activity_vs_oi') or 0,
+                'distance_points': (row.get('distance') or {}).get('points'),
+                'distance_pct': (row.get('distance') or {}).get('pct'),
+                'location': (row.get('distance') or {}).get('side'),
+            })
+    levels.sort(key=lambda x: (x['total_oi'], x['intraday_volume']), reverse=True)
+    above = sorted((x for x in levels if x.get('location') == 'above'), key=lambda x: abs(x.get('distance_points') or 0))
+    below = sorted((x for x in levels if x.get('location') == 'below'), key=lambda x: abs(x.get('distance_points') or 0))
+    return {
+        'method': 'Vol2Vol position_map total OI + intraday activity by strike and tenor',
+        'nearest_resistance': above[0] if above else None,
+        'nearest_support': below[0] if below else None,
+        'top_walls': levels[:10],
+        'note': 'Use side + activity_vs_oi to distinguish static wall from active wall.',
+    }
+
+
+def _score_from_flow(flow):
+    if not flow:
+        return 0
+    above = flow.get('added_above_price') or 0
+    below = flow.get('added_below_price') or 0
+    total = above + below
+    if total <= 0:
+        return 0
+    return round(_clamp((above - below) / total * 45, -45, 45), 1)
 
 
 def build_key_levels(contracts, price):
@@ -171,6 +355,9 @@ def build_strategy(asset_id):
     pos_score, pos_label, contracts = load_positioning(asset_id)
     macro = load_macro(cfg['macro_key'])
     cot = load_cot(asset_id)
+    heatmap_flow = analyze_heatmap_flow(asset_id)
+    gamma_1pct = analyze_gamma_1pct(asset_id)
+    vol2vol_walls = analyze_vol2vol_walls(asset_id)
 
     if pos_score is None and macro is None and cot is None:
         print(f'[STRATEGY] {cfg["short"]}: no input layers found — skipping')
@@ -184,6 +371,11 @@ def build_strategy(asset_id):
         parts.append((macro['score'], W_MACRO))
     if cot is not None:
         parts.append((cot['score'], W_COT))
+    flow_score = _score_from_flow(heatmap_flow)
+    if flow_score:
+        # Keep the old 3-layer score dominant, but let fresh heatmap build-up nudge
+        # the read because this is the fastest options-positioning signal we have.
+        parts.append((flow_score, 0.15))
     wsum = sum(w for _, w in parts) or 1.0
     blended = round(sum(s * w for s, w in parts) / wsum, 1)
     label = _label_from_score(blended)
@@ -217,6 +409,26 @@ def build_strategy(asset_id):
         macro_context = f"Macro {macro['label']} ({macro['score']:+.0f}): " + '; '.join(macro['drivers'])
     cot_context = cot['note'] if cot else None
 
+    nearest_gamma_up = gamma_1pct.get('nearest_upside_wall') if gamma_1pct else None
+    nearest_gamma_down = gamma_1pct.get('nearest_downside_wall') if gamma_1pct else None
+    nearest_vol_up = vol2vol_walls.get('nearest_resistance') if vol2vol_walls else None
+    nearest_vol_down = vol2vol_walls.get('nearest_support') if vol2vol_walls else None
+    top_build = (heatmap_flow.get('top_additions') or [None])[0] if heatmap_flow else None
+
+    def _then_for(direction, fallback):
+        if direction == 'up':
+            gamma_wall = nearest_gamma_up
+            vol_wall = nearest_vol_up
+        else:
+            gamma_wall = nearest_gamma_down
+            vol_wall = nearest_vol_down
+        parts_then = []
+        if gamma_wall:
+            parts_then.append(f"first gamma 1pct wall {_fmt_level(gamma_wall['strike'])}")
+        if vol_wall:
+            parts_then.append(f"Vol2Vol wall {_fmt_level(vol_wall['strike'])}")
+        return '; '.join(parts_then) if parts_then else fallback
+
     # Deterministic scenarios from the nearest levels
     scenarios = []
     r0 = key_levels['resistances'][0] if key_levels['resistances'] else None
@@ -227,14 +439,14 @@ def build_strategy(asset_id):
         scenarios.append({
             'bias': 'upside',
             'trigger': f'sustained move above {r0}',
-            'then': f'opens path toward {r1}' if r1 else 'momentum extension higher',
+            'then': _then_for('up', f'opens path toward {r1}' if r1 else 'momentum extension higher'),
             'invalidation': f'back below {s0}' if s0 else 'loss of the breakout level',
         })
     if s0:
         scenarios.append({
             'bias': 'downside',
             'trigger': f'break below {s0}',
-            'then': f'toward {s1}' if s1 else 'lower support void',
+            'then': _then_for('down', f'toward {s1}' if s1 else 'lower support void'),
             'invalidation': f'reclaim {r0}' if r0 else 'recovery of broken support',
         })
 
@@ -257,8 +469,37 @@ def build_strategy(asset_id):
     if not flip:
         flip.append('a clean break of the key levels above with the macro backdrop confirming')
 
+    primary_path = 'range_first'
+    if heatmap_flow and heatmap_flow.get('bias') == 'upside_magnet' and overall_sign >= 0:
+        primary_path = 'upside_momentum_to_first_gamma_wall'
+    elif heatmap_flow and heatmap_flow.get('bias') == 'downside_magnet' and overall_sign <= 0:
+        primary_path = 'downside_momentum_to_first_gamma_wall'
+    elif nearest_vol_up and nearest_vol_down:
+        primary_path = 'trade_between_nearest_vol2vol_walls'
+
+    execution_read = {
+        'primary_path': primary_path,
+        'contract_build_up': None if not top_build else (
+            f"largest fresh OI build at {_fmt_level(top_build['strike'])} "
+            f"({top_build['contract_key']}, +{top_build['change_1d']:.0f} contracts, {top_build['side']})"
+        ),
+        'upside_limit': None if not nearest_gamma_up else (
+            f"{_fmt_level(nearest_gamma_up['strike'])} gamma 1pct wall "
+            f"({nearest_gamma_up['contract_key']}, {nearest_gamma_up['gamma_1pct']:.0f})"
+        ),
+        'downside_limit': None if not nearest_gamma_down else (
+            f"{_fmt_level(nearest_gamma_down['strike'])} gamma 1pct wall "
+            f"({nearest_gamma_down['contract_key']}, {nearest_gamma_down['gamma_1pct']:.0f})"
+        ),
+        'nearest_wall_band': {
+            'support': None if not nearest_vol_down else nearest_vol_down['strike'],
+            'resistance': None if not nearest_vol_up else nearest_vol_up['strike'],
+        },
+        'how_to_use': 'Use heatmap build-up for likely destination, gamma 1pct for first continuation cap, and Vol2Vol walls for support/resistance confirmation.',
+    }
+
     return {
-        'version': 1,
+        'version': 2,
         'asset': cfg['short'],
         'generated_at': datetime.now(timezone.utc).isoformat(timespec='seconds'),
         'future_price': price,
@@ -270,6 +511,10 @@ def build_strategy(asset_id):
         },
         'agreement': {'bullish_layers': bull, 'bearish_layers': bear, 'aligned': agree, 'total': total},
         'key_levels': key_levels,
+        'heatmap_contract_flow': heatmap_flow,
+        'gamma_1pct': gamma_1pct,
+        'vol2vol_walls': vol2vol_walls,
+        'execution_read': execution_read,
         'macro_context': macro_context,
         'cot_context': cot_context,
         'scenarios': scenarios,

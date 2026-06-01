@@ -2,7 +2,7 @@
     import Card from './ui/Card.svelte';
     import Badge from './ui/Badge.svelte';
     import { marked } from 'marked';
-    import { TrendingUp, TrendingDown, ArrowRight, ShieldAlert, Sparkles } from 'lucide-svelte';
+    import { TrendingUp, TrendingDown, ArrowRight, ShieldAlert, Sparkles, Activity, Crosshair, Gauge, Layers } from 'lucide-svelte';
 
     let { strategy = null, brief = null, loading = false } = $props();
 
@@ -45,6 +45,10 @@
 
     function fmtNum(n) {
         return n == null ? '—' : n.toLocaleString();
+    }
+    function fmtSigned(n) {
+        if (n == null) return '—';
+        return `${n > 0 ? '+' : ''}${fmtNum(n)}`;
     }
     // map a -100..100 score to a 0..100% bar width and left/right fill
     function barPct(score) {
@@ -112,6 +116,45 @@
             </div>
         </Card>
 
+        <!-- ===== Practical execution read ===== -->
+        {#if strategy.execution_read}
+            <Card class="p-4">
+                <div class="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                        <div class="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                            <Crosshair class="h-3.5 w-3.5" /> Execution Read
+                        </div>
+                        <div class="mt-2 text-sm font-semibold text-foreground">{strategy.execution_read.primary_path?.replaceAll('_', ' ')}</div>
+                        <p class="mt-1 text-xs leading-relaxed text-muted-foreground">{strategy.execution_read.how_to_use}</p>
+                    </div>
+                    <div class="grid min-w-[240px] grid-cols-2 gap-2 text-xs">
+                        <div>
+                            <div class="text-[10px] uppercase tracking-wider text-muted-foreground">Support wall</div>
+                            <div class="font-mono text-up">{fmtNum(strategy.execution_read.nearest_wall_band?.support)}</div>
+                        </div>
+                        <div>
+                            <div class="text-[10px] uppercase tracking-wider text-muted-foreground">Resistance wall</div>
+                            <div class="font-mono text-down">{fmtNum(strategy.execution_read.nearest_wall_band?.resistance)}</div>
+                        </div>
+                    </div>
+                </div>
+                <div class="mt-3 grid grid-cols-1 gap-2 md:grid-cols-3">
+                    <div class="rounded-md border border-border/60 p-3">
+                        <div class="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Contract build-up</div>
+                        <div class="mt-1 text-sm text-foreground">{strategy.execution_read.contract_build_up || '—'}</div>
+                    </div>
+                    <div class="rounded-md border border-border/60 p-3">
+                        <div class="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Upside limit</div>
+                        <div class="mt-1 text-sm text-foreground">{strategy.execution_read.upside_limit || '—'}</div>
+                    </div>
+                    <div class="rounded-md border border-border/60 p-3">
+                        <div class="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Downside limit</div>
+                        <div class="mt-1 text-sm text-foreground">{strategy.execution_read.downside_limit || '—'}</div>
+                    </div>
+                </div>
+            </Card>
+        {/if}
+
         <!-- ===== Component breakdown ===== -->
         {#if comps.length}
             <div class="grid grid-cols-1 gap-3 md:grid-cols-3">
@@ -173,6 +216,84 @@
                     </div>
                 </div>
             </Card>
+        {/if}
+
+        <!-- ===== Heatmap / Gamma / Vol2Vol evidence ===== -->
+        {#if strategy.heatmap_contract_flow || strategy.gamma_1pct || strategy.vol2vol_walls}
+            <div class="grid grid-cols-1 gap-3 lg:grid-cols-3">
+                {#if strategy.heatmap_contract_flow}
+                    <Card class="p-4">
+                        <div class="flex items-center justify-between">
+                            <div class="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                                <Activity class="h-3.5 w-3.5" /> Heatmap Build
+                            </div>
+                            <Badge variant={strategy.heatmap_contract_flow.bias === 'upside_magnet' ? 'up' : strategy.heatmap_contract_flow.bias === 'downside_magnet' ? 'down' : 'muted'}>
+                                {strategy.heatmap_contract_flow.bias?.replaceAll('_', ' ')}
+                            </Badge>
+                        </div>
+                        <div class="mt-3 grid grid-cols-2 gap-2 text-xs">
+                            <div>
+                                <div class="text-[10px] uppercase tracking-wider text-muted-foreground">Added above</div>
+                                <div class="font-mono text-up">{fmtSigned(strategy.heatmap_contract_flow.added_above_price)}</div>
+                            </div>
+                            <div>
+                                <div class="text-[10px] uppercase tracking-wider text-muted-foreground">Added below</div>
+                                <div class="font-mono text-down">{fmtSigned(strategy.heatmap_contract_flow.added_below_price)}</div>
+                            </div>
+                        </div>
+                        <div class="mt-3 flex flex-col gap-1.5">
+                            {#each (strategy.heatmap_contract_flow.top_additions || []).slice(0, 4) as row}
+                                <div class="flex items-center justify-between gap-2 text-xs">
+                                    <span class="truncate text-muted-foreground">{row.contract_key} · {row.side}</span>
+                                    <span class="font-mono text-foreground">{fmtNum(row.strike)} <span class="text-up">{fmtSigned(row.change_1d)}</span></span>
+                                </div>
+                            {/each}
+                        </div>
+                    </Card>
+                {/if}
+
+                {#if strategy.gamma_1pct}
+                    <Card class="p-4">
+                        <div class="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                            <Gauge class="h-3.5 w-3.5" /> Gamma 1 Pct
+                        </div>
+                        <div class="mt-3 grid grid-cols-2 gap-2 text-xs">
+                            <div>
+                                <div class="text-[10px] uppercase tracking-wider text-muted-foreground">Upside room</div>
+                                <div class="font-mono text-up">{fmtNum(strategy.gamma_1pct.upside_room_points)} pts</div>
+                            </div>
+                            <div>
+                                <div class="text-[10px] uppercase tracking-wider text-muted-foreground">Downside room</div>
+                                <div class="font-mono text-down">{fmtNum(strategy.gamma_1pct.downside_room_points)} pts</div>
+                            </div>
+                        </div>
+                        <div class="mt-3 flex flex-col gap-1.5">
+                            {#each (strategy.gamma_1pct.top_walls || []).slice(0, 4) as row}
+                                <div class="flex items-center justify-between gap-2 text-xs">
+                                    <span class="truncate text-muted-foreground">{row.contract_key} · {row.side}</span>
+                                    <span class="font-mono text-foreground">{fmtNum(row.strike)} <span class="text-warn">{fmtNum(row.gamma_1pct)}</span></span>
+                                </div>
+                            {/each}
+                        </div>
+                    </Card>
+                {/if}
+
+                {#if strategy.vol2vol_walls}
+                    <Card class="p-4">
+                        <div class="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                            <Layers class="h-3.5 w-3.5" /> Vol2Vol Walls
+                        </div>
+                        <div class="mt-3 flex flex-col gap-1.5">
+                            {#each (strategy.vol2vol_walls.top_walls || []).slice(0, 6) as row}
+                                <div class="flex items-center justify-between gap-2 text-xs">
+                                    <span class="truncate text-muted-foreground">{row.contract_key} · {row.side}</span>
+                                    <span class="font-mono text-foreground">{fmtNum(row.strike)} <span class="text-muted-foreground">{fmtNum(row.total_oi)} OI</span></span>
+                                </div>
+                            {/each}
+                        </div>
+                    </Card>
+                {/if}
+            </div>
         {/if}
 
         <!-- ===== Scenarios ===== -->
