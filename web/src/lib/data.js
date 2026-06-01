@@ -1,10 +1,21 @@
-import { CONTRACT_OPTIONS, cotUrl, gammaHeatmapUrl, heatmapUrl, macroUrl, ohlcUrl, positionBiasUrl, strategyUrl } from './config.js';
+import { CONTRACT_OPTIONS, briefUrl, cotUrl, gammaHeatmapUrl, heatmapUrl, macroUrl, ohlcUrl, positionBiasUrl, strategyUrl } from './config.js';
 
 async function fetchJsonSoft(url) {
     try {
         const res = await fetch(`${url}?t=${Date.now()}`);
         if (!res.ok) return null;
         return await res.json();
+    } catch (e) {
+        console.warn(`fetch failed: ${url}`, e);
+        return null;
+    }
+}
+
+async function fetchTextSoft(url) {
+    try {
+        const res = await fetch(`${url}?t=${Date.now()}`);
+        if (!res.ok) return null;
+        return await res.text();
     } catch (e) {
         console.warn(`fetch failed: ${url}`, e);
         return null;
@@ -70,4 +81,11 @@ export async function fetchCot(assetId) {
  */
 export async function fetchStrategy(assetId) {
     return fetchJsonSoft(strategyUrl(assetId));
+}
+
+/**
+ * Fetches the LLM narrative daily brief (markdown text) for an asset.
+ */
+export async function fetchBrief(assetId) {
+    return fetchTextSoft(briefUrl(assetId));
 }

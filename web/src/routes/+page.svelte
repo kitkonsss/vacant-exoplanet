@@ -9,7 +9,7 @@
     import PriceChartView from '$lib/components/PriceChartView.svelte';
     import MacroView from '$lib/components/MacroView.svelte';
     import StrategyView from '$lib/components/StrategyView.svelte';
-    import { fetchGammaHeatmap, fetchHeatmap, fetchPositionBias, fetchMacro, fetchCot, fetchStrategy } from '$lib/data.js';
+    import { fetchGammaHeatmap, fetchHeatmap, fetchPositionBias, fetchMacro, fetchCot, fetchStrategy, fetchBrief } from '$lib/data.js';
     import { ASSET_PROFILES, DEFAULT_CONTRACT_KEY } from '$lib/config.js';
     import { LineChart, Grid3X3, Activity, Target, CandlestickChart, Landmark, Compass } from 'lucide-svelte';
 
@@ -41,6 +41,7 @@
 
     // Auto-synthesized daily strategy (positioning + macro + COT) per asset.
     let strategy = $state(null);
+    let brief = $state(null);          // LLM narrative brief (markdown)
     let strategyLoading = $state(false);
 
     const profile = $derived(ASSET_PROFILES[asset]);
@@ -185,7 +186,9 @@
     async function ensureStrategy() {
         strategyLoading = true;
         try {
-            strategy = await fetchStrategy(asset);
+            const [s, b] = await Promise.all([fetchStrategy(asset), fetchBrief(asset)]);
+            strategy = s;
+            brief = b;
         } finally {
             strategyLoading = false;
         }
@@ -336,7 +339,7 @@
             <div class="flex flex-1 min-h-0 flex-col overflow-hidden animate-fade-in">
                 {#if activeTab === 'strategy'}
                     <div class="flex flex-col gap-4 overflow-y-auto">
-                        <StrategyView {strategy} loading={strategyLoading} />
+                        <StrategyView {strategy} {brief} loading={strategyLoading} />
                     </div>
                 {:else if activeTab === 'analysis'}
                     <div class="flex flex-col gap-4 overflow-y-auto">

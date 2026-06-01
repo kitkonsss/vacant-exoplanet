@@ -63,3 +63,8 @@ export function cotUrl(assetId) {
 export function strategyUrl(assetId) {
     return dataUrl(assetId, 'daily_strategy.json');
 }
+
+// LLM narrative brief (markdown) written by the Daily Strategy Brief workflow.
+export function briefUrl(assetId) {
+    return dataUrl(assetId, 'daily_brief.md');
+}
