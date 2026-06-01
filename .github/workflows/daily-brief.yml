@@ -28,6 +28,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      id-token: write   # required by anthropics/claude-code-action (OIDC token)
     env:
       # job-level so it can be read in step `if:` (a step can't read its own env)
       HAS_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN != '' }}
