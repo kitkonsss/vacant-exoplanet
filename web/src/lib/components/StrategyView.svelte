@@ -152,6 +152,22 @@
                         <div class="mt-1 text-sm text-foreground">{strategy.execution_read.downside_limit || '—'}</div>
                     </div>
                 </div>
+                {#if strategy.execution_read.confluence_focus || strategy.execution_read.oi_magnet || strategy.execution_read.gamma_magnet}
+                    <div class="mt-2 grid grid-cols-1 gap-2 md:grid-cols-3">
+                        <div class="rounded-md border border-warn/40 bg-warn/5 p-3">
+                            <div class="text-[10px] font-semibold uppercase tracking-wider text-warn">Confluence focus</div>
+                            <div class="mt-1 text-sm text-foreground">{strategy.execution_read.confluence_focus || '—'}</div>
+                        </div>
+                        <div class="rounded-md border border-border/60 p-3">
+                            <div class="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">OI magnet</div>
+                            <div class="mt-1 text-sm text-foreground">{strategy.execution_read.oi_magnet || '—'}</div>
+                        </div>
+                        <div class="rounded-md border border-border/60 p-3">
+                            <div class="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Gamma magnet</div>
+                            <div class="mt-1 text-sm text-foreground">{strategy.execution_read.gamma_magnet || '—'}</div>
+                        </div>
+                    </div>
+                {/if}
             </Card>
         {/if}
 
@@ -218,6 +234,30 @@
             </Card>
         {/if}
 
+        <!-- ===== Confluence levels (OI ∩ gamma ∩ round# ∩ build) ===== -->
+        {#if strategy.confluence_levels?.length}
+            <Card class="p-4">
+                <div class="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                    <Crosshair class="h-3.5 w-3.5" /> Confluence Levels
+                </div>
+                <p class="mt-1 text-[11px] text-muted-foreground">จุดที่ OI wall / gamma / round number / fresh build ทับกัน ≥2 แหล่ง = เลเวลน้ำหนักสูงสุด (เรียงตาม confluence แล้วระยะใกล้)</p>
+                <div class="mt-2 flex flex-col gap-1.5">
+                    {#each strategy.confluence_levels as c}
+                        <div class="flex items-center justify-between gap-2 rounded-md border border-border/60 p-2">
+                            <div class="flex items-center gap-2">
+                                <span class="font-mono text-sm font-semibold tabular-nums {c.side === 'above' ? 'text-down' : c.side === 'below' ? 'text-up' : 'text-foreground'}">{fmtNum(c.level)}</span>
+                                <Badge variant={c.confluence >= 3 ? 'warn' : 'muted'}>×{c.confluence}</Badge>
+                                <span class="text-[10px] text-muted-foreground">{c.side}{c.distance_points != null ? ` · ${fmtSigned(c.distance_points)} pts` : ''}</span>
+                            </div>
+                            <div class="flex flex-wrap justify-end gap-1">
+                                {#each c.sources as s}<span class="rounded bg-muted px-1.5 py-0.5 text-[9px] uppercase tracking-wide text-muted-foreground">{s.replaceAll('_', ' ')}</span>{/each}
+                            </div>
+                        </div>
+                    {/each}
+                </div>
+            </Card>
+        {/if}
+
         <!-- ===== Heatmap / Gamma / Vol2Vol evidence ===== -->
         {#if strategy.heatmap_contract_flow || strategy.gamma_1pct || strategy.vol2vol_walls}
             <div class="grid grid-cols-1 gap-3 lg:grid-cols-3">
@@ -233,19 +273,25 @@
                         </div>
                         <div class="mt-3 grid grid-cols-2 gap-2 text-xs">
                             <div>
-                                <div class="text-[10px] uppercase tracking-wider text-muted-foreground">Added above</div>
-                                <div class="font-mono text-up">{fmtSigned(strategy.heatmap_contract_flow.added_above_price)}</div>
+                                <div class="text-[10px] uppercase tracking-wider text-muted-foreground">Support build (puts ↓)</div>
+                                <div class="font-mono text-up">{fmtSigned(strategy.heatmap_contract_flow.support_build)}</div>
                             </div>
                             <div>
-                                <div class="text-[10px] uppercase tracking-wider text-muted-foreground">Added below</div>
-                                <div class="font-mono text-down">{fmtSigned(strategy.heatmap_contract_flow.added_below_price)}</div>
+                                <div class="text-[10px] uppercase tracking-wider text-muted-foreground">Resistance build (calls ↑)</div>
+                                <div class="font-mono text-down">{fmtSigned(strategy.heatmap_contract_flow.resistance_build)}</div>
                             </div>
                         </div>
+                        {#if strategy.heatmap_contract_flow.magnet}
+                            <div class="mt-2 text-[10px] text-muted-foreground">
+                                OI magnet <span class="font-mono text-warn">{fmtNum(strategy.heatmap_contract_flow.magnet.strike)}</span>
+                                <span class="uppercase">{strategy.heatmap_contract_flow.magnet.oi_type || ''}</span> · {fmtNum(strategy.heatmap_contract_flow.magnet.latest_oi)} OI
+                            </div>
+                        {/if}
                         <div class="mt-3 flex flex-col gap-1.5">
                             {#each (strategy.heatmap_contract_flow.top_additions || []).slice(0, 4) as row}
                                 <div class="flex items-center justify-between gap-2 text-xs">
-                                    <span class="truncate text-muted-foreground">{row.contract_key} · {row.side}</span>
-                                    <span class="font-mono text-foreground">{fmtNum(row.strike)} <span class="text-up">{fmtSigned(row.change_1d)}</span></span>
+                                    <span class="truncate text-muted-foreground">{row.contract_key} · {row.wall_role || row.side}{row.oi_type ? ` · ${row.oi_type}` : ''}</span>
+                                    <span class="font-mono text-foreground">{fmtNum(row.strike)} <span class={row.wall_role === 'resistance' ? 'text-down' : row.wall_role === 'support' ? 'text-up' : 'text-warn'}>{fmtSigned(row.change_1d)}</span></span>
                                 </div>
                             {/each}
                         </div>
@@ -259,14 +305,19 @@
                         </div>
                         <div class="mt-3 grid grid-cols-2 gap-2 text-xs">
                             <div>
-                                <div class="text-[10px] uppercase tracking-wider text-muted-foreground">Upside room</div>
-                                <div class="font-mono text-up">{fmtNum(strategy.gamma_1pct.upside_room_points)} pts</div>
+                                <div class="text-[10px] uppercase tracking-wider text-muted-foreground">Room → 1st wall</div>
+                                <div class="font-mono text-foreground"><span class="text-up">{fmtNum(strategy.gamma_1pct.upside_room_points)}</span> / <span class="text-down">{fmtNum(strategy.gamma_1pct.downside_room_points)}</span> pts</div>
                             </div>
                             <div>
-                                <div class="text-[10px] uppercase tracking-wider text-muted-foreground">Downside room</div>
-                                <div class="font-mono text-down">{fmtNum(strategy.gamma_1pct.downside_room_points)} pts</div>
+                                <div class="text-[10px] uppercase tracking-wider text-muted-foreground">Room → major wall</div>
+                                <div class="font-mono text-foreground"><span class="text-up">{fmtNum(strategy.gamma_1pct.upside_room_to_major)}</span> / <span class="text-down">{fmtNum(strategy.gamma_1pct.downside_room_to_major)}</span> pts</div>
                             </div>
                         </div>
+                        {#if strategy.gamma_1pct.gamma_magnet}
+                            <div class="mt-2 text-[10px] text-muted-foreground">
+                                Gamma magnet <span class="font-mono text-warn">{fmtNum(strategy.gamma_1pct.gamma_magnet.strike)}</span> (γ {fmtNum(strategy.gamma_1pct.gamma_magnet.gamma_1pct)})
+                            </div>
+                        {/if}
                         <div class="mt-3 flex flex-col gap-1.5">
                             {#each (strategy.gamma_1pct.top_walls || []).slice(0, 4) as row}
                                 <div class="flex items-center justify-between gap-2 text-xs">

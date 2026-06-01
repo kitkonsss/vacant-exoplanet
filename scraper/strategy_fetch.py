@@ -73,6 +73,28 @@ def _sign(s):
     return 1 if s > 8 else (-1 if s < -8 else 0)
 
 
+def _oi_type(call_oi, put_oi):
+    """Classify a strike's open interest as call/put/mixed dominant.
+
+    Aligns with the project's existing wall convention (call_wall = resistance,
+    put_wall = support) so the heatmap build read is consistent with vol2vol."""
+    c, p = float(call_oi or 0), float(put_oi or 0)
+    if c == 0 and p == 0:
+        return None
+    if c >= p * 1.3:
+        return 'call'
+    if p >= c * 1.3:
+        return 'put'
+    return 'mixed'
+
+
+def _wall_role(oi_type):
+    """Translate call/put dominance into the role a growing wall plays.
+
+    call build -> resistance/cap; put build -> support/floor; mixed -> pin/magnet."""
+    return {'call': 'resistance', 'put': 'support', 'mixed': 'magnet'}.get(oi_type)
+
+
 # ---- Positioning layer ------------------------------------------------------
 
 def load_positioning(asset_id):
@@ -115,6 +137,29 @@ def load_heatmap(asset_id, contract_key, gamma=False):
     return _load_json(os.path.join(_data_dir(asset_id), f'{contract_key}_{suffix}'))
 
 
+def build_oi_lookup(asset_id):
+    """{(contract_key, strike): {call_oi, put_oi, total_oi, side}} from position_map.
+
+    Lets the OI heatmap (call/put combined) be tagged with call/put dominance so a
+    build can be read as resistance (call) vs support (put) instead of just location."""
+    lookup = {}
+    for key in CONTRACT_KEYS:
+        detail = load_position_detail(asset_id, key)
+        if not detail:
+            continue
+        for row in detail.get('position_map') or []:
+            s = _num(row.get('strike'))
+            if s is None:
+                continue
+            lookup[(key, round(s, 2))] = {
+                'call_oi': row.get('call_oi') or 0,
+                'put_oi': row.get('put_oi') or 0,
+                'total_oi': row.get('total_oi') or 0,
+                'side': row.get('side'),
+            }
+    return lookup
+
+
 def _num(v):
     try:
         return float(v)
@@ -134,12 +179,14 @@ def _latest_change(values):
     return latest, prev, change
 
 
-def analyze_heatmap_flow(asset_id):
-    """Find where contracts are being added in the OI heatmap.
+def analyze_heatmap_flow(asset_id, oi_lookup=None):
+    """Find where contracts are being added in the OI heatmap and what they mean.
 
-    The heatmap is call/put combined, so this is treated as a location/magnet read
-    rather than a pure long/short direction by itself.
+    Each build is tagged call/put (via position_map) so it reads as a growing
+    resistance (call build above) vs support (put build below) instead of pure
+    location. The biggest growing OI pile is surfaced as the price magnet.
     """
+    oi_lookup = oi_lookup or {}
     contracts = []
     all_additions = []
     for key in CONTRACT_KEYS:
@@ -147,12 +194,16 @@ def analyze_heatmap_flow(asset_id):
         if not hm:
             continue
         price = hm.get('underlying')
+        dates = hm.get('dates') or []
         additions = []
         for row in hm.get('strikes') or []:
             strike = _num(row.get('strike'))
             latest, prev, change = _latest_change(row.get('values') or [])
             if strike is None or latest is None or change is None or change <= 0:
                 continue
+            side = 'above' if price is not None and strike > float(price) else ('below' if price is not None and strike < float(price) else 'at_price')
+            ref = oi_lookup.get((key, round(strike, 2)))
+            oi_type = _oi_type(ref['call_oi'], ref['put_oi']) if ref else None
             item = {
                 'contract_key': key,
                 'contract': hm.get('contract'),
@@ -160,7 +211,9 @@ def analyze_heatmap_flow(asset_id):
                 'latest_oi': round(latest, 2),
                 'change_1d': round(change, 2),
                 'distance_points': None if price is None else round(strike - float(price), 2),
-                'side': 'above' if price is not None and strike > float(price) else ('below' if price is not None and strike < float(price) else 'at_price'),
+                'side': side,
+                'oi_type': oi_type,                 # call | put | mixed | None
+                'wall_role': _wall_role(oi_type),   # resistance | support | magnet | None
             }
             additions.append(item)
             all_additions.append(item)
@@ -171,7 +224,8 @@ def analyze_heatmap_flow(asset_id):
             'contract_key': key,
             'contract': hm.get('contract'),
             'underlying': price,
-            'latest_date': (hm.get('dates') or [None])[0],
+            'latest_date': dates[0] if dates else None,
+            'prev_date': dates[1] if len(dates) > 1 else None,
             'added_above_price': round(above, 2),
             'added_below_price': round(below, 2),
             'net_added_above_minus_below': round(above - below, 2),
@@ -181,20 +235,33 @@ def analyze_heatmap_flow(asset_id):
     all_additions.sort(key=lambda x: x['change_1d'], reverse=True)
     above_total = sum(x['change_1d'] for x in all_additions if x['side'] == 'above')
     below_total = sum(x['change_1d'] for x in all_additions if x['side'] == 'below')
-    if above_total > below_total * 1.2:
-        bias = 'upside_magnet'
-    elif below_total > above_total * 1.2:
-        bias = 'downside_magnet'
+    # Call/put-aware build: puts piling below = support (bullish floor); calls piling
+    # above = resistance (bearish cap). This drives the bias, not raw location.
+    support_build = sum(x['change_1d'] for x in all_additions if x['wall_role'] == 'support' and x['side'] == 'below')
+    resistance_build = sum(x['change_1d'] for x in all_additions if x['wall_role'] == 'resistance' and x['side'] == 'above')
+    if support_build > resistance_build * 1.2:
+        bias = 'upside_magnet'        # floor rising under price
+    elif resistance_build > support_build * 1.2:
+        bias = 'downside_magnet'      # cap building over price
     else:
         bias = 'balanced'
+    # Magnet = the largest growing OI pile (where price is being drawn / likely to pin)
+    magnet = max(all_additions, key=lambda x: x['latest_oi'], default=None)
     return {
         'method': 'latest OI heatmap build-up: newest non-null date minus previous non-null date',
         'bias': bias,
         'added_above_price': round(above_total, 2),
         'added_below_price': round(below_total, 2),
+        'support_build': round(support_build, 2),
+        'resistance_build': round(resistance_build, 2),
+        'magnet': None if not magnet else {
+            'strike': magnet['strike'], 'latest_oi': magnet['latest_oi'],
+            'oi_type': magnet['oi_type'], 'side': magnet['side'],
+            'distance_points': magnet['distance_points'],
+        },
         'top_additions': all_additions[:8],
         'contracts': contracts,
-        'note': 'OI heatmap is call/put combined; use it as where contracts are building, then confirm direction with gamma, Vol2Vol walls, macro, and COT.',
+        'note': 'Build tagged via position_map: call build above = growing resistance, put build below = growing support; magnet = largest growing OI pile.',
     }
 
 
@@ -222,17 +289,37 @@ def analyze_gamma_1pct(asset_id):
     top_gamma = walls[0]['gamma_1pct'] if walls else 0
     significant_floor = max(50, top_gamma * 0.25)
     significant = [w for w in walls if w['gamma_1pct'] >= significant_floor]
+    # nearest = first speed bump (by distance); major = nearest *big* wall (the real cap)
     above = sorted((w for w in significant if w['side'] == 'above'), key=lambda x: (abs(x['distance_points'] or 0), -x['gamma_1pct']))
     below = sorted((w for w in significant if w['side'] == 'below'), key=lambda x: (abs(x['distance_points'] or 0), -x['gamma_1pct']))
+
+    def _first_major(side_walls):
+        """Nearest wall whose gamma is within 60% of the biggest on that side —
+        the first wall large enough to actually stall a move, not the farthest-biggest."""
+        if not side_walls:
+            return None
+        smax = max(w['gamma_1pct'] for w in side_walls)
+        big = [w for w in side_walls if w['gamma_1pct'] >= 0.6 * smax]
+        return min(big, key=lambda w: abs(w['distance_points'] or 0)) if big else None
+
+    major_above = _first_major([w for w in significant if w['side'] == 'above'])
+    major_below = _first_major([w for w in significant if w['side'] == 'below'])
+    magnet = walls[0] if walls else None   # single largest-gamma strike = dominant pin
     return {
         'method': 'Gamma (1 Pct) heatmap latest non-null value by strike',
         'significant_floor': round(significant_floor, 2),
         'nearest_upside_wall': above[0] if above else None,
         'nearest_downside_wall': below[0] if below else None,
+        'major_upside_wall': major_above,
+        'major_downside_wall': major_below,
+        'gamma_magnet': magnet,
         'top_walls': walls[:10],
+        'significant_walls': significant[:12],
         'upside_room_points': (above[0].get('distance_points') if above else None),
         'downside_room_points': (abs(below[0].get('distance_points')) if below else None),
-        'note': 'Nearest gamma wall is the first likely speed bump; a clean break can shift attention to the next high-gamma strike.',
+        'upside_room_to_major': (major_above.get('distance_points') if major_above else None),
+        'downside_room_to_major': (abs(major_below.get('distance_points')) if major_below and major_below.get('distance_points') is not None else None),
+        'note': 'Nearest wall = first speed bump (by distance); major wall = biggest gamma (the real cap); magnet = single largest-gamma strike price gravitates to.',
     }
 
 
@@ -272,15 +359,97 @@ def analyze_vol2vol_walls(asset_id):
     }
 
 
+VISIBLE_STRIKE_RANGE = 350   # mirrors web/src/lib/config.js gc.visibleStrikeRange
+
+
+def analyze_round_numbers(price, visible_range=VISIBLE_STRIKE_RANGE):
+    """Round-number levels around price: multiples of 100 (primary) and 50 (secondary)."""
+    if price is None:
+        return {'levels': [], 'note': 'no price'}
+    price = float(price)
+    lo, hi = price - visible_range, price + visible_range
+    levels = []
+    n = int(lo // 50) * 50
+    while n <= hi:
+        if n >= lo and n != 0 and n % 50 == 0:
+            tag = 'round_100' if n % 100 == 0 else 'round_50'
+            levels.append({
+                'level': float(n),
+                'tag': tag,
+                'distance_points': round(n - price, 2),
+                'side': 'above' if n > price else ('below' if n < price else 'at_price'),
+            })
+        n += 50
+    return {
+        'levels': levels,
+        'visible_range': visible_range,
+        'note': 'Round numbers within visible strike range (×100 primary, ×50 secondary).',
+    }
+
+
+def build_confluence(price, gamma, vol2vol, heatmap_flow, round_nums):
+    """Cluster levels from OI walls + gamma walls + fresh OI builds + round numbers.
+
+    A level confirmed by ≥2 independent source categories is high-conviction — these
+    are the strikes worth trading around. Returns levels with sources + confluence count."""
+    if not price:
+        return []
+    price = float(price)
+    tol = max(4.0, price * 0.001)   # ~$4.5 for gold: merges same-strike, keeps 5-grid apart
+    candidates = []
+    for w in (gamma.get('significant_walls') or []):
+        candidates.append({'strike': w['strike'], 'source': 'gamma_wall',
+                           'detail': f"γ{w['gamma_1pct']:.0f}", 'weight': w['gamma_1pct']})
+    for w in (vol2vol.get('top_walls') or []):
+        candidates.append({'strike': w['strike'], 'source': 'oi_wall',
+                           'detail': f"{w['total_oi']:.0f}OI/{w.get('side', '')}", 'weight': w['total_oi']})
+    for a in (heatmap_flow.get('top_additions') or []):
+        candidates.append({'strike': a['strike'], 'source': 'oi_build',
+                           'detail': f"+{a['change_1d']:.0f}/{a.get('oi_type') or '?'}", 'weight': a['change_1d']})
+    for r in (round_nums.get('levels') or []):
+        candidates.append({'strike': r['level'], 'source': r['tag'],
+                           'detail': r['tag'].replace('round_', '×'), 'weight': 0})
+
+    candidates.sort(key=lambda c: c['strike'])
+    clusters = []
+    for c in candidates:
+        placed = next((cl for cl in clusters if abs(cl['anchor'] - c['strike']) <= tol), None)
+        if placed:
+            placed['members'].append(c)
+        else:
+            clusters.append({'anchor': c['strike'], 'members': [c]})
+
+    levels = []
+    for cl in clusters:
+        members = cl['members']
+        srcs = sorted({m['source'] for m in members})
+        # distinct categories (round_100/round_50 collapse to one 'round' category)
+        cats = {('round' if s.startswith('round') else s) for s in srcs}
+        if len(cats) < 2:
+            continue
+        round_member = next((m for m in members if m['source'].startswith('round')), None)
+        level = round_member['strike'] if round_member else max(members, key=lambda m: m['weight'])['strike']
+        levels.append({
+            'level': round(level, 2),
+            'sources': srcs,
+            'confluence': len(cats),
+            'side': 'above' if level > price else ('below' if level < price else 'at_price'),
+            'distance_points': round(level - price, 2),
+            'detail': [f"{m['source']}:{m['detail']}" for m in members],
+        })
+    levels.sort(key=lambda l: (-l['confluence'], abs(l['distance_points'])))
+    return levels[:8]
+
+
 def _score_from_flow(flow):
     if not flow:
         return 0
-    above = flow.get('added_above_price') or 0
-    below = flow.get('added_below_price') or 0
-    total = above + below
+    sup = flow.get('support_build') or 0       # puts building below = bullish floor
+    res = flow.get('resistance_build') or 0    # calls building above = bearish cap
+    total = sup + res
     if total <= 0:
         return 0
-    return round(_clamp((above - below) / total * 45, -45, 45), 1)
+    return round(_clamp((sup - res) / total * 45, -45, 45), 1)
 
 
 def build_key_levels(contracts, price):
@@ -355,7 +524,8 @@ def build_strategy(asset_id):
     pos_score, pos_label, contracts = load_positioning(asset_id)
     macro = load_macro(cfg['macro_key'])
     cot = load_cot(asset_id)
-    heatmap_flow = analyze_heatmap_flow(asset_id)
+    oi_lookup = build_oi_lookup(asset_id)
+    heatmap_flow = analyze_heatmap_flow(asset_id, oi_lookup)
     gamma_1pct = analyze_gamma_1pct(asset_id)
     vol2vol_walls = analyze_vol2vol_walls(asset_id)
 
@@ -403,6 +573,13 @@ def build_strategy(asset_id):
     price = nearest.get('future_price') if nearest else None
     key_levels, price = build_key_levels(contracts, price)
 
+    # Round numbers + confluence across OI walls / gamma walls / fresh builds / round#
+    round_numbers = analyze_round_numbers(price)
+    confluence_levels = build_confluence(price, gamma_1pct, vol2vol_walls, heatmap_flow, round_numbers)
+    # split by side, nearest-first, for scenario triggers/targets
+    conf_res = sorted((c for c in confluence_levels if c['side'] == 'above'), key=lambda c: abs(c['distance_points']))
+    conf_sup = sorted((c for c in confluence_levels if c['side'] == 'below'), key=lambda c: abs(c['distance_points']))
+
     # Narrative context strings
     macro_context = None
     if macro:
@@ -411,43 +588,70 @@ def build_strategy(asset_id):
 
     nearest_gamma_up = gamma_1pct.get('nearest_upside_wall') if gamma_1pct else None
     nearest_gamma_down = gamma_1pct.get('nearest_downside_wall') if gamma_1pct else None
+    major_gamma_up = gamma_1pct.get('major_upside_wall') if gamma_1pct else None
+    major_gamma_down = gamma_1pct.get('major_downside_wall') if gamma_1pct else None
+    gamma_magnet = gamma_1pct.get('gamma_magnet') if gamma_1pct else None
     nearest_vol_up = vol2vol_walls.get('nearest_resistance') if vol2vol_walls else None
     nearest_vol_down = vol2vol_walls.get('nearest_support') if vol2vol_walls else None
+    oi_magnet = heatmap_flow.get('magnet') if heatmap_flow else None
     top_build = (heatmap_flow.get('top_additions') or [None])[0] if heatmap_flow else None
 
-    def _then_for(direction, fallback):
-        if direction == 'up':
-            gamma_wall = nearest_gamma_up
-            vol_wall = nearest_vol_up
-        else:
-            gamma_wall = nearest_gamma_down
-            vol_wall = nearest_vol_down
-        parts_then = []
-        if gamma_wall:
-            parts_then.append(f"first gamma 1pct wall {_fmt_level(gamma_wall['strike'])}")
-        if vol_wall:
-            parts_then.append(f"Vol2Vol wall {_fmt_level(vol_wall['strike'])}")
-        return '; '.join(parts_then) if parts_then else fallback
+    def _pick_target(trigger, candidates, direction):
+        """Nearest distinct level beyond the trigger in the trade direction."""
+        vals = sorted({c for c in candidates if c is not None})
+        if trigger is not None:
+            vals = [c for c in vals if (c > trigger + 0.01 if direction == 'up' else c < trigger - 0.01)]
+        if not vals:
+            return None
+        return min(vals, key=lambda c: abs(c - trigger)) if trigger is not None else vals[0]
 
-    # Deterministic scenarios from the nearest levels
+    # Confluence-first scenarios; fall back to wall levels. Target is always a
+    # distinct level beyond the trigger (no more trigger == target).
     scenarios = []
     r0 = key_levels['resistances'][0] if key_levels['resistances'] else None
     r1 = key_levels['resistances'][1] if len(key_levels['resistances']) > 1 else None
     s0 = key_levels['supports'][0] if key_levels['supports'] else None
     s1 = key_levels['supports'][1] if len(key_levels['supports']) > 1 else None
-    if r0:
+
+    up_trigger_c = conf_res[0] if conf_res else None
+    up_trigger = up_trigger_c['level'] if up_trigger_c else r0
+    up_cands = [c['level'] for c in conf_res[1:]] + [
+        (major_gamma_up or {}).get('strike'), (nearest_gamma_up or {}).get('strike'),
+        (nearest_vol_up or {}).get('strike'), r1,
+    ] + list(key_levels['resistances'])
+    up_target = _pick_target(up_trigger, up_cands, 'up')
+
+    dn_trigger_c = conf_sup[0] if conf_sup else None
+    dn_trigger = dn_trigger_c['level'] if dn_trigger_c else s0
+    dn_cands = [c['level'] for c in conf_sup[1:]] + [
+        (major_gamma_down or {}).get('strike'), (nearest_gamma_down or {}).get('strike'),
+        (nearest_vol_down or {}).get('strike'), s1,
+    ] + list(key_levels['supports'])
+    dn_target = _pick_target(dn_trigger, dn_cands, 'down')
+
+    def _trig_txt(level, conf, verb):
+        tag = f' (confluence ×{conf["confluence"]})' if conf else ''
+        return f'{verb} {_fmt_level(level)}{tag}'
+
+    if up_trigger is not None:
         scenarios.append({
             'bias': 'upside',
-            'trigger': f'sustained move above {r0}',
-            'then': _then_for('up', f'opens path toward {r1}' if r1 else 'momentum extension higher'),
-            'invalidation': f'back below {s0}' if s0 else 'loss of the breakout level',
+            'trigger': _trig_txt(up_trigger, up_trigger_c, 'sustained move above'),
+            'then': (f'path toward {_fmt_level(up_target)}'
+                     + (f' (major gamma wall γ{major_gamma_up["gamma_1pct"]:.0f})'
+                        if major_gamma_up and up_target == major_gamma_up.get('strike') else '')
+                     ) if up_target is not None else 'momentum extension higher',
+            'invalidation': f'back below {_fmt_level(dn_trigger)}' if dn_trigger is not None else 'loss of the breakout level',
         })
-    if s0:
+    if dn_trigger is not None:
         scenarios.append({
             'bias': 'downside',
-            'trigger': f'break below {s0}',
-            'then': _then_for('down', f'toward {s1}' if s1 else 'lower support void'),
-            'invalidation': f'reclaim {r0}' if r0 else 'recovery of broken support',
+            'trigger': _trig_txt(dn_trigger, dn_trigger_c, 'break below'),
+            'then': (f'toward {_fmt_level(dn_target)}'
+                     + (f' (major gamma wall γ{major_gamma_down["gamma_1pct"]:.0f})'
+                        if major_gamma_down and dn_target == major_gamma_down.get('strike') else '')
+                     ) if dn_target is not None else 'lower support void',
+            'invalidation': f'reclaim {_fmt_level(up_trigger)}' if up_trigger is not None else 'recovery of broken support',
         })
 
     # What would flip the view: name the weakest-aligned layer
@@ -477,25 +681,41 @@ def build_strategy(asset_id):
     elif nearest_vol_up and nearest_vol_down:
         primary_path = 'trade_between_nearest_vol2vol_walls'
 
+    def _gamma_limit(nearest_w, major_w):
+        if not nearest_w and not major_w:
+            return None
+        parts_l = []
+        if nearest_w:
+            parts_l.append(f"first {_fmt_level(nearest_w['strike'])} (γ{nearest_w['gamma_1pct']:.0f})")
+        if major_w and (not nearest_w or major_w['strike'] != nearest_w['strike']):
+            parts_l.append(f"major {_fmt_level(major_w['strike'])} (γ{major_w['gamma_1pct']:.0f})")
+        return '; '.join(parts_l)
+
+    top_conf = confluence_levels[0] if confluence_levels else None
+
     execution_read = {
         'primary_path': primary_path,
         'contract_build_up': None if not top_build else (
             f"largest fresh OI build at {_fmt_level(top_build['strike'])} "
-            f"({top_build['contract_key']}, +{top_build['change_1d']:.0f} contracts, {top_build['side']})"
+            f"({top_build['contract_key']}, +{top_build['change_1d']:.0f} contracts, {top_build['side']}, "
+            f"{top_build.get('oi_type') or '?'} → {top_build.get('wall_role') or 'n/a'})"
         ),
-        'upside_limit': None if not nearest_gamma_up else (
-            f"{_fmt_level(nearest_gamma_up['strike'])} gamma 1pct wall "
-            f"({nearest_gamma_up['contract_key']}, {nearest_gamma_up['gamma_1pct']:.0f})"
+        'oi_magnet': None if not oi_magnet else (
+            f"{_fmt_level(oi_magnet['strike'])} ({oi_magnet.get('oi_type') or '?'}, {oi_magnet['latest_oi']:.0f} OI, {oi_magnet['side']})"
         ),
-        'downside_limit': None if not nearest_gamma_down else (
-            f"{_fmt_level(nearest_gamma_down['strike'])} gamma 1pct wall "
-            f"({nearest_gamma_down['contract_key']}, {nearest_gamma_down['gamma_1pct']:.0f})"
+        'gamma_magnet': None if not gamma_magnet else (
+            f"{_fmt_level(gamma_magnet['strike'])} (γ{gamma_magnet['gamma_1pct']:.0f})"
+        ),
+        'upside_limit': _gamma_limit(nearest_gamma_up, major_gamma_up),
+        'downside_limit': _gamma_limit(nearest_gamma_down, major_gamma_down),
+        'confluence_focus': None if not top_conf else (
+            f"{_fmt_level(top_conf['level'])} (×{top_conf['confluence']}: {', '.join(top_conf['sources'])})"
         ),
         'nearest_wall_band': {
             'support': None if not nearest_vol_down else nearest_vol_down['strike'],
             'resistance': None if not nearest_vol_up else nearest_vol_up['strike'],
         },
-        'how_to_use': 'Use heatmap build-up for likely destination, gamma 1pct for first continuation cap, and Vol2Vol walls for support/resistance confirmation.',
+        'how_to_use': 'Heatmap build/magnet = likely destination; gamma 1pct first wall = speed bump, major wall = real cap; confluence levels (≥2 sources) are the highest-conviction strikes.',
     }
 
     return {
@@ -511,6 +731,8 @@ def build_strategy(asset_id):
         },
         'agreement': {'bullish_layers': bull, 'bearish_layers': bear, 'aligned': agree, 'total': total},
         'key_levels': key_levels,
+        'confluence_levels': confluence_levels,
+        'round_numbers': round_numbers,
         'heatmap_contract_flow': heatmap_flow,
         'gamma_1pct': gamma_1pct,
         'vol2vol_walls': vol2vol_walls,
