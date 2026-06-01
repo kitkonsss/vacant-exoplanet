@@ -1,0 +1,98 @@
+name: Daily Strategy Brief (LLM)
+
+# Phase 3 the subscription way — runs the LLM narrative brief in GitHub Actions
+# instead of a claude.ai routine, because:
+#   - Actions has repo WRITE access via GITHUB_TOKEN (the routine sandbox's token
+#     is read-only -> git push 403), so commits actually land on main.
+#   - Actions runners are NOT network-blocked, so the FRED/CFTC fetchers work
+#     (they returned 403 inside the routine sandbox).
+#   - Uses CLAUDE_CODE_OAUTH_TOKEN (from `claude setup-token`) = the Claude
+#     SUBSCRIPTION, so NO Anthropic API key is required.
+#
+# One-time setup by the user:
+#   1. Run locally:  claude setup-token   (copy the token it prints)
+#   2. Repo -> Settings -> Secrets and variables -> Actions -> New repository secret
+#        Name:  CLAUDE_CODE_OAUTH_TOKEN
+#        Value: <the token>
+#   3. Trigger via cron-job.org (like scrape.yml / macro.yml) or the Actions tab.
+#      Suggested: weekday mornings ~07:00 Asia/Bangkok (00:00 UTC).
+#
+# If the secret is absent the brief step is skipped (the deterministic
+# daily_strategy.json from macro.yml still updates), so this never hard-fails.
+
+on:
+  workflow_dispatch:
+
+jobs:
+  brief:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      # job-level so it can be read in step `if:` (a step can't read its own env)
+      HAS_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN != '' }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install yfinance
+
+      # Refresh the data layer first (works here — no sandbox 403).
+      - name: Refresh macro / COT / strategy
+        run: |
+          python scraper/macro_fetch.py || true
+          python scraper/cot_fetch.py --asset all || true
+          python scraper/strategy_fetch.py --asset all || true
+
+      - name: Generate narrative brief
+        if: ${{ env.HAS_TOKEN == 'true' }}
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          claude_args: '--model claude-sonnet-4-6 --allowedTools "Read,Write,WebSearch" --max-turns 40'
+          prompt: |
+            คุณเป็นนักกลยุทธ์ options/macro futures ของโปรเจกต์ Vol2Vol (ทอง GC + Nasdaq-100 NQ).
+            ข้อมูลถูกรีเฟรชแล้วใน data/. หน้าที่: อ่านไฟล์แล้วเขียนทับ data/daily_brief.md เป็นภาษาไทย
+            (ศัพท์เทคนิค/ระดับราคาเป็นอังกฤษ-ตัวเลข). อย่า git commit/push — workflow จะ commit เอง.
+
+            อ่าน (ใช้ Read เท่านั้น อย่าเดาตัวเลข):
+            - ทอง: data/daily_strategy.json, data/macro.json, data/cot.json, data/position_bias_summary.json
+            - NQ:  data/nq/daily_strategy.json, data/nq/cot.json
+
+            ถ้ามี WebSearch: ค้นข่าว/แคตาลิสต์ที่ขับทองและ Nasdaq สัปดาห์นี้ + ปฏิทินเศรษฐกิจสหรัฐ
+            (FOMC/CPI/PCE/NFP/ISM) แยกหัวข้อละ 1 ครั้ง อย่าใส่วันที่เอง. ถ้าไม่มีให้ข้าม.
+
+            เขียน data/daily_brief.md โครงสร้างต่อ asset (ทั้ง GC และ NQ): บรรทัดสรุป 1 ประโยค (ทิศ+ความมั่นใจ+แก่นเหตุผล);
+            เหตุผล 3 ชั้น positioning vs macro vs COT (ชั้นไหนหนุน/สวน + ตัวเลขจริง เช่น real yield, Managed Money net, call/put wall);
+            Key levels (resistance/magnet/support จาก key_levels); Scenarios ขึ้น/ลง (trigger → then → invalidation);
+            อะไรจะเปลี่ยนมุมมอง; ข้อควรระวัง. ปิดท้ายด้วยหัวข้อ "## 📰 ข่าว & แคตาลิสต์สัปดาห์นี้" (ถ้าค้นข่าวได้)
+            และ disclaimer 1 บรรทัด (เชิงการศึกษา ไม่ใช่คำแนะนำลงทุน ไม่มีคำสั่ง entry/stop/target จริง).
+            ใส่วันที่จาก generated_at ของ daily_strategy.json บนหัวไฟล์. ต้องเขียนไฟล์จริงให้เสร็จ.
+
+      - name: Commit and push
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          branch="${GITHUB_REF_NAME:-main}"
+
+          if git diff --quiet data/; then
+            echo "No data changes to commit"
+          else
+            git add data/macro.json data/cot.json data/nq/cot.json \
+                    data/daily_strategy.json data/nq/daily_strategy.json \
+                    data/daily_brief.md
+            git commit -m "Daily brief + data refresh [skip ci]"
+            git pull --rebase origin "$branch"
+            git push origin HEAD:"$branch"
+          fi
