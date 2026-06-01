@@ -60,8 +60,7 @@ jobs:
         if git diff --quiet data/; then
           echo "No changes to commit in data/"
         else
-          git add data/macro.json data/cot.json data/nq/cot.json \
-                  data/daily_strategy.json data/nq/daily_strategy.json
+          git add data/macro.json data/cot.json data/daily_strategy.json
           git commit -m "Auto-update macro + COT + strategy [skip ci]"
           git pull --rebase origin "$branch"
           git push origin HEAD:"$branch"

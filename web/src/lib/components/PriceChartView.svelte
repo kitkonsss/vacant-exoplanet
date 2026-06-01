@@ -15,7 +15,7 @@
      * user opens this tab.
      *
      * Props:
-     *  - assetId:           'gc' | 'nq' …
+     *  - assetId:           'gc'
      *  - oiByContract:      { contractKey: heatmapJson }
      *  - gammaByContract:   { contractKey: heatmapJson }
      *  - loading:           boolean

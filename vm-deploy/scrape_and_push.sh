@@ -42,7 +42,7 @@ echo "=== [$(date '+%Y-%m-%d %H:%M:%S')] Scrape started ===" >> "$LOG_FILE"
 cd "$REPO_DIR"
 git pull --rebase --quiet 2>> "$LOG_FILE" || true
 
-# ── Run scraper (GC + NQ) ──
+# ── Run scraper (GC) ──
 cd "$REPO_DIR/scraper"
 python quikstrike_scraper.py --asset all >> "$LOG_FILE" 2>&1
 SCRAPE_EXIT=$?
@@ -52,7 +52,7 @@ if [ $SCRAPE_EXIT -ne 0 ]; then
     exit $SCRAPE_EXIT
 fi
 
-# ── Commit & Push (data/ includes data/nq/ for NQ) ──
+# ── Commit & Push ──
 cd "$REPO_DIR"
 if ! git diff --quiet data/; then
     BRANCH="$(git rev-parse --abbrev-ref HEAD)"

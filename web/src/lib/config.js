@@ -8,13 +8,6 @@ export const ASSET_PROFILES = {
         shortLabel: 'GC',
         dataFolder: 'data',
         visibleStrikeRange: 350
-    },
-    nq: {
-        id: 'nq',
-        label: 'Nasdaq (NQ)',
-        shortLabel: 'NQ',
-        dataFolder: 'data/nq',
-        visibleStrikeRange: 2000
     }
 };
 
@@ -61,7 +54,7 @@ export function macroUrl() {
     return `${DATA_BASE}/data/macro.json`;
 }
 
-// CFTC COT positioning per asset — data/cot.json (GC) or data/nq/cot.json (NQ).
+// CFTC COT positioning — data/cot.json (GC).
 export function cotUrl(assetId) {
     return dataUrl(assetId, 'cot.json');
 }

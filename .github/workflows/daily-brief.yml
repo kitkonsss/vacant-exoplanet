@@ -63,18 +63,17 @@ jobs:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           claude_args: '--model claude-sonnet-4-6 --allowedTools "Read,Write,WebSearch" --max-turns 40'
           prompt: |
-            คุณเป็นนักกลยุทธ์ options/macro futures ของโปรเจกต์ Vol2Vol (ทอง GC + Nasdaq-100 NQ).
+            คุณเป็นนักกลยุทธ์ options/macro futures ของโปรเจกต์ Vol2Vol (ทอง GC).
             ข้อมูลถูกรีเฟรชแล้วใน data/. หน้าที่: อ่านไฟล์แล้วเขียนทับ data/daily_brief.md เป็นภาษาไทย
             (ศัพท์เทคนิค/ระดับราคาเป็นอังกฤษ-ตัวเลข). อย่า git commit/push — workflow จะ commit เอง.
 
             อ่าน (ใช้ Read เท่านั้น อย่าเดาตัวเลข):
             - ทอง: data/daily_strategy.json, data/macro.json, data/cot.json, data/position_bias_summary.json
-            - NQ:  data/nq/daily_strategy.json, data/nq/cot.json
 
-            ถ้ามี WebSearch: ค้นข่าว/แคตาลิสต์ที่ขับทองและ Nasdaq สัปดาห์นี้ + ปฏิทินเศรษฐกิจสหรัฐ
+            ถ้ามี WebSearch: ค้นข่าว/แคตาลิสต์ที่ขับทองสัปดาห์นี้ + ปฏิทินเศรษฐกิจสหรัฐ
             (FOMC/CPI/PCE/NFP/ISM) แยกหัวข้อละ 1 ครั้ง อย่าใส่วันที่เอง. ถ้าไม่มีให้ข้าม.
 
-            เขียน data/daily_brief.md โครงสร้างต่อ asset (ทั้ง GC และ NQ): บรรทัดสรุป 1 ประโยค (ทิศ+ความมั่นใจ+แก่นเหตุผล);
+            เขียน data/daily_brief.md สำหรับ GC: บรรทัดสรุป 1 ประโยค (ทิศ+ความมั่นใจ+แก่นเหตุผล);
             เหตุผล 3 ชั้น positioning vs macro vs COT (ชั้นไหนหนุน/สวน + ตัวเลขจริง เช่น real yield, Managed Money net, call/put wall);
             Key levels (resistance/magnet/support จาก key_levels); Scenarios ขึ้น/ลง (trigger → then → invalidation);
             อะไรจะเปลี่ยนมุมมอง; ข้อควรระวัง. ปิดท้ายด้วยหัวข้อ "## 📰 ข่าว & แคตาลิสต์สัปดาห์นี้" (ถ้าค้นข่าวได้)
@@ -95,8 +94,8 @@ jobs:
           if git diff --quiet data/; then
             echo "No data changes to commit"
           else
-            git add data/macro.json data/cot.json data/nq/cot.json \
-                    data/daily_strategy.json data/nq/daily_strategy.json \
+            git add data/macro.json data/cot.json \
+                    data/daily_strategy.json \
                     data/daily_brief.md
             git commit -m "Daily brief + data refresh [skip ci]"
             git pull --rebase origin "$branch"

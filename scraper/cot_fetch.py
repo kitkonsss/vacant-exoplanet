@@ -1,10 +1,9 @@
 # COT Fetch — Phase 0 institutional-positioning layer for Vol2Vol
 #
-# Pulls the CFTC Commitments of Traders report for GC (gold) and NQ (Nasdaq-100)
-# and writes data/cot.json (gold) + data/nq/cot.json (NQ). This adds the "what are
-# the big funds actually doing" signal that OI walls alone can't see:
+# Pulls the CFTC Commitments of Traders report for GC (gold) and writes
+# data/cot.json. This adds the "what are the big funds actually doing" signal
+# that OI walls alone can't see:
 #   - Gold  -> Disaggregated report -> Managed Money net long/short (classic gold tell)
-#   - NQ    -> Traders in Financial Futures (TFF) -> Leveraged Funds + Asset Manager
 #
 # ZERO credentials required: CFTC publishes COT via the public Socrata API at
 # publicreporting.cftc.gov — no API key needed for our small weekly queries.
@@ -33,17 +32,12 @@ UA = 'Mozilla/5.0 (Vol2Vol cot_fetch)'
 # the full record so field names can be re-verified from a CI run's artifact.
 SOCRATA = {
     'disaggregated': '72hh-3qpy',   # Disaggregated Futures-Only (commodities, e.g. gold)
-    'tff':           'gpe5-46if',    # Traders in Financial Futures, Futures-Only (index)
 }
 
 # CFTC contract market codes (stable identifiers).
 COT_CONFIG = {
     'gc': {'short': 'GC', 'code': '088691', 'report': 'disaggregated', 'subfolder': ''},
-    'nq': {'short': 'NQ', 'code': '209742', 'report': 'tff',           'subfolder': 'nq'},
 }
-# Note: E-mini Nasdaq-100 CFTC code is '209742'; some feeds list a combined
-# contract as '20974P'. We query the primary, and if empty fall back.
-NQ_FALLBACK_CODE = '20974P'
 
 WEEKS = 12  # how many weekly rows to pull for trend / change
 
@@ -139,18 +133,6 @@ def _interpret_gold(mm, oi):
     return {'label': label, 'note': f'Managed Money {side} ({net:+,}), {trend} — {verb}{crowd}.'}
 
 
-def _interpret_nq(lev, am):
-    parts, score = [], 0
-    if lev:
-        parts.append(f"Leveraged funds net {lev['net']:+,} ({lev['trend']})")
-        score += 1 if lev['trend'] == 'rising' else (-1 if lev['trend'] == 'falling' else 0)
-    if am:
-        parts.append(f"Asset managers net {am['net']:+,} ({am['trend']})")
-        score += 1 if am['trend'] == 'rising' else (-1 if am['trend'] == 'falling' else 0)
-    label = 'bullish' if score > 0 else ('bearish' if score < 0 else 'neutral')
-    return {'label': label, 'note': '; '.join(parts) + '.' if parts else 'TFF fields not found.'}
-
-
 def _group(rows, long_subs, short_subs):
     series = _net_series(rows, long_subs, short_subs)
     if not series:
@@ -173,10 +155,6 @@ def fetch_asset_cot(asset_id):
     print(f'\n[COT] {cfg["short"]} — fetching {cfg["report"]} (code {cfg["code"]})...')
     try:
         rows = socrata_rows(cfg['report'], cfg['code'])
-        if not rows and asset_id == 'nq':
-            print(f'[COT] {cfg["short"]}: no rows for {cfg["code"]}, retrying {NQ_FALLBACK_CODE}')
-            cfg = {**cfg, 'code': NQ_FALLBACK_CODE}
-            rows = socrata_rows(cfg['report'], cfg['code'])
     except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError) as e:
         print(f'[COT] {cfg["short"]}: fetch error — {e}')
         return False
@@ -201,24 +179,14 @@ def fetch_asset_cot(asset_id):
         'open_interest': int(oi) if oi is not None else None,
     }
 
-    if cfg['report'] == 'disaggregated':
-        mm = _group(rows, ('m_money', 'long'), ('m_money', 'short'))
-        prod = _group(rows, ('prod_merc', 'long'), ('prod_merc', 'short'))
-        swap = _group(rows, ('swap', 'long'), ('swap', 'short'))
-        payload['source'] = 'CFTC Disaggregated Futures-Only (publicreporting.cftc.gov)'
-        payload['managed_money'] = mm
-        payload['producer_merchant'] = prod
-        payload['swap_dealer'] = swap
-        payload['interpretation'] = _interpret_gold(mm, oi)
-    else:  # tff
-        lev = _group(rows, ('lev_money', 'long'), ('lev_money', 'short'))
-        am = _group(rows, ('asset_mgr', 'long'), ('asset_mgr', 'short'))
-        dealer = _group(rows, ('dealer', 'long'), ('dealer', 'short'))
-        payload['source'] = 'CFTC Traders in Financial Futures, Futures-Only (publicreporting.cftc.gov)'
-        payload['leveraged_funds'] = lev
-        payload['asset_manager'] = am
-        payload['dealer'] = dealer
-        payload['interpretation'] = _interpret_nq(lev, am)
+    mm = _group(rows, ('m_money', 'long'), ('m_money', 'short'))
+    prod = _group(rows, ('prod_merc', 'long'), ('prod_merc', 'short'))
+    swap = _group(rows, ('swap', 'long'), ('swap', 'short'))
+    payload['source'] = 'CFTC Disaggregated Futures-Only (publicreporting.cftc.gov)'
+    payload['managed_money'] = mm
+    payload['producer_merchant'] = prod
+    payload['swap_dealer'] = swap
+    payload['interpretation'] = _interpret_gold(mm, oi)
 
     # Keep the raw latest record so field names can always be re-verified.
     payload['raw_latest'] = latest
@@ -236,9 +204,9 @@ def fetch_asset_cot(asset_id):
 
 def main():
     parser = argparse.ArgumentParser(description='Vol2Vol COT fetch (Phase 0)')
-    parser.add_argument('--asset', choices=['gc', 'nq', 'all'], default='all')
+    parser.add_argument('--asset', choices=['gc', 'all'], default='all')
     args = parser.parse_args()
-    assets = ['gc', 'nq'] if args.asset == 'all' else [args.asset]
+    assets = ['gc'] if args.asset == 'all' else [args.asset]
 
     print('=' * 60)
     print('  Vol2Vol COT Fetch (Phase 0)')
