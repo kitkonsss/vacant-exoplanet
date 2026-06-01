@@ -5,13 +5,11 @@
     import AppFooter from '$lib/components/AppFooter.svelte';
     import PositionBiasView from '$lib/components/PositionBiasView.svelte';
     import HeatmapView from '$lib/components/HeatmapView.svelte';
-    import ConvictionView from '$lib/components/ConvictionView.svelte';
-    import PriceChartView from '$lib/components/PriceChartView.svelte';
     import MacroView from '$lib/components/MacroView.svelte';
     import StrategyView from '$lib/components/StrategyView.svelte';
     import { fetchGammaHeatmap, fetchHeatmap, fetchPositionBias, fetchMacro, fetchCot, fetchStrategy, fetchBrief } from '$lib/data.js';
     import { ASSET_PROFILES, DEFAULT_CONTRACT_KEY } from '$lib/config.js';
-    import { LineChart, Grid3X3, Activity, Target, CandlestickChart, Landmark, Compass } from 'lucide-svelte';
+    import { LineChart, Grid3X3, Activity, Landmark, Compass } from 'lucide-svelte';
 
     let asset = $state('gc');
     let activeTab = $state('strategy');
@@ -22,7 +20,7 @@
     /** @type {Date | null} */
     let lastUpdateAt = $state(null);
 
-    // Per-contract OI heatmap state (also feeds Conviction tab).
+    // Per-contract OI heatmap state.
     let heatmapContract = $state(DEFAULT_CONTRACT_KEY);
     /** @type {Record<string, any>} */
     let heatmapCache = $state({});
@@ -54,8 +52,6 @@
         { key: 'analysis',   label: 'Position Bias', tone: 'primary', icon: LineChart },
         { key: 'heatmap',    label: 'OI Heatmap',    tone: 'mag',     icon: Grid3X3 },
         { key: 'gamma',      label: 'Gamma Heatmap', tone: 'mag',     icon: Activity },
-        { key: 'pricechart', label: 'Price Chart',   tone: 'mag',     icon: CandlestickChart },
-        { key: 'conviction', label: 'Conviction',    tone: 'warn',    icon: Target },
         { key: 'macro',      label: 'Macro / COT',   tone: 'primary', icon: Landmark }
     ];
 
@@ -72,20 +68,6 @@
 
     const currentHeatmap = $derived(heatmapCache[heatmapContract] ?? null);
     const currentGamma = $derived(gammaCache[gammaContract] ?? null);
-
-    const convictionContracts = $derived(
-        (payload?.contracts || [])
-            .map((c) => ({
-                key: c.contract_key,
-                dte: c.dte,
-                bias: c,
-                heatmap: heatmapCache[c.contract_key] || null
-            }))
-            .filter((c) => c.heatmap)
-    );
-    const convictionLoading = $derived(
-        loading || (activeTab === 'conviction' && convictionContracts.length === 0)
-    );
 
     function resolveContractKey(contractKeys, preferredKey = heatmapContract) {
         if (!contractKeys.length) return null;
@@ -137,38 +119,6 @@
         }
     }
 
-    async function ensureAllHeatmaps(keys) {
-        const missing = keys.filter((k) => !untrack(() => heatmapCache[k]));
-        if (missing.length === 0) return;
-        heatmapLoading = true;
-        try {
-            const results = await Promise.all(
-                missing.map((k) => fetchHeatmap(asset, k).then((data) => [k, data]))
-            );
-            const next = { ...untrack(() => heatmapCache) };
-            for (const [k, data] of results) next[k] = data;
-            heatmapCache = next;
-        } finally {
-            heatmapLoading = false;
-        }
-    }
-
-    async function ensureAllGamma(keys) {
-        const missing = keys.filter((k) => !untrack(() => gammaCache[k]));
-        if (missing.length === 0) return;
-        gammaLoading = true;
-        try {
-            const results = await Promise.all(
-                missing.map((k) => fetchGammaHeatmap(asset, k).then((data) => [k, data]))
-            );
-            const next = { ...untrack(() => gammaCache) };
-            for (const [k, data] of results) next[k] = data;
-            gammaCache = next;
-        } finally {
-            gammaLoading = false;
-        }
-    }
-
     async function ensureMacro({ force = false } = {}) {
         macroLoading = true;
         try {
@@ -205,13 +155,6 @@
                 await ensureHeatmap(nextKey);
             } else if (activeTab === 'gamma' && nextKey) {
                 await ensureGamma(nextKey);
-            } else if (activeTab === 'conviction') {
-                await ensureAllHeatmaps(availableContractKeys);
-            } else if (activeTab === 'pricechart') {
-                await Promise.all([
-                    ensureAllHeatmaps(availableContractKeys),
-                    ensureAllGamma(availableContractKeys)
-                ]);
             } else if (activeTab === 'macro') {
                 await ensureMacro({ force: true });
             } else if (activeTab === 'strategy') {
@@ -258,11 +201,6 @@
             if (!nextKey) return;
             if (nextKey !== gammaContract) gammaContract = nextKey;
             void ensureGamma(nextKey);
-        } else if (key === 'conviction') {
-            void ensureAllHeatmaps(availableContractKeys);
-        } else if (key === 'pricechart') {
-            void ensureAllHeatmaps(availableContractKeys);
-            void ensureAllGamma(availableContractKeys);
         } else if (key === 'macro') {
             void ensureMacro();
         } else if (key === 'strategy') {
@@ -290,11 +228,6 @@
                     void ensureHeatmap(nextKey);
                 } else if (activeTab === 'gamma' && nextKey) {
                     void ensureGamma(nextKey);
-                } else if (activeTab === 'conviction') {
-                    void ensureAllHeatmaps(availableContractKeys);
-                } else if (activeTab === 'pricechart') {
-                    void ensureAllHeatmaps(availableContractKeys);
-                    void ensureAllGamma(availableContractKeys);
                 } else if (activeTab === 'macro') {
                     void ensureMacro();   // refetch COT for the new asset (macro is shared/cached)
                 } else if (activeTab === 'strategy') {
@@ -315,10 +248,6 @@
             ? currentHeatmap?.contract || visibleContract?.contract || ''
             : activeTab === 'gamma'
                 ? currentGamma?.contract || visibleContract?.contract || ''
-            : activeTab === 'conviction'
-                ? `${convictionContracts.length}× tenors`
-            : activeTab === 'pricechart'
-                ? `${asset.toUpperCase()} futures`
             : activeTab === 'macro'
                 ? 'Macro · COT'
             : activeTab === 'strategy'
@@ -367,18 +296,6 @@
                         heatScale="log"
                         emptyFile="_GammaHeatmap.json"
                     />
-                {:else if activeTab === 'pricechart'}
-                    <PriceChartView
-                        assetId={asset}
-                        oiByContract={heatmapCache}
-                        gammaByContract={gammaCache}
-                        loading={heatmapLoading || gammaLoading || loading}
-                    />
-                {:else if activeTab === 'conviction'}
-                    <ConvictionView
-                        contracts={convictionContracts}
-                        loading={convictionLoading}
-                    />
                 {:else if activeTab === 'macro'}
                     <div class="flex flex-col gap-4 overflow-y-auto">
                         <MacroView assetId={asset} {macro} {cot} loading={macroLoading} />
@@ -393,17 +310,12 @@
             ? currentHeatmap?.contract || visibleContract?.contract || '—'
             : activeTab === 'gamma'
                 ? currentGamma?.contract || visibleContract?.contract || '—'
-            : activeTab === 'conviction'
-                ? 'All Contracts'
-            : activeTab === 'pricechart'
-                ? `${asset.toUpperCase()} futures`
                 : visibleContract?.contract || '—'}
         dataType={activeTab === 'analysis' ? 'Position Bias'
             : activeTab === 'heatmap' ? 'OI Heatmap'
             : activeTab === 'gamma' ? 'Gamma Heatmap'
-            : activeTab === 'pricechart' ? 'Price Chart'
             : activeTab === 'macro' ? 'Macro / COT'
             : activeTab === 'strategy' ? 'Daily Strategy'
-            : 'Conviction'}
+            : 'Position Bias'}
     />
 </div>
