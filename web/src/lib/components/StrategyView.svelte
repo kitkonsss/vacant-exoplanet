@@ -109,6 +109,62 @@
             </div>
         </Card>
 
+        <!-- ===== Regime & volatility (VWAP / expected range) ===== -->
+        {#if strategy.regime || strategy.expected_range || strategy.vwap?.daily}
+            <Card class="p-4">
+                <div class="flex flex-wrap items-center justify-between gap-2">
+                    <div class="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                        <Gauge class="h-3.5 w-3.5" /> Regime & Volatility
+                        {#if strategy.regime}
+                            <Badge variant={strategy.regime.regime === 'trending' ? 'warn' : strategy.regime.regime === 'range' ? 'up' : 'muted'}>
+                                {strategy.regime.regime} · {strategy.regime.lead_playbook?.replaceAll('_', ' ')}
+                            </Badge>
+                        {/if}
+                    </div>
+                    {#if strategy.regime?.reasons?.length}
+                        <div class="text-[11px] text-muted-foreground">{strategy.regime.reasons.join(' · ')}</div>
+                    {/if}
+                </div>
+                <div class="mt-3 grid grid-cols-2 gap-2 text-xs md:grid-cols-4">
+                    {#if strategy.expected_range}
+                        <div>
+                            <div class="text-[10px] uppercase tracking-wider text-muted-foreground">Expected move (ATR)</div>
+                            <div class="font-mono text-foreground">±{fmtNum(strategy.expected_range.expected_move)}</div>
+                        </div>
+                        <div>
+                            <div class="text-[10px] uppercase tracking-wider text-muted-foreground">Day range est</div>
+                            <div class="font-mono text-foreground">{fmtNum(strategy.expected_range.day_low_est)}–{fmtNum(strategy.expected_range.day_high_est)}</div>
+                        </div>
+                    {/if}
+                    {#if strategy.vwap?.daily}
+                        <div>
+                            <div class="text-[10px] uppercase tracking-wider text-muted-foreground">Session VWAP</div>
+                            <div class="font-mono text-foreground">{fmtNum(strategy.vwap.daily.vwap)} <span class="text-muted-foreground">±{fmtNum(strategy.vwap.daily.sd)}</span></div>
+                        </div>
+                        <div>
+                            <div class="text-[10px] uppercase tracking-wider text-muted-foreground">Price vs band</div>
+                            <div class="font-mono text-foreground">{strategy.vwap.price_vs_band || '—'}</div>
+                        </div>
+                    {/if}
+                </div>
+                {#if strategy.vwap?.daily?.bands}
+                    <div class="mt-3 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">VWAP SD ladder (mean-reversion fades)</div>
+                    <div class="mt-1 flex flex-wrap gap-1.5">
+                        {#each [['+3sd', 'plus3'], ['+2sd', 'plus2'], ['+1sd', 'plus1'], ['-1sd', 'minus1'], ['-2sd', 'minus2'], ['-3sd', 'minus3']] as [lbl, key]}
+                            {#if strategy.vwap.daily.bands[key] != null}
+                                <Badge variant={lbl[0] === '+' ? 'down' : 'up'}>{lbl} {fmtNum(strategy.vwap.daily.bands[key])}</Badge>
+                            {/if}
+                        {/each}
+                    </div>
+                {/if}
+                {#if strategy.contrarian_flag && strategy.contrarian_flag !== 'none'}
+                    <div class="mt-3 flex items-center gap-1.5 text-[11px] text-warn">
+                        <ShieldAlert class="h-3.5 w-3.5" /> COT {strategy.contrarian_flag.replaceAll('_', ' ')} — โหมดสวนน้ำหนักขึ้น (mean-reversion)
+                    </div>
+                {/if}
+            </Card>
+        {/if}
+
         <!-- ===== Practical execution read ===== -->
         {#if strategy.execution_read}
             <Card class="p-4">

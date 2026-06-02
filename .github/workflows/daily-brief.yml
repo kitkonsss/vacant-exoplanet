@@ -54,6 +54,7 @@ jobs:
         run: |
           python scraper/macro_fetch.py || true
           python scraper/cot_fetch.py --asset all || true
+          python scraper/vwap_fetch.py || true
           python scraper/strategy_fetch.py --asset all || true
 
       - name: Generate narrative brief
@@ -68,8 +69,15 @@ jobs:
             (ศัพท์เทคนิค/ระดับราคาเป็นอังกฤษ-ตัวเลข). อย่า git commit/push — workflow จะ commit เอง.
 
             อ่าน (ใช้ Read เท่านั้น อย่าเดาตัวเลข):
-            - ทอง: data/daily_strategy.json, data/macro.json, data/cot.json, data/position_bias_summary.json
-            - daily_strategy.json field สำคัญ: heatmap_contract_flow, gamma_1pct, vol2vol_walls, confluence_levels, execution_read
+            - ทอง: data/daily_strategy.json, data/macro.json, data/cot.json, data/vwap.json, data/position_bias_summary.json
+            - daily_strategy.json field สำคัญ: regime, expected_range, vwap, heatmap_contract_flow, gamma_1pct,
+              vol2vol_walls, confluence_levels, contrarian_flag, execution_read
+            - regime: trending → เน้นโหมดตามเทรนด์ (momentum); range → เน้นโหมดสวนที่ VWAP ±2/3SD + walls (mean-reversion)
+            - expected_range: ATR รายวัน — กำแพงที่อยู่ไกลเกิน ±ATR จากราคา มักไปไม่ถึงในวันเดียว ใช้คัดเป้าที่สมจริง
+            - vwap: VWAP ±1/2/3 SD (mean-reversion fade zones) + price_vs_band บอกว่าราคายืดไปทางไหนแล้ว
+            - COT v2 (cot.json): producer = hedge เชิงกล (ไม่ใช่ทิศทาง); smart_money = commercials อ่านจาก "การเปลี่ยนแปลง" net
+              (z-score) ไม่ใช่ net ดิบ; managed_money มี momentum_signal + contrarian_signal (crowded long/short) +
+              pct_rank_label — อย่าตีความ crowded เป็นทิศทางตรงๆ ให้มองเป็นความเสี่ยงสวน
             - heatmap_contract_flow: ดู oi_type/wall_role ของแต่ละ build (call=แนวต้านโต, put=แนวรับโต) + magnet=กองที่ใหญ่สุด;
               อย่าตีความ "OI เพิ่มเหนือราคา = bullish" ตรงๆ — call build เหนือราคา = เพดาน/ต้าน
             - gamma_1pct: แยก nearest wall (speed bump แรก) vs major wall (กำแพงจริงจาก gamma ใหญ่) +
@@ -80,8 +88,11 @@ jobs:
             ถ้ามี WebSearch: ค้นข่าว/แคตาลิสต์ที่ขับทองสัปดาห์นี้ + ปฏิทินเศรษฐกิจสหรัฐ
             (FOMC/CPI/PCE/NFP/ISM) แยกหัวข้อละ 1 ครั้ง อย่าใส่วันที่เอง. ถ้าไม่มีให้ข้าม.
 
-            เขียน data/daily_brief.md สำหรับ GC: บรรทัดสรุป 1 ประโยค (ทิศ+ความมั่นใจ+แก่นเหตุผล);
-            เหตุผล 3 ชั้น positioning vs macro vs COT (ชั้นไหนหนุน/สวน + ตัวเลขจริง เช่น real yield, Managed Money net, call/put wall);
+            เขียน data/daily_brief.md สำหรับ GC: บรรทัดสรุป 1 ประโยค (ทิศ+ความมั่นใจ+regime+แก่นเหตุผล);
+            เหตุผล 3 ชั้น positioning vs macro vs COT (ชั้นไหนหนุน/สวน + ตัวเลขจริง เช่น real yield, smart_money z-score,
+            MM momentum/contrarian, call/put wall);
+            แยกแผนเป็น 2 โหมดตาม regime: "📈 โหมดตามเทรนด์ (Momentum)" และ "🔄 โหมดสวน (Mean-reversion @ VWAP ±2/3SD + walls)"
+            — ระบุ regime ว่าโหมดไหนนำ;
             เพิ่มหัวข้อ "Execution read" ที่ตอบ: contract เพิ่มตรงไหน+เป็น call(ต้าน)/put(รับ) จาก heatmap,
             ราคาวิ่งต่อได้ถึงไหน (gamma first wall = speed bump, major wall + room_to_major = เป้าจริง),
             magnet (OI + gamma) อยู่ตรงไหน, และ confluence_levels ที่ ≥2 แหล่งทับกันคือจุดไหน (อ้าง ×N);
@@ -105,7 +116,7 @@ jobs:
           if git diff --quiet data/; then
             echo "No data changes to commit"
           else
-            git add data/macro.json data/cot.json \
+            git add data/macro.json data/cot.json data/vwap.json \
                     data/daily_strategy.json \
                     data/daily_brief.md
             git commit -m "Daily brief + data refresh [skip ci]"

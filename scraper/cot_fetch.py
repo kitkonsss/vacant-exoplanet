@@ -17,8 +17,10 @@
 # this in its own cheap GitHub Actions job ~once a day (cheap; data only moves 1x/wk).
 
 import os
+import sys
 import json
 import argparse
+import statistics
 import urllib.request
 import urllib.error
 from datetime import datetime, timezone
@@ -39,7 +41,8 @@ COT_CONFIG = {
     'gc': {'short': 'GC', 'code': '088691', 'report': 'disaggregated', 'subfolder': ''},
 }
 
-WEEKS = 12  # how many weekly rows to pull for trend / change
+WEEKS = 156       # weekly rows to pull (≈3y) so pct_rank / z-scores are meaningful
+HISTORY_OUT = 26  # rows kept in the JSON output (stats computed over the full window)
 
 
 def http_get_json(url, timeout=HTTP_TIMEOUT):
@@ -114,23 +117,108 @@ def _pct_rank(series):
     return round(below / len(nets), 2)
 
 
-def _interpret_gold(mm, oi):
+def _pct_rank_label(rank):
+    """Crowding band for a net-position percentile (1.0 = most long in window)."""
+    if rank is None:
+        return None
+    if rank >= 0.85:
+        return 'near-extreme long'
+    if rank >= 0.65:
+        return 'elevated'
+    if rank <= 0.15:
+        return 'near-extreme short'
+    if rank <= 0.35:
+        return 'subdued'
+    return 'mid'
+
+
+def _mm_signals(mm):
+    """Managed Money produces TWO independent signals: trend-following momentum and
+    a crowding-extreme contrarian flag (crowded long = top caution; crowded short = bottom)."""
+    if not mm:
+        return 'neutral', 'none'
+    net, trend, rank = mm['net'], mm['trend'], mm['pct_rank']
+    momentum = 'bullish' if trend == 'rising' else ('bearish' if trend == 'falling' else 'neutral')
+    contrarian = 'none'
+    if rank is not None:
+        if rank >= 0.85 and net > 0:
+            contrarian = 'caution_top'       # crowded long → fade-down risk
+        elif rank <= 0.15 and net < 0:
+            contrarian = 'caution_bottom'     # crowded short → squeeze-up risk
+    return momentum, contrarian
+
+
+def _smart_money(prod, swap):
+    """Commercials (producer + swap) = smart money, read from the *change* in net,
+    not the raw level (producers hedge short structurally). Commercials covering
+    short abnormally fast (net rising, high z) = bullish; the reverse = bearish."""
+    if not prod or not swap:
+        return None
+    pmap = {p['date']: p['net'] for p in prod['history']}
+    smap = {s['date']: s['net'] for s in swap['history']}
+    dates = sorted(set(pmap) & set(smap))
+    if len(dates) < 5:
+        return None
+    comm = [pmap[d] + smap[d] for d in dates]                  # commercial net, oldest→newest
+    chgs = [comm[i] - comm[i - 1] for i in range(1, len(comm))]
+    latest_net, latest_chg = comm[-1], chgs[-1]
+    mean = statistics.fmean(chgs)
+    sd = statistics.pstdev(chgs) or 1.0
+    z = (latest_chg - mean) / sd
+    if z >= 1.0 and latest_chg > 0:
+        signal = 'bullish'
+        note = f'commercials covering short fast (net {latest_chg:+,}/wk, z={z:.1f}) → smart-money bullish'
+    elif z <= -1.0 and latest_chg < 0:
+        signal = 'bearish'
+        note = f'commercials adding short fast (net {latest_chg:+,}/wk, z={z:.1f}) → smart-money bearish'
+    else:
+        signal = 'neutral'
+        note = f'commercial net change in-line (net {latest_chg:+,}/wk, z={z:.1f}) → no smart-money edge'
+    return {
+        'commercial_net': latest_net,
+        'commercial_net_chg_1w': latest_chg,
+        'commercial_zscore': round(z, 2),
+        'signal': signal,
+        'note': note,
+    }
+
+
+def _interpret_gold_v2(mm, sm, momentum, contrarian):
+    """Blend MM momentum + commercial smart-money + crowding into a net lean.
+    Smart money carries the most weight; a crowding extreme dampens / flips the lean."""
     if not mm:
         return {'label': 'unknown', 'note': 'Managed Money fields not found.'}
-    net, trend, rank = mm['net'], mm['trend'], mm['pct_rank']
-    side = 'net long' if net > 0 else 'net short'
-    if trend == 'rising':
-        label, verb = 'bullish', 'funds adding longs'
-    elif trend == 'falling':
-        label, verb = 'bearish', 'funds cutting longs / adding shorts'
+    score = 0
+    score += {'bullish': 1, 'bearish': -1}.get(momentum, 0)
+    if sm:
+        score += {'bullish': 2, 'bearish': -2}.get(sm['signal'], 0)
+    score += {'caution_top': -1, 'caution_bottom': 1}.get(contrarian, 0)
+    if score >= 3:
+        net_label = 'bullish'
+    elif score >= 1:
+        net_label = 'lean_bullish'
+    elif score <= -3:
+        net_label = 'bearish'
+    elif score <= -1:
+        net_label = 'lean_bearish'
     else:
-        label, verb = 'neutral', 'positioning flat'
-    crowd = ''
-    if rank is not None and rank >= 0.9 and net > 0:
-        crowd = ' — crowded long (contrarian caution)'
-    elif rank is not None and rank <= 0.1 and net < 0:
-        crowd = ' — crowded short (squeeze risk)'
-    return {'label': label, 'note': f'Managed Money {side} ({net:+,}), {trend} — {verb}{crowd}.'}
+        net_label = 'neutral'
+    side = 'net long' if mm['net'] > 0 else 'net short'
+    bits = [f"MM {side} ({mm['net']:+,}, {mm.get('pct_rank_label') or 'mid'}) → momentum {momentum}"]
+    if sm:
+        bits.append(sm['note'])
+    if contrarian == 'caution_top':
+        bits.append('MM crowded long → contrarian top caution (favours mean-reversion down)')
+    elif contrarian == 'caution_bottom':
+        bits.append('MM crowded short → squeeze-up risk (favours mean-reversion up)')
+    return {
+        'label': net_label,            # kept so older readers keep working
+        'net_label': net_label,
+        'momentum': momentum,
+        'contrarian': contrarian,
+        'smart_money': sm['signal'] if sm else 'neutral',
+        'note': '; '.join(bits) + '.',
+    }
 
 
 def _group(rows, long_subs, short_subs):
@@ -139,13 +227,15 @@ def _group(rows, long_subs, short_subs):
         return None
     latest = series[-1]
     prev_net = series[-2]['net'] if len(series) >= 2 else None
+    rank = _pct_rank(series)
     return {
         'long': latest['long'],
         'short': latest['short'],
         'net': latest['net'],
         'net_chg_1w': (latest['net'] - prev_net) if prev_net is not None else None,
         'trend': _trend(series),
-        'pct_rank': _pct_rank(series),
+        'pct_rank': rank,
+        'pct_rank_label': _pct_rank_label(rank),
         'history': series,
     }
 
@@ -182,11 +272,28 @@ def fetch_asset_cot(asset_id):
     mm = _group(rows, ('m_money', 'long'), ('m_money', 'short'))
     prod = _group(rows, ('prod_merc', 'long'), ('prod_merc', 'short'))
     swap = _group(rows, ('swap', 'long'), ('swap', 'short'))
+
+    # v2 reads — compute BEFORE trimming history (smart-money needs the full window).
+    smart_money = _smart_money(prod, swap)
+    momentum, contrarian = _mm_signals(mm)
+    if mm:
+        mm['momentum_signal'] = momentum
+        mm['contrarian_signal'] = contrarian
+    if prod:
+        prod['note'] = 'producer hedge is structurally short — treat net as mechanical, not directional'
+
+    payload['version'] = 2
     payload['source'] = 'CFTC Disaggregated Futures-Only (publicreporting.cftc.gov)'
     payload['managed_money'] = mm
     payload['producer_merchant'] = prod
     payload['swap_dealer'] = swap
-    payload['interpretation'] = _interpret_gold(mm, oi)
+    payload['smart_money'] = smart_money
+    payload['interpretation'] = _interpret_gold_v2(mm, smart_money, momentum, contrarian)
+
+    # Trim per-group history for a lean output (stats already computed over full window).
+    for grp in (mm, prod, swap):
+        if grp and grp.get('history'):
+            grp['history'] = grp['history'][-HISTORY_OUT:]
 
     # Keep the raw latest record so field names can always be re-verified.
     payload['raw_latest'] = latest
@@ -203,6 +310,10 @@ def fetch_asset_cot(asset_id):
 
 
 def main():
+    try:
+        sys.stdout.reconfigure(encoding='utf-8')   # keep non-ASCII notes printable on any console
+    except (AttributeError, ValueError):
+        pass
     parser = argparse.ArgumentParser(description='Vol2Vol COT fetch (Phase 0)')
     parser.add_argument('--asset', choices=['gc', 'all'], default='all')
     args = parser.parse_args()

@@ -387,8 +387,9 @@ def analyze_round_numbers(price, visible_range=VISIBLE_STRIKE_RANGE):
     }
 
 
-def build_confluence(price, gamma, vol2vol, heatmap_flow, round_nums):
-    """Cluster levels from OI walls + gamma walls + fresh OI builds + round numbers.
+def build_confluence(price, gamma, vol2vol, heatmap_flow, round_nums, vwap=None):
+    """Cluster levels from OI walls + gamma walls + fresh OI builds + round numbers
+    + VWAP SD bands.
 
     A level confirmed by ≥2 independent source categories is high-conviction — these
     are the strikes worth trading around. Returns levels with sources + confluence count."""
@@ -409,6 +410,12 @@ def build_confluence(price, gamma, vol2vol, heatmap_flow, round_nums):
     for r in (round_nums.get('levels') or []):
         candidates.append({'strike': r['level'], 'source': r['tag'],
                            'detail': r['tag'].replace('round_', '×'), 'weight': 0})
+    # VWAP ±2/±3 SD = the mean-reversion fade bands worth confluence-checking
+    daily = (vwap or {}).get('daily') or {}
+    for bk, lvl in (daily.get('bands') or {}).items():
+        if bk in ('plus2', 'minus2', 'plus3', 'minus3') and lvl is not None:
+            candidates.append({'strike': float(lvl), 'source': 'vwap_band',
+                               'detail': bk.replace('plus', '+').replace('minus', '-') + 'sd', 'weight': 0})
 
     candidates.sort(key=lambda c: c['strike'])
     clusters = []
@@ -500,21 +507,111 @@ def load_cot(asset_id):
     if not cot:
         return None
     interp = cot.get('interpretation') or {}
-    label = interp.get('label', 'neutral')
-    base = {'bullish': 30, 'bearish': -30, 'neutral': 0}.get(label, 0)
-    # nudge by the primary group's trend (rising net -> reinforce direction)
-    primary = cot.get('managed_money') or cot.get('leveraged_funds') or cot.get('asset_manager') or {}
-    trend = primary.get('trend')
-    if trend == 'rising':
-        base += 10
-    elif trend == 'falling':
-        base -= 10
+    # v2: net_label blends MM momentum + commercial smart-money + crowding.
+    # Falls back to v1 'label' so an old cot.json still works.
+    label = interp.get('net_label') or interp.get('label', 'neutral')
+    base = {'bullish': 35, 'lean_bullish': 18, 'neutral': 0,
+            'lean_bearish': -18, 'bearish': -35}.get(label, 0)
+    smart = (cot.get('smart_money') or {}).get('signal')
+    if smart == 'bullish':
+        base += 8           # commercials = highest-quality directional tell
+    elif smart == 'bearish':
+        base -= 8
+    if base == 0:           # v1 fallback: no net_label, nudge by MM trend
+        primary = cot.get('managed_money') or {}
+        base += {'rising': 10, 'falling': -10}.get(primary.get('trend'), 0)
     return {
         'score': float(_clamp(base, -50, 50)),
         'label': label,
         'note': interp.get('note', ''),
         'report_date': cot.get('report_date'),
+        'contrarian': interp.get('contrarian', 'none'),
+        'smart_money': smart or 'neutral',
     }
+
+
+# ---- VWAP / volatility layer ------------------------------------------------
+
+def load_vwap(asset_id):
+    return _load_json(os.path.join(_data_dir(asset_id), 'vwap.json'))
+
+
+def load_ohlc_daily(asset_id):
+    return _load_json(os.path.join(_data_dir(asset_id), 'OHLC.json'))
+
+
+def _atr(candles, period=14):
+    """Average True Range over the last `period` daily candles."""
+    if not candles or len(candles) < 2:
+        return None
+    trs = []
+    for i in range(1, len(candles)):
+        h, l = _num(candles[i].get('high')), _num(candles[i].get('low'))
+        pc = _num(candles[i - 1].get('close'))
+        if None in (h, l, pc):
+            continue
+        trs.append(max(h - l, abs(h - pc), abs(l - pc)))
+    if not trs:
+        return None
+    window = trs[-period:]
+    return sum(window) / len(window)
+
+
+def analyze_expected_range(price, ohlc_daily):
+    """Daily expected move from ATR(14) — anchors realistic intraday targets."""
+    candles = (ohlc_daily or {}).get('candles') or []
+    atr = _atr(candles, 14)
+    if atr is None or price is None:
+        return None
+    return {
+        'method': 'ATR(14) daily true-range proxy',
+        'atr': round(atr, 2),
+        'expected_move': round(atr, 2),
+        'day_high_est': round(price + atr, 2),
+        'day_low_est': round(price - atr, 2),
+        'note': 'Typical 1-day travel; a wall beyond ±ATR from price is unlikely to be reached intraday.',
+    }
+
+
+def detect_regime(price, vwap, expected_range, macro):
+    """Trending vs range — picks which playbook (momentum vs mean-reversion) leads.
+
+    Trending when price is stretched from session VWAP (>1.2 SD) AND the daily ATR is
+    wide vs the SD band; range when price hugs VWAP and bands are tight."""
+    daily = (vwap or {}).get('daily') or {}
+    sd = daily.get('sd')
+    vw = daily.get('vwap')
+    reasons = []
+    z = None
+    if price is not None and vw is not None and sd:
+        z = abs(price - vw) / sd
+        reasons.append(f'price {z:.1f} SD from session VWAP')
+    atr = (expected_range or {}).get('atr')
+    band_width = (sd * 2) if sd else None     # ±1 SD width
+    vix = ((macro or {}).get('series') or {}).get('vix_live') or ((macro or {}).get('series') or {}).get('vix') or {}
+    vix_val = _num(vix.get('value'))
+    score = 0
+    if z is not None:
+        if z >= 1.2:
+            score += 1
+        elif z <= 0.6:
+            score -= 1
+    if atr and band_width and band_width > 0:
+        ratio = atr / band_width
+        reasons.append(f'ATR/SD-band {ratio:.1f}x')
+        if ratio >= 1.5:
+            score += 1
+        elif ratio <= 0.9:
+            score -= 1
+    if vix_val is not None:
+        reasons.append(f'VIX {vix_val:.1f}')
+        if vix_val >= 20:
+            score += 1     # high vol → trend/expansion risk
+        elif vix_val <= 14:
+            score -= 1     # calm → range/mean-reversion
+    regime = 'trending' if score >= 1 else ('range' if score <= -1 else 'mixed')
+    return {'regime': regime, 'score': score, 'reasons': reasons,
+            'lead_playbook': 'momentum' if regime == 'trending' else ('mean_reversion' if regime == 'range' else 'both')}
 
 
 # ---- Synthesis --------------------------------------------------------------
@@ -524,6 +621,9 @@ def build_strategy(asset_id):
     pos_score, pos_label, contracts = load_positioning(asset_id)
     macro = load_macro(cfg['macro_key'])
     cot = load_cot(asset_id)
+    macro_raw = _load_json(os.path.join(BASE_OUTPUT_DIR, 'macro.json'))
+    vwap = load_vwap(asset_id)
+    ohlc_daily = load_ohlc_daily(asset_id)
     oi_lookup = build_oi_lookup(asset_id)
     heatmap_flow = analyze_heatmap_flow(asset_id, oi_lookup)
     gamma_1pct = analyze_gamma_1pct(asset_id)
@@ -556,7 +656,8 @@ def build_strategy(asset_id):
     bull = sum(1 for x in nz if x > 0)
     bear = sum(1 for x in nz if x < 0)
     overall_sign = _sign(blended)
-    agree = sum(1 for x in nz if x == overall_sign)
+    # when the blend is neutral (sign 0) no layer "matches" it — show the larger camp instead
+    agree = sum(1 for x in nz if x == overall_sign) if overall_sign != 0 else max(bull, bear)
     total = len(nz)
     if total >= 3 and agree == total:
         confidence = 'high'
@@ -569,13 +670,21 @@ def build_strategy(asset_id):
         if contracts else None
     if nearest and (nearest.get('dte') or 0) < 0.5 and confidence == 'high':
         confidence = 'medium'
+    # COT crowding extreme -> trend read is fragile, cap confidence and flag it
+    cot_contrarian = cot.get('contrarian', 'none') if cot else 'none'
+    if cot_contrarian in ('caution_top', 'caution_bottom') and confidence == 'high':
+        confidence = 'medium'
 
     price = nearest.get('future_price') if nearest else None
     key_levels, price = build_key_levels(contracts, price)
 
-    # Round numbers + confluence across OI walls / gamma walls / fresh builds / round#
+    # Volatility context: daily expected range (ATR) + trending/range regime
+    expected_range = analyze_expected_range(price, ohlc_daily)
+    regime = detect_regime(price, vwap, expected_range, macro_raw)
+
+    # Round numbers + confluence across OI walls / gamma walls / fresh builds / round# / VWAP SD
     round_numbers = analyze_round_numbers(price)
-    confluence_levels = build_confluence(price, gamma_1pct, vol2vol_walls, heatmap_flow, round_numbers)
+    confluence_levels = build_confluence(price, gamma_1pct, vol2vol_walls, heatmap_flow, round_numbers, vwap)
     # split by side, nearest-first, for scenario triggers/targets
     conf_res = sorted((c for c in confluence_levels if c['side'] == 'above'), key=lambda c: abs(c['distance_points']))
     conf_sup = sorted((c for c in confluence_levels if c['side'] == 'below'), key=lambda c: abs(c['distance_points']))
@@ -670,16 +779,32 @@ def build_strategy(asset_id):
             flip.append('real yields fall / DXY rolls over')
         if cot and cot['score'] > 0:
             flip.append('funds add longs (COT turns up)')
+    if cot_contrarian == 'caution_top':
+        flip.append('MM is crowded long (COT) — a long flush could flip this into a mean-reversion down')
+    elif cot_contrarian == 'caution_bottom':
+        flip.append('MM is crowded short (COT) — a squeeze could flip this into a mean-reversion up')
     if not flip:
         flip.append('a clean break of the key levels above with the macro backdrop confirming')
 
-    primary_path = 'range_first'
-    if heatmap_flow and heatmap_flow.get('bias') == 'upside_magnet' and overall_sign >= 0:
-        primary_path = 'upside_momentum_to_first_gamma_wall'
-    elif heatmap_flow and heatmap_flow.get('bias') == 'downside_magnet' and overall_sign <= 0:
-        primary_path = 'downside_momentum_to_first_gamma_wall'
-    elif nearest_vol_up and nearest_vol_down:
-        primary_path = 'trade_between_nearest_vol2vol_walls'
+    hbias = heatmap_flow.get('bias') if heatmap_flow else None
+    if regime['regime'] == 'trending':
+        if overall_sign > 0 or hbias == 'upside_magnet':
+            primary_path = 'upside_momentum_to_major_gamma_wall'
+        elif overall_sign < 0 or hbias == 'downside_magnet':
+            primary_path = 'downside_momentum_to_major_gamma_wall'
+        else:
+            primary_path = 'breakout_pending_pick_a_side'
+    elif regime['regime'] == 'range':
+        primary_path = 'mean_revert_at_vwap_sd_and_walls'
+    else:  # mixed
+        if hbias == 'upside_magnet' and overall_sign >= 0:
+            primary_path = 'upside_momentum_to_first_gamma_wall'
+        elif hbias == 'downside_magnet' and overall_sign <= 0:
+            primary_path = 'downside_momentum_to_first_gamma_wall'
+        elif nearest_vol_up and nearest_vol_down:
+            primary_path = 'trade_between_nearest_vol2vol_walls'
+        else:
+            primary_path = 'range_first'
 
     def _gamma_limit(nearest_w, major_w):
         if not nearest_w and not major_w:
@@ -727,9 +852,18 @@ def build_strategy(asset_id):
         'components': {
             'positioning': None if pos_score is None else {'score': round(pos_score, 1), 'label': pos_label, 'weight': W_POSITIONING},
             'macro': None if macro is None else {'score': round(macro['score'], 1), 'label': macro['label'], 'weight': W_MACRO, 'drivers': macro['drivers']},
-            'cot': None if cot is None else {'score': round(cot['score'], 1), 'label': cot['label'], 'weight': W_COT, 'note': cot['note'], 'report_date': cot.get('report_date')},
+            'cot': None if cot is None else {'score': round(cot['score'], 1), 'label': cot['label'], 'weight': W_COT, 'note': cot['note'], 'report_date': cot.get('report_date'), 'contrarian': cot.get('contrarian', 'none'), 'smart_money': cot.get('smart_money', 'neutral')},
         },
         'agreement': {'bullish_layers': bull, 'bearish_layers': bear, 'aligned': agree, 'total': total},
+        'regime': regime,
+        'expected_range': expected_range,
+        'vwap': None if not vwap else {
+            'daily': vwap.get('daily'),
+            'weekly_vwap': (vwap.get('weekly') or {}).get('vwap'),
+            'price_vs_band': (vwap.get('daily') or {}).get('price_vs_band'),
+            'generated_at': vwap.get('generated_at'),
+        },
+        'contrarian_flag': cot_contrarian,
         'key_levels': key_levels,
         'confluence_levels': confluence_levels,
         'round_numbers': round_numbers,
