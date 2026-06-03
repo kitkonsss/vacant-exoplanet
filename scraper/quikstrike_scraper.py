@@ -662,12 +662,22 @@ def select_contract(driver, contract):
 # ============================================================
 
 def _today_ny():
-    """Today's date in US/Eastern (the exchange clock), with a UTC fallback
-    when tzdata is unavailable. Used both for classification and the
-    incomplete-list guard so they always agree on what 'today' is."""
+    """CME trading date in US/Eastern. GC (COMEX) closes at 5pm ET; after
+    that the next trading session has begun, so the "trading date" rolls to
+    the next calendar day. This ensures an evening scrape (e.g. 9pm ET,
+    which is 8am next-day Thai time) correctly drops the previous day's
+    expired contract rather than re-selecting it as "current".
+
+    Fallback to plain UTC date when tzdata is unavailable.
+    """
+    from datetime import timedelta
     if ZoneInfo is not None:
         try:
-            return datetime.now(ZoneInfo('America/New_York')).date()
+            now_et = datetime.now(ZoneInfo('America/New_York'))
+            # After 5pm ET → trading date is the next calendar day
+            if now_et.hour >= 17:
+                return (now_et + timedelta(days=1)).date()
+            return now_et.date()
         except Exception:
             pass
     return datetime.now(timezone.utc).date()
