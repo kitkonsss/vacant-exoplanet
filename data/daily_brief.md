@@ -1,115 +1,102 @@
-# บทวิเคราะห์กลยุทธ์ประจำวัน
-**วันที่: 2026-06-02** | สร้างอัตโนมัติจากข้อมูล Vol2Vol Dashboard  
-*(GC generated_at: 2026-06-02T00:10:41+00:00 | macro: 2026-06-01 | COT report date: 2026-05-26)*
+# Vol2Vol — บทวิเคราะห์กลยุทธ์ประจำวัน
+**วันที่:** 2026-06-03 (generated_at: 2026-06-03T00:11:11Z)
 
 ---
 
-## 🥇 GC — ทองคำ Futures
-**ราคาอ้างอิง: 4,499.7** | Contract หลัก: OGN6 (monthly)
+## 🥇 GC — Gold Futures
 
-### สรุป 1 ประโยค
-GC อยู่ใน **neutral** (score +6.7, confidence **low**) — ดึงกัน 2 ต่อ 2: macro + COT หนุน bullish แต่ options positioning ทุก tenor bearish และราคากำลัง "นั่งทับ" gamma wall ใหญ่สุดที่ **4,500 (γ250)** แบบแทบไม่มีระยะห่าง
+### สรุปในประโยคเดียว
+ทองคำ GC @ 4,517.6 อยู่ในโหมด **neutral** (score +8.3, confidence: medium) — macro tailwind จาก real yield ที่ร่วงและ USD อ่อนค่าช่วยหนุน แต่ถูก positioning ที่เป็นกลาง-ลบดึงรั้ง; ยังไม่มีทิศทางชัด รอ catalyst ทดสอบแนว 4,500–4,600
 
 ---
 
 ### เหตุผล 3 ชั้น
 
-| ชั้น | Score (weight) | Label | ทิศทาง |
-|------|:--------------:|-------|:------:|
-| Positioning | −16.6 (×0.45) | bearish | **สวน** |
-| Macro | +32.0 (×0.35) | tailwind | **หนุน** |
-| COT | +40.0 (×0.20) | bullish | **หนุน** |
+**ชั้น 1 — Positioning (weight 45%, score −7.7 → neutral)**
+- Position Bias รวม: −7.72 (neutral)
+- สัญญาใกล้ expire สุด (current G1TM6): score −9.57, call wall 4,550 / put wall 4,500 → market maker ป้องกัน 4,500 ฝั่ง put และ cap ที่ 4,550 ฝั่ง call
+- สัญญา Friday (OG1M6): score −13.8 (bearish, high confidence) — largest position อยู่ที่ 4,500 put wall, dominant call wall ไกลที่ 4,750 → ฝั่ง dealer **short gamma** ต่ำกว่า 4,500
+- สัญญา Monthly (OGN6): score −17.01 (bearish, low confidence) — put wall ใหญ่ที่ 4,000, call wall ที่ 5,000, largest OI cluster ที่ 4,400 → ชั้น monthly **ลำเอียงลบ** แต่ confidence ต่ำจึงหักน้ำหนักลง
+- **สรุปชั้นนี้: สวนทิศ (headwind)** — positioning แรงกว่าตลาดมองลงในระยะสัปดาห์-เดือน
 
-**Positioning — สวน (ชั้นหนักสุด weight 0.45):**  
-Position bias รวม −16.6 (bearish) ทุก tenor โดยเฉพาะ friday OG1M6 score −27.5 (high confidence bearish) ที่มี dominant call wall **4,750** กับ put wall **4,500** OI magnet ที่ใหญ่ที่สุดอยู่ที่ **4,400 ด้านล่าง** (4,888 OI, mixed, ×4 confluence: gamma_wall + oi_build + oi_wall + round_100) — heatmap contract flow bias = **downside_magnet** โดย monthly OGN6 เพิ่ม OI ด้านล่างราคา 1,949 contracts มากกว่าด้านบน 1,660 contracts ในวันล่าสุด; execution_read ชี้ primary path = **downside_momentum_to_first_gamma_wall**
+**ชั้น 2 — Macro (weight 35%, score +32 → tailwind)**
+- 10Y Real Yield (TIPS): **2.06%**, ลง −7 bp ใน 5 วัน → tailwind ทอง (inverse relationship)
+- DXY: **98.97**, ลง −0.35% ใน 5 วัน → tailwind เพิ่มเติม
+- 10Y Nominal Yield: 4.45% (−12 bp/5d), curve 2s10s = +46 bp (steepening เล็กน้อย)
+- 10Y Breakeven inflation: 2.38% (flat) → ไม่ได้ส่งสัญญาณ inflation spike
+- VIX: 15.74–15.88 (trending down) → risk appetite ค่อนข้างดี ไม่ได้ panic-buy gold
+- **สรุปชั้นนี้: หนุน (tailwind)** — environment ยังเป็นมิตรกับทอง แต่ breakeven flat และ VIX ต่ำทำให้ไม่ใช่ "fear bid" แบบชัดเจน
 
-**Macro — หนุน:**  
-real yield 10Y ลดลง **−7bp/5d** มาอยู่ที่ **2.06%** (TIPS, as of 2026-05-28); DXY **98.97** อ่อนตัว **−0.35%/5d** → ทั้งสองปัจจัยหลักเป็น tailwind ให้ทอง; 10Y nominal **4.45%** (−12bp/5d) และ 2Y **3.99%** (−5bp/5d) curve steep +46bp (2s10s); breakeven inflation **2.38%** (flat); VIX **15.74** (−1.02/5d) บ่งชี้ risk-on เล็กน้อย → ไม่มี fear-driven demand หนุนทองระยะสั้น
-
-**COT — หนุน (แต่ระวัง lag):**  
-Managed Money net long **+97,446** สัญญา (+3,906/สัปดาห์, rising); pct_rank = 0.75 → อยู่ใน top quartile ของ historic range แต่ยังไม่ extreme; swap dealer net short **−166,256** (ปกติสำหรับ hedge); report date **2026-05-26** (lag ~7 วัน)
+**ชั้น 3 — COT (weight 20%, score +18 → lean_bullish)**
+- Managed Money net long: **+97,446** สัญญา (รายงาน 2026-05-26)
+- pct_rank = 0.30 → **subdued** (ต่ำกว่าเฉลี่ยในประวัติศาสตร์) — มีห้องสำหรับ build long เพิ่ม
+- MM net +3,906 ใน 1 สัปดาห์ (trend: rising) → momentum bullish ยังอยู่
+- Commercial (smart money): net change +5,863/wk, z-score = 0.36 → **neutral** ไม่มี edge ชัดเจน
+- Producer/Merchant: net −19,510 (pct_rank 0.95 — near-extreme long) → ผู้ผลิตอยู่ฝั่ง long ผิดปกติ สร้าง tension เชิง contrarian
+- **สรุปชั้นนี้: หนุนเล็กน้อย** — MM ยังทิศบวก แต่ subdued; producer long ผิดปกติเป็นสัญญาณเฝ้าระวัง
 
 ---
 
 ### Key Levels
 
-| ระดับ | ประเภท | แหล่งที่มา / รายละเอียด |
-|------:|--------|------------------------|
-| **5,000** | Resistance (deep) | call wall 4,877 OI (4,333 calls); γ126 |
-| **4,800** | Resistance | call wall 4,609 OI; γ235; ×3 confluence |
-| **4,750** | Resistance — call wall สำคัญ | call wall 2,897 OI; γ166; oi_build +567; ×4 confluence |
-| **4,585** | Resistance | put wall 4,585 (tomorrow contract) |
-| **4,500** | **Gamma Magnet / Resistance ใกล้สุด** | γ250 (ใหญ่สุด monthly); put wall 4,093 OI; ×3 confluence; 0.3 pts จากราคา |
-| **4,499.7** | ราคาปัจจุบัน | — |
-| **4,450** | Gamma ด่านแรกด้านล่าง | γ79 |
-| **4,400** | **Support + OI Magnet หลัก** | γ235; 4,888 OI mixed; oi_build +488; put wall +123; ×4 confluence |
-| **4,300** | Support | put wall 2,703 OI; γ89; ×3 confluence |
-| **4,000** | Deep support | put wall 4,549 OI (4,549 puts) |
+| ระดับ | บทบาท | แหล่งที่มา |
+|-------|--------|------------|
+| **4,600** | Resistance / Gamma Cap | Confluence ×5: gamma_wall (γ197), OI build, OI wall (2,923 OI), round_100, VWAP +3SD |
+| **4,550** | Magnet / Near Resistance | Key level magnet; G1TM6 call wall; VWAP daily 4,542 cluster |
+| **4,517–4,531** | ราคาปัจจุบัน (ref) | ราคาอยู่ระหว่าง VWAP daily และ −1SD (4,524) |
+| **4,525** | Vol2Vol Nearest Support | G1TM6 put wall (175 OI, 114 put), activity_vs_oi 0.78 |
+| **4,500** | Put Wall หลัก | Confluence ×4: gamma_wall (γ284), OI wall (4,044 OI / put wall), OI build (+92), round_100 — **แนวพยุงสำคัญ** |
+| **4,450** | Support รอง | OI build put (+76) OG1M6 / put wall ระยะสัปดาห์ |
+| **4,400** | Gamma Magnet / Deep Support | Confluence ×3: gamma_wall (γ304 — ใหญ่สุด), OI wall (4,897 OI / mixed), round_100; monthly largest OI cluster |
 
 ---
 
 ### Scenarios
 
-**📈 Upside — trigger → then → invalidation**  
-trigger: ราคายืนเหนือ **4,500** ได้อย่างต่อเนื่อง (break gamma wall γ250 + put wall 4,093 OI)  
-→ then: path ต่อไปที่ **4,550** (γ87 current contract) จากนั้น **4,585** และ **4,600** (mixed wall 3,260 OI)  
-→ invalidation: ราคาหล่นกลับใต้ **4,400**
+**📈 Scenario ขาขึ้น**
+- **Trigger:** ราคาปิดเหนือ 4,600 (confluence ×5) ด้วย volume ยืนยัน
+- **Then:** เส้นทางสู่ 4,700 (OGN6 call wall, γ155) และต่อไป 4,750–4,800
+- **Invalidation:** ราคาหล่นกลับต่ำกว่า 4,500 หลังทะลุขึ้น
 
-**📉 Downside — trigger → then → invalidation**  
-trigger: ราคาหลุด **4,400** (×4 confluence, OI magnet ที่ใหญ่สุด)  
-→ then: path ต่อไปที่ **4,300** (put wall 2,703 OI, ×3 confluence)  
-→ invalidation: ราคา reclaim **4,500** กลับขึ้นมาได้
+**📉 Scenario ขาลง**
+- **Trigger:** break ต่ำกว่า 4,500 (put wall confluence ×4) ด้วย OI activity เพิ่ม
+- **Then:** ทดสอบ 4,450 → 4,400 (gamma magnet ที่แข็งแกร่งสุด γ304)
+- **Invalidation:** กลับมายืนเหนือ 4,600
 
 ---
 
-### อะไรจะทำให้เปลี่ยนมุมมอง (What Would Change My Mind)
+### What Would Change My Mind?
 
-- **Flip more bullish:** call walls เหนือ 4,500 เริ่ม unwound (OI ลด) + fresh OI build ย้ายมากองบนด้านบน + real yield ลงต่อใต้ **2.0%** + DXY ทะลุต่ำกว่า **98.5**
-- **Flip more bearish:** COT Managed Money net long ลดลงต่ำกว่า **90,000** + DXY กลับแข็งเหนือ **100** + positioning score ดิ่งต่ำกว่า −25 ทุก tenor
-- **ตัวที่น่ากังวลที่สุดตอนนี้:** หาก call walls ยังสะสมต่อ (ตามที่ what_would_change_my_mind ระบุ) ราคาจะถูก cap ไว้ที่ 4,500–4,550 ไม่ว่า macro จะดีแค่ไหน
+- **เปลี่ยนเป็น bullish ชัดเจน:** real yield ร่วงต่อ −15 bp/5d + DXY หลุด 97 + MM net ขยับเหนือ 110,000 (pct_rank > 0.5) + ราคาทะลุ 4,600 พร้อม OI shift เป็น call build
+- **เปลี่ยนเป็น bearish:** real yield พุ่งกลับ +10 bp/5d (rate surprise) + DXY กลับแข็งเกิน 101 + ราคาหลุด 4,400 (gamma magnet break) + MM net ลดลงเร็ว
 
 ---
 
 ### ข้อควรระวัง
 
-1. **ความขัดแย้งระหว่างชั้น (สำคัญที่สุด):** 4 layers ดึงกัน 2+2 เสมอกัน (macro+COT หนุน vs. positioning ระยะสั้น+ยาวต้าน) → confidence ต่ำ อย่า oversize position
-2. **Gamma pinning:** ราคา 4,499.7 ห่างจาก gamma wall 4,500 เพียง **0.3 points** — ช่วงใกล้ expiry มักเกิด choppy/pin action รอบ strike ใหญ่
-3. **COT lag ~7 วัน:** report date 2026-05-26 ราคาและ sentiment อาจ shift ไปแล้วในสัปดาห์ที่ผ่านมา ใช้ COT เป็น structural read ไม่ใช่ timing
-4. **Downside magnet แข็งแกร่ง:** heatmap bias = downside_magnet และ execution_read = downside_momentum แม้ macro หนุน short-term flow อาจยังกด
+1. **ความขัดแย้งระหว่างชั้น:** macro หนุน (+32) แต่ positioning สวน (−7.7) — **นี่คือ edge หลัก**: ราคาอาจ range-bound ระหว่าง 4,500–4,600 จน catalyst ใหม่เข้ามาตัดสิน
+2. **COT lag:** รายงานณ 2026-05-26 ล้าหลัง ~7 วัน; ตัวเลข MM net อาจเปลี่ยนแปลงมากในรายงานสัปดาห์หน้า
+3. **Producer long ผิดปกติ:** pct_rank 0.95 → producer/merchant ซึ่งปกติ hedge short กลับ net long น้อยมาก (-19,510 แต่ pct_rank สูง) — อาจบ่งชี้ว่า smart hedger คาดราคาขึ้น หรือ basis play; ควรติดตาม
+4. **Confidence กลาง (medium):** 2 ใน 3 ชั้นหนุน แต่ positioning ขัด; VIX 15.74 ต่ำ ไม่ได้หนุน safe-haven bid
+5. **VWAP context:** ราคาต่ำกว่า VWAP daily (4,542) เล็กน้อย — momentum ระยะสั้นอ่อน; weekly VWAP ที่ 4,526 เป็นระดับใกล้เคียงที่จับตา
 
 ---
 
 ## 📊 NQ — Nasdaq-100 Futures
 
-> **ข้อมูลไม่พร้อมใช้งาน:** ไม่พบไฟล์ `data/nq/daily_strategy.json` หรือ `data/nq/cot.json` ใน repo  
-> scraper NQ ยังไม่ถูก implement หรือยังไม่มีข้อมูลถูก commit ไว้  
-> ข้ามการวิเคราะห์ NQ จนกว่าจะมีข้อมูล
-
-**Macro context สำหรับ NQ (จาก macro.json — ใช้ประกอบเท่านั้น):**  
-- VIX **15.74** (−1.02/5d) → ลดลง, risk-on เล็กน้อย → neutral-positive สำหรับ equities  
-- 10Y nominal **4.45%** (−12bp/5d) → yield ลง หนุน high-multiple tech  
-- Breakeven inflation **2.38%** (flat) → inflation pressure ไม่ escalate  
-- 2s10s curve **+46bp** → ไม่มีสัญญาณ recession risk เร่งตัว
+> **หมายเหตุ:** ไดเรกทอรี data/nq/ ยังไม่มีในระบบ — pipeline NQ ยังไม่ได้เปิดใช้งาน บทวิเคราะห์ NQ จะปรากฏเมื่อข้อมูลพร้อม
 
 ---
 
 ## 📰 ข่าว & แคตาลิสต์วันนี้
 
-> **Bigdata.com subscription หมดอายุ** — ไม่สามารถดึงข่าวและปฏิทินเศรษฐกิจ real-time ได้ในรอบนี้  
-> ([Bigdata.com](https://bigdata.com) — ต่อ subscription เพื่อเปิดใช้งาน)
+> **หมายเหตุ:** เครื่องมือดึงข่าว (Bigdata.com) ไม่สามารถใช้งานได้ในรอบนี้ (subscription paused) — ส่วนข่าวจะอัปเดตเมื่อ access กลับมา
 
-**เหตุการณ์เศรษฐกิจสำคัญที่ควรติดตามในสัปดาห์นี้ (ตรวจสอบเวลาที่แน่นอนกับ economic calendar):**
-
-| เหตุการณ์ | คาดผลต่อ GC | คาดผลต่อ NQ |
-|-----------|------------|------------|
-| NFP / Jobs report (~6 Jun) | แข็ง = bearish (yield ขึ้น, DXY แข็ง); อ่อน = bullish | แข็ง = mixed; อ่อน = bullish (Fed pivot) |
-| ISM Manufacturing PMI | อ่อน = bullish GC (risk-off + yield ลง) | อ่อน = bearish / stagflation concern |
-| PCE Core (inflation) | สูงกว่าคาด = bearish GC (real yield ขึ้น) | สูงกว่าคาด = bearish NQ (rate hike concern) |
-| FOMC speaker / Minutes | Hawkish = bearish GC; Dovish = bullish | Dovish = bullish NQ |
-
-**จุดขัดแย้งที่เป็น edge สำหรับ GC:**  
-macro บอก tailwind (real yield ลง, DXY อ่อน) แต่ options structure บอก downside magnet ที่ 4,400 — ถ้า NFP ออกอ่อน macro จะยิ่งหนุน GC แต่ positioning ต้านทาน → โอกาสเกิด gamma squeeze ขึ้นผ่าน 4,500 ถ้ามีแรงซื้อเพียงพอ
+**จุดที่ข้อมูล 'ขัดกัน' และอาจเป็น Edge:**
+- Macro (tailwind) vs Positioning (headwind) → ตลาดอาจรอ catalyst ยืนยันทิศทาง; ฝั่งที่ "ชนะ" ก่อนจะเป็นตัวกำหนด breakout
+- Real yield ร่วง (บวกทอง) แต่ breakeven inflation flat (ไม่มี inflation scare) → ทองขึ้นจาก rate story ไม่ใช่ inflation story — เสี่ยง reversal ถ้า yield กลับขึ้น
+- MM net subdued (pct_rank 0.30) ในขณะ price 4,517 → ถ้า fund เริ่ม add long ราคาอาจกระโดดแรง; ถ้าไม่เพิ่ม bullish case อ่อน
 
 ---
 
-*วิเคราะห์เชิงการศึกษาจาก options positioning + macro + CFTC COT เท่านั้น ไม่ใช่คำแนะนำการลงทุน ไม่มีคำสั่ง entry/stop/target จริง*
+*บทวิเคราะห์นี้จัดทำเพื่อการศึกษาเชิง options positioning วิเคราะห์เท่านั้น ไม่ใช่คำแนะนำลงทุน ไม่มีคำสั่ง entry/stop/target จริง*
