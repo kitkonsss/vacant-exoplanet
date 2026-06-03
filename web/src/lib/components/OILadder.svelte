@@ -1,34 +1,61 @@
 <script>
     import { fmtK, fmtStrike } from '$lib/utils.js';
 
+    // Vertical grouped-bar "wall profile": strikes along the X axis (low → high),
+    // wall strength (OI + volume) as bar height, Put (orange) and Call (cyan) bars
+    // sitting side-by-side at each strike so it's easy to read which wall is tall/short.
     let { positionMap = [], futurePrice = null, compact = false } = $props();
 
-    const sorted = $derived([...(positionMap || [])].sort((a, b) => b.strike - a.strike));
+    // ascending strike → left-to-right on the X axis
+    const sorted = $derived([...(positionMap || [])].sort((a, b) => a.strike - b.strike));
+
     function callTotal(l) {
         return (l.call_oi || 0) + (l.call_volume || 0);
     }
     function putTotal(l) {
         return (l.put_oi || 0) + (l.put_volume || 0);
     }
-    const maxOI = $derived(
-        Math.max(
-            ...sorted.flatMap((l) => [callTotal(l), putTotal(l)]),
-            1
-        )
+
+    const maxVal = $derived(
+        Math.max(...sorted.flatMap((l) => [callTotal(l), putTotal(l)]), 1)
     );
 
-    function isKey(lv, price) {
-        const isCallWall = (lv.side === 'call_wall' || lv.side === 'call') && lv.strike > (price || 0);
-        const isPutWall = (lv.side === 'put_wall' || lv.side === 'put') && lv.strike < (price || 0);
+    function hPct(v) {
+        // floor so even tiny walls show a sliver
+        return (v || 0) > 0 ? Math.max(((v || 0) / maxVal) * 100, 2) : 0;
+    }
+
+    function isKey(lv) {
+        const p = futurePrice || 0;
+        const isCallWall = (lv.side === 'call_wall' || lv.side === 'call') && lv.strike > p;
+        const isPutWall = (lv.side === 'put_wall' || lv.side === 'put') && lv.strike < p;
         return isCallWall || isPutWall;
     }
 
-    function pctOf(value) {
-        return Math.min(Math.round(((value || 0) / maxOI) * 100), 100);
-    }
+    // future-price marker as a % across the evenly-spaced strike columns
+    // (interpolated between the centres of the two bracketing strikes)
+    const pricePos = $derived.by(() => {
+        const n = sorted.length;
+        if (!n || futurePrice == null) return null;
+        const p = futurePrice;
+        if (p <= sorted[0].strike) return (0.5 / n) * 100;
+        if (p >= sorted[n - 1].strike) return ((n - 0.5) / n) * 100;
+        for (let i = 0; i < n - 1; i++) {
+            const a = sorted[i].strike;
+            const b = sorted[i + 1].strike;
+            if (p >= a && p <= b) {
+                const frac = b === a ? 0 : (p - a) / (b - a);
+                return ((i + 0.5 + frac) / n) * 100;
+            }
+        }
+        return null;
+    });
 
-    const strikeColumnWidth = $derived(compact ? '64px' : '72px');
-    const oiNumberWidth = $derived(compact ? '30px' : '34px');
+    let hovered = $state(null);
+
+    const chartHeight = $derived(compact ? 120 : 172);
+    const barMax = $derived(compact ? '8px' : '11px');
+    const labelSize = $derived(compact ? 'text-[7px]' : 'text-[8px]');
 </script>
 
 {#if sorted.length === 0}
@@ -36,80 +63,85 @@
         No position data
     </div>
 {:else}
-    <div class={`overflow-hidden rounded-md border border-border bg-background ${compact ? 'py-1' : 'py-1.5'}`}>
-        <div
-            class={`grid items-center border-b border-border font-mono font-semibold uppercase tracking-widest text-muted-foreground ${compact ? 'gap-1.5 px-2.5 pb-1 text-[8px]' : 'gap-2 px-3 pb-1.5 text-[9px]'}`}
-            style={`grid-template-columns: 1fr ${strikeColumnWidth} 1fr;`}
-        >
-            <span class="text-left">Put</span>
-            <span class="text-center">Strike</span>
-            <span class="text-right">Call</span>
+    <div class={`rounded-md border border-border bg-background ${compact ? 'p-2.5' : 'p-3'}`}>
+        <!-- Legend + live readout -->
+        <div class={`mb-2 flex items-center justify-between ${compact ? 'text-[9px]' : 'text-[10px]'}`}>
+            <div class="flex items-center gap-3">
+                <span class="flex items-center gap-1">
+                    <span class="inline-block h-2 w-2 rounded-sm bg-put"></span>
+                    <span class="text-muted-foreground">Put</span>
+                </span>
+                <span class="flex items-center gap-1">
+                    <span class="inline-block h-2 w-2 rounded-sm bg-call"></span>
+                    <span class="text-muted-foreground">Call</span>
+                </span>
+            </div>
+            {#if hovered != null && sorted[hovered]}
+                {@const lv = sorted[hovered]}
+                <div class="font-mono tabular-nums">
+                    <span class="font-semibold text-foreground">{fmtStrike(lv.strike)}</span>
+                    <span class="text-put">· P {fmtK(putTotal(lv)) || 0}</span>
+                    <span class="text-call">· C {fmtK(callTotal(lv)) || 0}</span>
+                </div>
+            {:else}
+                <div class="font-mono tabular-nums text-muted-foreground">
+                    Future <span class="font-semibold text-primary">{fmtStrike(futurePrice)}</span>
+                </div>
+            {/if}
         </div>
 
-        {#each sorted as lv, idx (lv.strike + '-' + idx)}
-            {@const insertPriceBefore =
-                futurePrice != null &&
-                lv.strike < futurePrice &&
-                (idx === 0 || sorted[idx - 1].strike >= futurePrice)}
+        <!-- Plot area -->
+        <div class="relative" style={`height:${chartHeight}px`}>
+            <!-- horizontal gridlines -->
+            {#each [0.25, 0.5, 0.75] as g}
+                <div class="absolute left-0 right-0 border-t border-border/40" style={`bottom:${g * 100}%`}></div>
+            {/each}
+            <!-- baseline -->
+            <div class="absolute left-0 right-0 bottom-0 border-t border-border"></div>
 
-            {#if insertPriceBefore}
-                <div
-                    class={`my-1 grid items-center ${compact ? 'gap-1.5 px-2.5 h-[18px]' : 'gap-2 px-3 h-5'}`}
-                    style={`grid-template-columns: 1fr ${strikeColumnWidth} 1fr;`}
-                >
-                    <div class="h-px bg-primary"></div>
-                    <div class={`rounded text-center font-mono font-bold text-primary-foreground bg-primary ${compact ? 'px-1 py-0 text-[9px]' : 'px-1.5 py-0.5 text-[10px]'}`}>
-                        {fmtStrike(futurePrice)}
-                    </div>
-                    <div class="h-px bg-primary"></div>
+            <!-- future-price line -->
+            {#if pricePos != null}
+                <div class="absolute top-0 bottom-0 z-10 border-l border-dashed border-primary/70" style={`left:${pricePos}%`}>
+                    <span class={`absolute -top-px -translate-x-1/2 leading-none text-primary ${compact ? 'text-[7px]' : 'text-[8px]'}`}>▾</span>
                 </div>
             {/if}
 
-            {@const key = isKey(lv, futurePrice)}
-            <div
-                class={`grid items-center ${compact ? 'gap-1.5 px-2.5 h-[18px]' : 'gap-2 px-3 h-5'} ${key ? 'bg-surface-elevated' : ''}`}
-                style={`grid-template-columns: 1fr ${strikeColumnWidth} 1fr;`}
-            >
-                <!-- Put side -->
-                <div class={`flex items-center min-w-0 ${compact ? 'gap-1.5' : 'gap-2'}`}>
-                    <span class={`shrink-0 text-right font-mono tabular-nums text-muted-foreground ${compact ? 'text-[9px]' : 'text-[10px]'}`} style={`min-width:${oiNumberWidth}`}>
-                        {fmtK(putTotal(lv))}
-                    </span>
-                    <div class={`flex flex-1 justify-end overflow-hidden rounded-sm bg-muted ${compact ? 'h-1' : 'h-1.5'}`}>
-                        <div class="h-full rounded-sm bg-put" style="width:{pctOf(putTotal(lv))}%"></div>
-                    </div>
-                </div>
+            <!-- grouped bars -->
+            <div class="absolute inset-0 flex items-end">
+                {#each sorted as lv, i (lv.strike + '-' + i)}
+                    <button
+                        type="button"
+                        class={`group flex h-full flex-1 items-end justify-center gap-px p-0 ${hovered === i ? 'bg-surface-elevated/60' : ''}`}
+                        onmouseenter={() => (hovered = i)}
+                        onmouseleave={() => (hovered = null)}
+                        onfocus={() => (hovered = i)}
+                        onblur={() => (hovered = null)}
+                        aria-label={`Strike ${fmtStrike(lv.strike)}: put ${putTotal(lv)}, call ${callTotal(lv)}`}
+                    >
+                        <div
+                            class="w-full rounded-t-sm bg-put/80 transition-colors group-hover:bg-put"
+                            style={`height:${hPct(putTotal(lv))}%;max-width:${barMax}`}
+                        ></div>
+                        <div
+                            class="w-full rounded-t-sm bg-call/80 transition-colors group-hover:bg-call"
+                            style={`height:${hPct(callTotal(lv))}%;max-width:${barMax}`}
+                        ></div>
+                    </button>
+                {/each}
+            </div>
+        </div>
 
-                <!-- Strike -->
+        <!-- X-axis strike labels -->
+        <div class="mt-1 flex">
+            {#each sorted as lv, i (lv.strike + '-' + i)}
                 <div
-                    class={`text-center font-mono tabular-nums ${compact ? 'text-[10px]' : 'text-[11px]'} ${key ? 'text-foreground font-semibold' : 'text-muted-foreground'}`}
+                    class={`flex-1 text-center font-mono tabular-nums leading-none ${labelSize} ${
+                        isKey(lv) ? 'font-semibold text-foreground' : 'text-muted-foreground'
+                    } ${hovered === i ? 'text-foreground' : ''}`}
                 >
                     {fmtStrike(lv.strike)}
                 </div>
-
-                <!-- Call side -->
-                <div class={`flex items-center min-w-0 ${compact ? 'gap-1.5' : 'gap-2'}`}>
-                    <div class={`flex flex-1 justify-start overflow-hidden rounded-sm bg-muted ${compact ? 'h-1' : 'h-1.5'}`}>
-                        <div class="h-full rounded-sm bg-call" style="width:{pctOf(callTotal(lv))}%"></div>
-                    </div>
-                    <span class={`shrink-0 text-left font-mono tabular-nums text-muted-foreground ${compact ? 'text-[9px]' : 'text-[10px]'}`} style={`min-width:${oiNumberWidth}`}>
-                        {fmtK(callTotal(lv))}
-                    </span>
-                </div>
-            </div>
-        {/each}
-
-        {#if futurePrice != null && sorted.every((s) => s.strike >= futurePrice)}
-            <div
-                class={`my-1 grid items-center ${compact ? 'gap-1.5 px-2.5 h-[18px]' : 'gap-2 px-3 h-5'}`}
-                style={`grid-template-columns: 1fr ${strikeColumnWidth} 1fr;`}
-            >
-                <div class="h-px bg-primary"></div>
-                <div class={`rounded text-center font-mono font-bold text-primary-foreground bg-primary ${compact ? 'px-1 py-0 text-[9px]' : 'px-1.5 py-0.5 text-[10px]'}`}>
-                    {fmtStrike(futurePrice)}
-                </div>
-                <div class="h-px bg-primary"></div>
-            </div>
-        {/if}
+            {/each}
+        </div>
     </div>
 {/if}
