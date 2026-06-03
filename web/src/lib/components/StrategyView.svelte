@@ -87,6 +87,26 @@
     function playbookText(p) {
         return p === 'mean_reversion' ? 'mean-reversion' : p === 'both' ? 'both modes' : p || '—';
     }
+
+    // ----- Simple POI view (default) -----
+    let view = $state('simple');
+
+    const pois = $derived(strategy?.confluence_levels || []);
+    const poisAbove = $derived([...pois].filter((p) => p.side === 'above').sort((a, b) => b.level - a.level));
+    const poisBelow = $derived([...pois].filter((p) => p.side === 'below').sort((a, b) => b.level - a.level));
+    // the single strongest POI (most sources, then nearest)
+    const topPoi = $derived(
+        [...pois].sort((a, b) => b.confluence - a.confluence || Math.abs(a.distance_points) - Math.abs(b.distance_points))[0] || null
+    );
+
+    const SRC_SHORT = { gamma_wall: 'γ', oi_wall: 'OI', oi_build: 'build', round_100: 'R100', round_50: 'R50', vwap_band: 'VWAP' };
+    function srcShort(s) {
+        return SRC_SHORT[s] || s.replaceAll('_', ' ');
+    }
+    // ×N badge strength: 4+ = strong POI (gold), 3 = medium, 2 = light
+    function poiVariant(n) {
+        return n >= 4 ? 'warn' : n >= 3 ? 'up' : 'muted';
+    }
 </script>
 
 {#if loading}
@@ -105,7 +125,67 @@
         </p>
     </Card>
 {:else}
+    {#snippet poiRow(p)}
+        <div class="flex items-center gap-2 py-1.5 {p.confluence >= 4 ? 'rounded-md bg-warn/5 px-2' : 'px-2'}">
+            <div class="w-16 shrink-0 font-mono text-base font-semibold tabular-nums {p.side === 'above' ? 'text-down' : 'text-up'}">{fmtNum(p.level)}</div>
+            <Badge variant={poiVariant(p.confluence)}>×{p.confluence}</Badge>
+            <span class="w-12 shrink-0 text-right font-mono text-[11px] text-muted-foreground">{fmtSigned(p.distance_points)}</span>
+            <div class="flex flex-wrap gap-1">
+                {#each p.sources as s}<span class="rounded bg-muted px-1.5 py-0.5 text-[9px] uppercase tracking-wide text-muted-foreground">{srcShort(s)}</span>{/each}
+            </div>
+            {#if p.confluence >= 4}<span class="ml-auto text-[10px] font-semibold text-warn">POI</span>{/if}
+        </div>
+    {/snippet}
+
     <div class="flex flex-col gap-4">
+        <!-- ===== View toggle + compact header ===== -->
+        <div class="flex items-center justify-between gap-2">
+            <div class="flex flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground">
+                {#if strategy.future_price != null}<span class="font-mono text-base font-semibold text-foreground">{fmtNum(strategy.future_price)}</span>{/if}
+                {#if bias}<Badge variant={biasVariant(bias.label)}>{biasText(bias.label)}</Badge>{/if}
+                {#if regime}<Badge variant={regime.regime === 'trending' ? 'warn' : regime.regime === 'range' ? 'up' : 'muted'}>{regime.regime}</Badge>{/if}
+            </div>
+            <div class="flex gap-1">
+                <button onclick={() => (view = 'simple')} class="rounded px-2.5 py-1 text-[11px] font-medium {view === 'simple' ? 'bg-primary/15 text-primary' : 'text-muted-foreground hover:text-foreground'}">Simple</button>
+                <button onclick={() => (view = 'full')} class="rounded px-2.5 py-1 text-[11px] font-medium {view === 'full' ? 'bg-primary/15 text-primary' : 'text-muted-foreground hover:text-foreground'}">Full</button>
+            </div>
+        </div>
+
+        {#if view === 'simple'}
+            <!-- ===== SIMPLE: POI ladder ===== -->
+            <Card class="p-5">
+                <div class="flex flex-wrap items-center justify-between gap-2">
+                    <div class="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                        <Crosshair class="h-3.5 w-3.5" /> POI · จุดที่ confluence เยอะ
+                    </div>
+                    {#if topPoi}<div class="text-[11px] text-muted-foreground">เด่นสุด <span class="font-mono font-semibold text-warn">{fmtNum(topPoi.level)}</span> ×{topPoi.confluence}</div>{/if}
+                </div>
+
+                <div class="mt-3 flex flex-col">
+                    {#each poisAbove as p}{@render poiRow(p)}{/each}
+
+                    <div class="my-1.5 flex items-center gap-2">
+                        <div class="h-px flex-1 bg-primary/40"></div>
+                        <span class="rounded bg-primary/15 px-2 py-0.5 font-mono text-sm font-bold text-primary">{fmtNum(strategy.future_price)}</span>
+                        <span class="text-[10px] text-muted-foreground">ราคาปัจจุบัน</span>
+                        <div class="h-px flex-1 bg-primary/40"></div>
+                    </div>
+
+                    {#each poisBelow as p}{@render poiRow(p)}{/each}
+
+                    {#if !poisAbove.length && !poisBelow.length}
+                        <p class="py-2 text-sm text-muted-foreground">ยังไม่มีจุด confluence (≥2 แหล่ง) รอบราคาตอนนี้</p>
+                    {/if}
+                </div>
+
+                {#if strategy.expected_range}
+                    <div class="mt-3 text-[11px] text-muted-foreground">วันนี้แกว่งราว ±{fmtNum(strategy.expected_range.expected_move)} ({fmtNum(strategy.expected_range.day_low_est)}–{fmtNum(strategy.expected_range.day_high_est)})</div>
+                {/if}
+                <p class="mt-2 text-[10px] leading-relaxed text-muted-foreground">
+                    POI = ราคาที่หลายสัญญาณทับกัน · ×N = จำนวนแหล่ง (γ gamma · OI wall · build · R round# · VWAP band) · 🔴 เหนือราคา=ต้าน 🟢 ใต้ราคา=รับ · ยิ่ง ×N เยอะยิ่งสำคัญ. โซนกลับตัว/เป้า ไม่ใช่คำสั่งซื้อขาย.
+                </p>
+            </Card>
+        {:else}
         <!-- ===== LLM narrative brief (top) — rendered as an infographic ===== -->
         {#if brief}
             <BriefInfographic {brief} {bias} generatedAt={strategy.generated_at} />
@@ -546,6 +626,7 @@
 
         {#if strategy.disclaimer}
             <p class="px-1 text-[10px] leading-relaxed text-muted-foreground">{strategy.disclaimer}</p>
+        {/if}
         {/if}
     </div>
 {/if}
