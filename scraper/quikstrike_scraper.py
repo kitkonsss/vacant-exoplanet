@@ -896,7 +896,78 @@ def current_pick_looks_incomplete(classified, output_dir):
         return (f'front contract {cur.get("text","?")} exp {new_exp} is {gap} '
                 f'days ahead of today {today} — near contracts not listed yet')
 
+    # (C) No-daily check: if the front contract expires strictly after today
+    #     AND no classified contract expires today, daily options are not
+    #     listed yet (typical after 5pm ET / before 6pm ET when CME has
+    #     closed the current session but not yet opened the next). Let
+    #     promotion handle the day roll instead of overwriting current with
+    #     a weekly/monthly.
+    if new_exp > today:
+        has_today = any(
+            c is not None and c.get('exp_date') == today
+            for c in (classified.get(k) for k in ('current', 'tomorrow', 'friday', 'monthly'))
+        )
+        if not has_today:
+            return (f'no contract expiring today ({today}) — daily contracts '
+                    f'not listed yet; front is {cur.get("text","?")} exp {new_exp}')
+
     return None
+
+
+# Data file suffixes used for each contract slot.
+_SLOT_SUFFIXES = (
+    '_IntradayData.txt',
+    '_OIData.txt',
+    '_GammaHeatmap.json',
+    '_OIHeatmap.json',
+    '_PositionBias.json',
+)
+
+
+def _promote_slots(output_dir):
+    """Shift saved slot files forward: tomorrow → current, friday → tomorrow.
+
+    Called when the guard skips a scrape AND the saved current contract has
+    already expired.  The "tomorrow" file from the last successful daytime
+    scrape IS today's current contract.
+
+    Idempotent: if tomorrow already has the same expiration as current
+    (a previous run already promoted), this is a no-op.
+    """
+    # Idempotency: parse expirations from tomorrow vs current headers.
+    # If they match, a prior promote already ran — skip.
+    def _exp_from(slot):
+        path = os.path.join(output_dir, f'{slot}_OIData.txt')
+        try:
+            with open(path, 'r', encoding='utf-8', errors='replace') as fh:
+                hdr = fh.readline()
+            m = re.search(r'Expiration:\s*(\d{1,2}/\d{1,2}/\d{4})', hdr)
+            return m.group(1) if m else None
+        except OSError:
+            return None
+
+    cur_exp = _exp_from('current')
+    tom_exp = _exp_from('tomorrow')
+    if cur_exp and tom_exp and cur_exp == tom_exp:
+        print(f'[PROMOTE] Already promoted (current & tomorrow both exp {cur_exp}) — skipping')
+        return
+
+    promotions = [
+        ('tomorrow', 'current'),
+        ('friday', 'tomorrow'),
+    ]
+    for src_slot, dst_slot in promotions:
+        for suffix in _SLOT_SUFFIXES:
+            src = os.path.join(output_dir, f'{src_slot}{suffix}')
+            dst = os.path.join(output_dir, f'{dst_slot}{suffix}')
+            if os.path.exists(src):
+                try:
+                    shutil.copy2(src, dst)
+                    print(f'[PROMOTE] {src_slot}{suffix} → {dst_slot}{suffix}')
+                except Exception as e:
+                    print(f'[PROMOTE] ⚠ Failed {src_slot}→{dst_slot}{suffix}: {e}')
+            else:
+                print(f'[PROMOTE] skip {src_slot}{suffix} (not found)')
 
 
 # ============================================================
@@ -2830,6 +2901,20 @@ def scrape_asset(driver, asset_id):
         print(f'[GUARD] Skipping {profile["short"]} contract write — {incomplete}')
         print('[GUARD] Keeping last-good contract data files untouched.')
         save_debug(driver, f'guard_incomplete_{asset_id}', output_dir=output_dir)
+
+        # ── Slot promotion ──
+        # When the saved current contract has already expired (its expiration
+        # date is before the CME trading date), the "tomorrow" file from the
+        # last successful scrape IS today's current contract.  Promote the
+        # saved slots forward: tomorrow → current, friday → tomorrow so the
+        # dashboard shows the correct day without needing daily contracts
+        # from QuikStrike (which are absent after market close).
+        old_exp = _saved_current_exp(output_dir)
+        today = _today_ny()
+        if old_exp is not None and old_exp < today:
+            print(f'[PROMOTE] Saved current expired ({old_exp} < {today}) — promoting slots')
+            _promote_slots(output_dir)
+
         save_ohlc(asset_id, output_dir)
         return True
 
