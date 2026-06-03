@@ -622,6 +622,7 @@ def build_strategy(asset_id):
     macro = load_macro(cfg['macro_key'])
     cot = load_cot(asset_id)
     macro_raw = _load_json(os.path.join(BASE_OUTPUT_DIR, 'macro.json'))
+    pos_summary = _load_json(os.path.join(_data_dir(asset_id), 'position_bias_summary.json'))
     vwap = load_vwap(asset_id)
     ohlc_daily = load_ohlc_daily(asset_id)
     oi_lookup = build_oi_lookup(asset_id)
@@ -806,6 +807,74 @@ def build_strategy(asset_id):
         else:
             primary_path = 'range_first'
 
+    # ---- Dual-mode plan: momentum (trend) + mean-reversion (fade) -----------
+    mom_dir = 'up' if (overall_sign > 0 or (overall_sign == 0 and hbias == 'upside_magnet')) else \
+              ('down' if (overall_sign < 0 or hbias == 'downside_magnet') else 'none')
+    if mom_dir == 'up':
+        m_trig, m_trig_c, m_target, m_inval, m_major = up_trigger, up_trigger_c, up_target, dn_trigger, major_gamma_up
+    elif mom_dir == 'down':
+        m_trig, m_trig_c, m_target, m_inval, m_major = dn_trigger, dn_trigger_c, dn_target, up_trigger, major_gamma_down
+    else:
+        m_trig = m_trig_c = m_target = m_inval = m_major = None
+    m_target_vals = []
+    for lvl in (m_target, (m_major or {}).get('strike')):
+        if lvl is None or (m_trig is not None and abs(lvl - m_trig) < 0.01):
+            continue                          # skip the trigger level itself
+        if lvl not in m_target_vals:
+            m_target_vals.append(lvl)
+    m_target_vals.sort(reverse=(mom_dir == 'down'))   # nearest-in-direction first
+    m_targets = [_fmt_level(v) for v in m_target_vals]
+    m_rationale = []
+    if cot and cot.get('smart_money') in ('bullish', 'bearish'):
+        m_rationale.append(f"smart-money {cot['smart_money']}")
+    if macro:
+        m_rationale.append(f"macro {macro['label']}")
+    if hbias and hbias != 'balanced':
+        m_rationale.append(hbias.replace('_', ' '))
+    momentum = {
+        'direction': mom_dir,
+        'bias': label,
+        'aligned_with_regime': regime['regime'] == 'trending',
+        'trigger': None if m_trig is None else _trig_txt(m_trig, m_trig_c,
+                   'break above' if mom_dir == 'up' else 'break below'),
+        'targets': m_targets,
+        'invalidation': None if m_inval is None else _fmt_level(m_inval),
+        'rationale': '; '.join(m_rationale) or 'no strong trend driver — momentum read is weak',
+    }
+
+    daily_b = (vwap or {}).get('daily') or {}
+    bands = daily_b.get('bands') or {}
+    vw = daily_b.get('vwap')
+
+    def _conf_sources_near(level):
+        if level is None:
+            return []
+        near = [c for c in confluence_levels if abs(c['level'] - level) <= max(5.0, (price or 0) * 0.0015)]
+        return sorted({s for c in near for s in c['sources']})
+
+    mr_zones = []
+    if vw is not None and bands.get('plus2') is not None:
+        mr_zones.append({
+            'at': bands['plus2'], 'band': 'vwap_+2sd', 'action': 'fade short',
+            'target': vw, 'invalidation': bands.get('plus3'),
+            'confluence_with': _conf_sources_near(bands['plus2']),
+            'confirm': 'MM crowded long (COT) strengthens the fade' if cot_contrarian == 'caution_top' else None,
+        })
+    if vw is not None and bands.get('minus2') is not None:
+        mr_zones.append({
+            'at': bands['minus2'], 'band': 'vwap_-2sd', 'action': 'fade long',
+            'target': vw, 'invalidation': bands.get('minus3'),
+            'confluence_with': _conf_sources_near(bands['minus2']),
+            'confirm': 'MM crowded short (COT) strengthens the fade' if cot_contrarian == 'caution_bottom' else None,
+        })
+    mean_reversion = {
+        'vwap': vw,
+        'aligned_with_regime': regime['regime'] == 'range',
+        'zones': mr_zones,
+        'rationale': 'Fade VWAP ±2SD back toward VWAP; size up at ±3SD and where a round number / OI wall coincides'
+                     + ('. Regime is range → this mode leads.' if regime['regime'] == 'range' else '.'),
+    }
+
     def _gamma_limit(nearest_w, major_w):
         if not nearest_w and not major_w:
             return None
@@ -843,10 +912,19 @@ def build_strategy(asset_id):
         'how_to_use': 'Heatmap build/magnet = likely destination; gamma 1pct first wall = speed bump, major wall = real cap; confluence levels (≥2 sources) are the highest-conviction strikes.',
     }
 
+    generated_at = datetime.now(timezone.utc).isoformat(timespec='seconds')
+    data_freshness = {
+        'strategy': generated_at,
+        'positioning': (pos_summary or {}).get('generated_at'),
+        'macro': (macro_raw or {}).get('generated_at'),
+        'cot_report_date': cot.get('report_date') if cot else None,
+        'vwap': (vwap or {}).get('generated_at'),
+    }
+
     return {
         'version': 2,
         'asset': cfg['short'],
-        'generated_at': datetime.now(timezone.utc).isoformat(timespec='seconds'),
+        'generated_at': generated_at,
         'future_price': price,
         'directional_bias': {'label': label, 'score': blended, 'confidence': confidence},
         'components': {
@@ -864,6 +942,9 @@ def build_strategy(asset_id):
             'generated_at': vwap.get('generated_at'),
         },
         'contrarian_flag': cot_contrarian,
+        'momentum': momentum,
+        'mean_reversion': mean_reversion,
+        'data_freshness': data_freshness,
         'key_levels': key_levels,
         'confluence_levels': confluence_levels,
         'round_numbers': round_numbers,

@@ -52,6 +52,41 @@
     function barPct(score) {
         return Math.min(100, Math.abs(score || 0));
     }
+
+    // "3h ago" / "2d ago" from an ISO timestamp (for data-freshness chips)
+    function ageStr(iso) {
+        if (!iso) return null;
+        const t = new Date(iso).getTime();
+        if (Number.isNaN(t)) return null;
+        const mins = Math.max(0, Math.round((Date.now() - t) / 60000));
+        if (mins < 60) return `${mins}m`;
+        const hrs = mins / 60;
+        if (hrs < 24) return `${Math.round(hrs)}h`;
+        return `${Math.round(hrs / 24)}d`;
+    }
+    function freshVariant(iso, staleHours) {
+        if (!iso) return 'muted';
+        const hrs = (Date.now() - new Date(iso).getTime()) / 3600000;
+        return Number.isNaN(hrs) ? 'muted' : hrs > staleHours ? 'warn' : 'up';
+    }
+
+    const regime = $derived(strategy?.regime || null);
+    const momentum = $derived(strategy?.momentum || null);
+    const meanRev = $derived(strategy?.mean_reversion || null);
+    const fresh = $derived(strategy?.data_freshness || null);
+    // freshness chips: [label, iso|date, stale-after-hours]
+    const freshChips = $derived(
+        fresh
+            ? [
+                  ['Positioning', fresh.positioning, 6],
+                  ['Macro', fresh.macro, 12],
+                  ['VWAP', fresh.vwap, 6],
+              ].filter(([, v]) => v)
+            : []
+    );
+    function playbookText(p) {
+        return p === 'mean_reversion' ? 'mean-reversion' : p === 'both' ? 'both modes' : p || '—';
+    }
 </script>
 
 {#if loading}
@@ -105,9 +140,64 @@
                     {#if strategy.generated_at}
                         <div class="font-mono text-[10px] text-muted-foreground">{fmtBangkok(strategy.generated_at)}</div>
                     {/if}
+                    {#if freshChips.length || fresh?.cot_report_date}
+                        <div class="mt-1 flex flex-wrap justify-end gap-1">
+                            {#each freshChips as [label, iso, stale]}
+                                <Badge variant={freshVariant(iso, stale)}>{label} {ageStr(iso)}</Badge>
+                            {/each}
+                            {#if fresh?.cot_report_date}
+                                <Badge variant="muted">COT {fresh.cot_report_date}</Badge>
+                            {/if}
+                        </div>
+                    {/if}
                 </div>
             </div>
         </Card>
+
+        <!-- ===== Today's Plan (hero synthesis) ===== -->
+        {#if regime || momentum?.trigger || meanRev?.zones?.length}
+            <Card class="border-primary/30 bg-primary/5 p-5">
+                <div class="flex flex-wrap items-center justify-between gap-2">
+                    <div class="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-primary">
+                        <Crosshair class="h-3.5 w-3.5" /> Today's Plan
+                    </div>
+                    <div class="flex flex-wrap items-center gap-1.5">
+                        {#if bias}<Badge variant={biasVariant(bias.label)}>{biasText(bias.label)}</Badge>{/if}
+                        {#if regime}<Badge variant={regime.regime === 'trending' ? 'warn' : regime.regime === 'range' ? 'up' : 'muted'}>{regime.regime} → lead: {playbookText(regime.lead_playbook)}</Badge>{/if}
+                    </div>
+                </div>
+
+                <div class="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
+                    <!-- lead playbook detail -->
+                    {#if regime?.lead_playbook === 'mean_reversion'}
+                        <div class="rounded-md border border-up/30 bg-up/5 p-3">
+                            <div class="text-[10px] font-semibold uppercase tracking-wider text-up">🔄 Fade plan (lead)</div>
+                            {#each meanRev?.zones || [] as z}
+                                <div class="mt-1 text-sm text-foreground">{z.action} <span class="font-mono">{fmtNum(z.at)}</span> → <span class="font-mono">{fmtNum(z.target)}</span> <span class="text-[11px] text-muted-foreground">(stop {fmtNum(z.invalidation)})</span></div>
+                            {/each}
+                        </div>
+                    {:else}
+                        <div class="rounded-md border border-warn/30 bg-warn/5 p-3">
+                            <div class="text-[10px] font-semibold uppercase tracking-wider text-warn">📈 Momentum plan{regime?.lead_playbook === 'momentum' ? ' (lead)' : ''}</div>
+                            <div class="mt-1 text-sm text-foreground">{momentum?.trigger || 'no clean trigger — wait'}</div>
+                            {#if momentum?.targets?.length}<div class="mt-0.5 text-[12px] text-muted-foreground">→ targets {momentum.targets.join(', ')}{#if momentum.invalidation} · stop {momentum.invalidation}{/if}</div>{/if}
+                        </div>
+                    {/if}
+
+                    <!-- focus + invalidation -->
+                    <div class="rounded-md border border-border/60 p-3">
+                        <div class="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Focus level / magnet</div>
+                        <div class="mt-1 text-sm text-foreground">{strategy.execution_read?.confluence_focus || strategy.execution_read?.gamma_magnet || '—'}</div>
+                        {#if strategy.expected_range}
+                            <div class="mt-1.5 text-[11px] text-muted-foreground">Expected day ±{fmtNum(strategy.expected_range.expected_move)} · range {fmtNum(strategy.expected_range.day_low_est)}–{fmtNum(strategy.expected_range.day_high_est)}</div>
+                        {/if}
+                    </div>
+                </div>
+                {#if strategy.contrarian_flag && strategy.contrarian_flag !== 'none'}
+                    <div class="mt-2 flex items-center gap-1.5 text-[11px] text-warn"><ShieldAlert class="h-3.5 w-3.5" /> COT {strategy.contrarian_flag.replaceAll('_', ' ')} — น้ำหนักโหมดสวนเพิ่ม</div>
+                {/if}
+            </Card>
+        {/if}
 
         <!-- ===== Regime & volatility (VWAP / expected range) ===== -->
         {#if strategy.regime || strategy.expected_range || strategy.vwap?.daily}
@@ -396,19 +486,53 @@
             </div>
         {/if}
 
-        <!-- ===== Scenarios ===== -->
-        {#if strategy.scenarios?.length}
+        <!-- ===== Dual-mode plan: Momentum + Mean-reversion ===== -->
+        {#if momentum?.trigger || meanRev?.zones?.length}
             <div class="grid grid-cols-1 gap-3 md:grid-cols-2">
-                {#each strategy.scenarios as sc}
-                    <Card class="p-4">
-                        <Badge variant={sc.bias === 'upside' ? 'up' : 'down'}>{sc.bias}</Badge>
-                        <div class="mt-2 flex flex-col gap-1.5 text-sm">
-                            <div class="flex items-start gap-2"><ArrowRight class="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" /><span class="text-foreground"><span class="text-muted-foreground">if</span> {sc.trigger}</span></div>
-                            <div class="flex items-start gap-2"><ArrowRight class="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" /><span class="text-foreground"><span class="text-muted-foreground">then</span> {sc.then}</span></div>
-                            <div class="flex items-start gap-2"><ShieldAlert class="mt-0.5 h-3.5 w-3.5 shrink-0 text-warn" /><span class="text-muted-foreground">invalidation: {sc.invalidation}</span></div>
+                <!-- Momentum -->
+                {#if momentum}
+                    <Card class="p-4 {momentum.aligned_with_regime ? 'border-warn/40' : ''}">
+                        <div class="flex items-center justify-between">
+                            <div class="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-warn">
+                                <TrendingUp class="h-3.5 w-3.5" /> Momentum (trend)
+                            </div>
+                            {#if momentum.aligned_with_regime}<Badge variant="warn">regime lead</Badge>{/if}
                         </div>
+                        <div class="mt-2 flex flex-col gap-1.5 text-sm">
+                            <div class="flex items-start gap-2"><ArrowRight class="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" /><span class="text-foreground"><span class="text-muted-foreground">trigger</span> {momentum.trigger || '— no clean trigger; wait for a side'}</span></div>
+                            {#if momentum.targets?.length}<div class="flex items-start gap-2"><ArrowRight class="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" /><span class="text-foreground"><span class="text-muted-foreground">targets</span> {momentum.targets.join(', ')}</span></div>{/if}
+                            {#if momentum.invalidation}<div class="flex items-start gap-2"><ShieldAlert class="mt-0.5 h-3.5 w-3.5 shrink-0 text-warn" /><span class="text-muted-foreground">invalidation: {momentum.invalidation}</span></div>{/if}
+                        </div>
+                        {#if momentum.rationale}<p class="mt-2 text-[11px] leading-snug text-muted-foreground">{momentum.rationale}</p>{/if}
                     </Card>
-                {/each}
+                {/if}
+
+                <!-- Mean-reversion -->
+                {#if meanRev}
+                    <Card class="p-4 {meanRev.aligned_with_regime ? 'border-up/40' : ''}">
+                        <div class="flex items-center justify-between">
+                            <div class="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-up">
+                                <Layers class="h-3.5 w-3.5" /> Mean-reversion (fade)
+                            </div>
+                            {#if meanRev.aligned_with_regime}<Badge variant="up">regime lead</Badge>{/if}
+                        </div>
+                        {#if meanRev.vwap != null}<div class="mt-1 text-[11px] text-muted-foreground">VWAP target <span class="font-mono text-foreground">{fmtNum(meanRev.vwap)}</span></div>{/if}
+                        <div class="mt-2 flex flex-col gap-2 text-sm">
+                            {#each meanRev.zones || [] as z}
+                                <div class="rounded-md border border-border/60 p-2">
+                                    <div class="text-foreground">{z.action} at <span class="font-mono">{fmtNum(z.at)}</span> → <span class="font-mono">{fmtNum(z.target)}</span> <span class="text-[11px] text-muted-foreground">(stop {fmtNum(z.invalidation)})</span></div>
+                                    <div class="mt-0.5 flex flex-wrap items-center gap-1">
+                                        <span class="text-[10px] uppercase tracking-wide text-muted-foreground">{z.band?.replaceAll('_', ' ')}</span>
+                                        {#each z.confluence_with || [] as s}<span class="rounded bg-muted px-1 py-0.5 text-[9px] uppercase tracking-wide text-muted-foreground">{s.replaceAll('_', ' ')}</span>{/each}
+                                    </div>
+                                    {#if z.confirm}<div class="mt-0.5 text-[11px] text-warn">✓ {z.confirm}</div>{/if}
+                                </div>
+                            {/each}
+                            {#if !(meanRev.zones || []).length}<div class="text-[11px] text-muted-foreground">No VWAP SD bands available.</div>{/if}
+                        </div>
+                        {#if meanRev.rationale}<p class="mt-2 text-[11px] leading-snug text-muted-foreground">{meanRev.rationale}</p>{/if}
+                    </Card>
+                {/if}
             </div>
         {/if}
 
