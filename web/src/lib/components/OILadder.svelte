@@ -3,7 +3,9 @@
 
     // Vertical grouped-bar "wall profile": strikes along the X axis (low → high),
     // wall strength (OI + volume) as bar height, Put (orange) and Call (cyan) bars
-    // sitting side-by-side at each strike so it's easy to read which wall is tall/short.
+    // sitting side-by-side at each strike. Each bar is split into two shades:
+    // solid base = open interest (the resting "wall"), faded top = today's intraday
+    // volume (flow) — so you can read both the wall height and how much is fresh flow.
     let { positionMap = [], futurePrice = null, compact = false } = $props();
 
     // ascending strike → left-to-right on the X axis
@@ -58,6 +60,31 @@
     const labelSize = $derived(compact ? 'text-[7px]' : 'text-[8px]');
 </script>
 
+{#snippet bar(oi, vol, isCall)}
+    {@const o = oi || 0}
+    {@const v = vol || 0}
+    {@const total = o + v}
+    <div
+        class="flex w-full flex-col overflow-hidden rounded-t-sm"
+        style={`height:${hPct(total)}%;max-width:${barMax}`}
+    >
+        {#if v > 0}
+            <!-- intraday volume (flow) — faded shade, sits on top -->
+            <div
+                class={`transition-colors ${isCall ? 'bg-call/35 group-hover:bg-call/55' : 'bg-put/35 group-hover:bg-put/55'}`}
+                style={`height:${total > 0 ? (v / total) * 100 : 0}%`}
+            ></div>
+        {/if}
+        {#if o > 0}
+            <!-- open interest (the wall) — solid shade, sits at the base -->
+            <div
+                class={`transition-colors ${isCall ? 'bg-call/90 group-hover:bg-call' : 'bg-put/90 group-hover:bg-put'}`}
+                style={`height:${total > 0 ? (o / total) * 100 : 0}%`}
+            ></div>
+        {/if}
+    </div>
+{/snippet}
+
 {#if sorted.length === 0}
     <div class="rounded-md border border-border bg-background py-6 text-center text-xs text-muted-foreground">
         No position data
@@ -65,8 +92,8 @@
 {:else}
     <div class={`rounded-md border border-border bg-background ${compact ? 'p-2.5' : 'p-3'}`}>
         <!-- Legend + live readout -->
-        <div class={`mb-2 flex items-center justify-between ${compact ? 'text-[9px]' : 'text-[10px]'}`}>
-            <div class="flex items-center gap-3">
+        <div class={`mb-2 flex items-center justify-between gap-2 ${compact ? 'text-[9px]' : 'text-[10px]'}`}>
+            <div class="flex items-center gap-2.5">
                 <span class="flex items-center gap-1">
                     <span class="inline-block h-2 w-2 rounded-sm bg-put"></span>
                     <span class="text-muted-foreground">Put</span>
@@ -75,13 +102,22 @@
                     <span class="inline-block h-2 w-2 rounded-sm bg-call"></span>
                     <span class="text-muted-foreground">Call</span>
                 </span>
+                <span class="mx-0.5 h-2.5 w-px bg-border"></span>
+                <span class="flex items-center gap-1" title="solid = open interest">
+                    <span class="inline-block h-2 w-2 rounded-sm bg-foreground/90"></span>
+                    <span class="text-muted-foreground">OI</span>
+                </span>
+                <span class="flex items-center gap-1" title="faded = intraday volume">
+                    <span class="inline-block h-2 w-2 rounded-sm bg-foreground/35"></span>
+                    <span class="text-muted-foreground">Vol</span>
+                </span>
             </div>
             {#if hovered != null && sorted[hovered]}
                 {@const lv = sorted[hovered]}
-                <div class="font-mono tabular-nums">
+                <div class="truncate font-mono tabular-nums">
                     <span class="font-semibold text-foreground">{fmtStrike(lv.strike)}</span>
-                    <span class="text-put">· P {fmtK(putTotal(lv)) || 0}</span>
-                    <span class="text-call">· C {fmtK(callTotal(lv)) || 0}</span>
+                    <span class="text-put">· P {fmtK(lv.put_oi) || 0}+{fmtK(lv.put_volume) || 0}</span>
+                    <span class="text-call">· C {fmtK(lv.call_oi) || 0}+{fmtK(lv.call_volume) || 0}</span>
                 </div>
             {:else}
                 <div class="font-mono tabular-nums text-muted-foreground">
@@ -116,16 +152,10 @@
                         onmouseleave={() => (hovered = null)}
                         onfocus={() => (hovered = i)}
                         onblur={() => (hovered = null)}
-                        aria-label={`Strike ${fmtStrike(lv.strike)}: put ${putTotal(lv)}, call ${callTotal(lv)}`}
+                        aria-label={`Strike ${fmtStrike(lv.strike)}: put oi ${lv.put_oi || 0} vol ${lv.put_volume || 0}, call oi ${lv.call_oi || 0} vol ${lv.call_volume || 0}`}
                     >
-                        <div
-                            class="w-full rounded-t-sm bg-put/80 transition-colors group-hover:bg-put"
-                            style={`height:${hPct(putTotal(lv))}%;max-width:${barMax}`}
-                        ></div>
-                        <div
-                            class="w-full rounded-t-sm bg-call/80 transition-colors group-hover:bg-call"
-                            style={`height:${hPct(callTotal(lv))}%;max-width:${barMax}`}
-                        ></div>
+                        {@render bar(lv.put_oi, lv.put_volume, false)}
+                        {@render bar(lv.call_oi, lv.call_volume, true)}
                     </button>
                 {/each}
             </div>
