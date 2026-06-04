@@ -69,16 +69,16 @@
         style={`height:${hPct(total)}%;max-width:${barMax}`}
     >
         {#if v > 0}
-            <!-- intraday volume (flow) — faded shade, sits on top -->
+            <!-- intraday volume (today's flow) — solid shade, sits on top -->
             <div
-                class={`transition-colors ${isCall ? 'bg-call/35 group-hover:bg-call/55' : 'bg-put/35 group-hover:bg-put/55'}`}
+                class={`transition-colors ${isCall ? 'bg-call/90 group-hover:bg-call' : 'bg-put/90 group-hover:bg-put'}`}
                 style={`height:${total > 0 ? (v / total) * 100 : 0}%`}
             ></div>
         {/if}
         {#if o > 0}
-            <!-- open interest (the wall) — solid shade, sits at the base -->
+            <!-- open interest (the resting wall) — faded shade, sits at the base -->
             <div
-                class={`transition-colors ${isCall ? 'bg-call/90 group-hover:bg-call' : 'bg-put/90 group-hover:bg-put'}`}
+                class={`transition-colors ${isCall ? 'bg-call/35 group-hover:bg-call/55' : 'bg-put/35 group-hover:bg-put/55'}`}
                 style={`height:${total > 0 ? (o / total) * 100 : 0}%`}
             ></div>
         {/if}
@@ -103,12 +103,12 @@
                     <span class="text-muted-foreground">Call</span>
                 </span>
                 <span class="mx-0.5 h-2.5 w-px bg-border"></span>
-                <span class="flex items-center gap-1" title="solid = open interest">
-                    <span class="inline-block h-2 w-2 rounded-sm bg-foreground/90"></span>
+                <span class="flex items-center gap-1" title="faded = open interest (resting wall)">
+                    <span class="inline-block h-2 w-2 rounded-sm bg-foreground/35"></span>
                     <span class="text-muted-foreground">OI</span>
                 </span>
-                <span class="flex items-center gap-1" title="faded = intraday volume">
-                    <span class="inline-block h-2 w-2 rounded-sm bg-foreground/35"></span>
+                <span class="flex items-center gap-1" title="solid = intraday volume (today's flow)">
+                    <span class="inline-block h-2 w-2 rounded-sm bg-foreground/90"></span>
                     <span class="text-muted-foreground">Vol</span>
                 </span>
             </div>
