@@ -1397,6 +1397,14 @@ CONTRACT_WEIGHTS = {
 }
 POSITION_BIAS_VERSION = 2
 
+# Strikes shown in the position-bias chart. OI and intraday volume live on very
+# different scales, so we rank each axis independently and display the UNION of
+# the top strikes from both. This guarantees a tall intraday-volume wall is shown
+# even when its resting OI is small (and vice-versa) instead of being dropped by
+# an OI-only ranking.
+POSITION_MAP_TOP_OI = 18
+POSITION_MAP_TOP_VOL = 12
+
 
 def _to_float(value, default=None):
     try:
@@ -1621,13 +1629,33 @@ def analyze_contract_position(asset_id, contract_key, oi_data, intraday_data=Non
     strongest_call_above = _best(oi_rows, 'call', lambda r: price is not None and r['strike'] > price)
     strongest_put_below = _best(oi_rows, 'put', lambda r: price is not None and r['strike'] < price)
 
-    levels = sorted(
-        oi_rows,
-        key=lambda r: (r.get('call', 0) + r.get('put', 0), max(r.get('call', 0), r.get('put', 0))),
-        reverse=True
-    )[:12]
+    # Build the displayed strike set from the UNION of the strongest OI strikes
+    # and the strongest intraday-volume strikes. Ranking each axis separately (and
+    # unioning) keeps big intraday flow walls visible even when their OI is small —
+    # a single combined sort would let large OI swamp them off the chart.
+    candidates = {r['strike']: dict(r) for r in oi_rows}
+    for strike, ir in intraday_by_strike.items():
+        row = candidates.setdefault(strike, {'strike': strike, 'call': 0, 'put': 0})
+        row['call_vol'] = ir.get('call', 0)
+        row['put_vol'] = ir.get('put', 0)
+    candidate_rows = list(candidates.values())
 
-    top5_oi = sum((r['call'] + r['put']) for r in levels[:5])
+    def _oi_strength(r):
+        return r.get('call', 0) + r.get('put', 0)
+
+    def _vol_strength(r):
+        return r.get('call_vol', 0) + r.get('put_vol', 0)
+
+    top_by_oi = sorted(candidate_rows, key=_oi_strength, reverse=True)[:POSITION_MAP_TOP_OI]
+    top_by_vol = sorted(candidate_rows, key=_vol_strength, reverse=True)[:POSITION_MAP_TOP_VOL]
+    keep_strikes = {r['strike'] for r in top_by_oi if _oi_strength(r) > 0}
+    keep_strikes |= {r['strike'] for r in top_by_vol if _vol_strength(r) > 0}
+    levels = sorted(
+        (r for r in candidate_rows if r['strike'] in keep_strikes),
+        key=lambda r: r['strike']
+    )
+
+    top5_oi = sum(_oi_strength(r) for r in top_by_oi[:5])
     support_oi = sum(r['put'] for r in oi_rows if price is not None and r['strike'] < price)
     resistance_oi = sum(r['call'] for r in oi_rows if price is not None and r['strike'] > price)
     call_vol_above = sum(r.get('call', 0) for s, r in intraday_by_strike.items() if price is not None and s > price)

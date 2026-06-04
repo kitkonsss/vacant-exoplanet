@@ -22,7 +22,7 @@
         </p>
     </Card>
 {:else}
-    <div class="grid grid-cols-1 gap-4 md:grid-cols-2">
+    <div class="grid grid-cols-1 gap-4">
         {#each contracts as contract (contract.contract_key)}
             <ContractCard {contract} />
         {/each}
