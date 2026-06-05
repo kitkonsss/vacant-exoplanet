@@ -40,14 +40,21 @@ jobs:
         cd scraper
         python quikstrike_scraper.py
 
+    - name: Snapshot heatmap history
+      # Archive a date-stamped copy of the OI + vol2vol (gamma) heatmaps and append
+      # the per-day backtest record, so we can later check whether price reached the
+      # walls. Resolves data/ from its own path, so no `cd` needed. Never hard-fails.
+      run: python scraper/snapshot_history.py || true
+
     - name: Commit and push changes
       run: |
         git config --global user.name "github-actions[bot]"
         git config --global user.email "github-actions[bot]@users.noreply.github.com"
         branch="${GITHUB_REF_NAME:-main}"
-        
-        # Check if there are any changes in the data directory
-        if git diff --quiet data/; then
+
+        # Check for any changes in data/ — use porcelain so NEW snapshot files
+        # (untracked) are detected too, not just modifications to tracked files.
+        if [ -z "$(git status --porcelain data/)" ]; then
           echo "No changes to commit in data/"
         else
           git add data/
