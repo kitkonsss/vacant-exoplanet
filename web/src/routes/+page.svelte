@@ -7,9 +7,10 @@
     import HeatmapView from '$lib/components/HeatmapView.svelte';
     import MacroView from '$lib/components/MacroView.svelte';
     import StrategyView from '$lib/components/StrategyView.svelte';
-    import { fetchGammaHeatmap, fetchHeatmap, fetchPositionBias, fetchMacro, fetchCot, fetchStrategy, fetchBrief } from '$lib/data.js';
+    import Vol2VolView from '$lib/components/Vol2VolView.svelte';
+    import { fetchGammaHeatmap, fetchHeatmap, fetchPositionBias, fetchMacro, fetchCot, fetchStrategy, fetchBrief, fetchOIData } from '$lib/data.js';
     import { ASSET_PROFILES, DEFAULT_CONTRACT_KEY } from '$lib/config.js';
-    import { LineChart, Grid3X3, Activity, Landmark, Compass } from 'lucide-svelte';
+    import { LineChart, Grid3X3, Activity, Landmark, Compass, Sigma } from 'lucide-svelte';
 
     let asset = $state('gc');
     let activeTab = $state('strategy');
@@ -32,6 +33,12 @@
     let gammaCache = $state({});
     let gammaLoading = $state(false);
 
+    // Vol2Vol: SD expected range + strike OI ranking/change, per contract.
+    let vol2volContract = $state(DEFAULT_CONTRACT_KEY);
+    /** @type {Record<string, any>} */
+    let oiDataCache = $state({});
+    let oiDataLoading = $state(false);
+
     // Macro snapshot (shared across assets) + per-asset COT positioning.
     let macro = $state(null);
     let cot = $state(null);
@@ -49,6 +56,7 @@
 
     const tabs = [
         { key: 'strategy',   label: 'Daily Strategy', tone: 'warn',   icon: Compass },
+        { key: 'vol2vol',    label: 'Vol2Vol',       tone: 'mag',     icon: Sigma },
         { key: 'analysis',   label: 'Position Bias', tone: 'primary', icon: LineChart },
         { key: 'heatmap',    label: 'OI Heatmap',    tone: 'mag',     icon: Grid3X3 },
         { key: 'gamma',      label: 'Gamma Heatmap', tone: 'mag',     icon: Activity },
@@ -58,6 +66,7 @@
     const singleContractKey = $derived(
         activeTab === 'heatmap' ? heatmapContract
             : activeTab === 'gamma' ? gammaContract
+            : activeTab === 'vol2vol' ? vol2volContract
             : 'current'
     );
 
@@ -68,6 +77,8 @@
 
     const currentHeatmap = $derived(heatmapCache[heatmapContract] ?? null);
     const currentGamma = $derived(gammaCache[gammaContract] ?? null);
+    const currentOIData = $derived(oiDataCache[vol2volContract] ?? null);
+    const currentVol2volHeatmap = $derived(heatmapCache[vol2volContract] ?? null);
 
     function resolveContractKey(contractKeys, preferredKey = heatmapContract) {
         if (!contractKeys.length) return null;
@@ -86,6 +97,7 @@
             payload = nextPayload;
             if (nextKey && nextKey !== heatmapContract) heatmapContract = nextKey;
             if (nextKey && nextKey !== gammaContract) gammaContract = nextKey;
+            if (nextKey && nextKey !== vol2volContract) vol2volContract = nextKey;
             const stamp = new Date();
             lastUpdate = stamp.toLocaleTimeString();
             lastUpdateAt = stamp;
@@ -116,6 +128,20 @@
             gammaCache = { ...untrack(() => gammaCache), [contractKey]: data };
         } finally {
             gammaLoading = false;
+        }
+    }
+
+    async function ensureOIData(contractKey) {
+        // ΔOI comes from the OI heatmap — reuse its cache + fetch.
+        void ensureHeatmap(contractKey);
+        const cached = untrack(() => oiDataCache[contractKey]);
+        if (cached) return;
+        oiDataLoading = true;
+        try {
+            const data = await fetchOIData(asset, contractKey);
+            oiDataCache = { ...untrack(() => oiDataCache), [contractKey]: data };
+        } finally {
+            oiDataLoading = false;
         }
     }
 
@@ -150,11 +176,14 @@
         try {
             heatmapCache = {};
             gammaCache = {};
+            oiDataCache = {};
             const nextKey = await load();
             if (activeTab === 'heatmap' && nextKey) {
                 await ensureHeatmap(nextKey);
             } else if (activeTab === 'gamma' && nextKey) {
                 await ensureGamma(nextKey);
+            } else if (activeTab === 'vol2vol' && nextKey) {
+                await ensureOIData(nextKey);
             } else if (activeTab === 'macro') {
                 await ensureMacro({ force: true });
             } else if (activeTab === 'strategy') {
@@ -201,6 +230,11 @@
             if (!nextKey) return;
             if (nextKey !== gammaContract) gammaContract = nextKey;
             void ensureGamma(nextKey);
+        } else if (key === 'vol2vol') {
+            const nextKey = resolveContractKey(availableContractKeys, vol2volContract);
+            if (!nextKey) return;
+            if (nextKey !== vol2volContract) vol2volContract = nextKey;
+            void ensureOIData(nextKey);
         } else if (key === 'macro') {
             void ensureMacro();
         } else if (key === 'strategy') {
@@ -218,16 +252,24 @@
         void ensureGamma(key);
     }
 
+    function onVol2volContract(key) {
+        vol2volContract = key;
+        void ensureOIData(key);
+    }
+
     $effect(() => {
         asset; // dep
         untrack(() => {
             heatmapCache = {};
             gammaCache = {};
+            oiDataCache = {};
             void load().then((nextKey) => {
                 if (activeTab === 'heatmap' && nextKey) {
                     void ensureHeatmap(nextKey);
                 } else if (activeTab === 'gamma' && nextKey) {
                     void ensureGamma(nextKey);
+                } else if (activeTab === 'vol2vol' && nextKey) {
+                    void ensureOIData(nextKey);
                 } else if (activeTab === 'macro') {
                     void ensureMacro();   // refetch COT for the new asset (macro is shared/cached)
                 } else if (activeTab === 'strategy') {
@@ -248,6 +290,8 @@
             ? currentHeatmap?.contract || visibleContract?.contract || ''
             : activeTab === 'gamma'
                 ? currentGamma?.contract || visibleContract?.contract || ''
+            : activeTab === 'vol2vol'
+                ? currentOIData?.contract || visibleContract?.contract || ''
             : activeTab === 'macro'
                 ? 'Macro · COT'
             : activeTab === 'strategy'
@@ -296,6 +340,15 @@
                         heatScale="log"
                         emptyFile="_GammaHeatmap.json"
                     />
+                {:else if activeTab === 'vol2vol'}
+                    <Vol2VolView
+                        bind:contractKey={vol2volContract}
+                        availableContracts={availableContractKeys}
+                        data={currentOIData}
+                        heatmap={currentVol2volHeatmap}
+                        loading={oiDataLoading}
+                        onChangeContract={onVol2volContract}
+                    />
                 {:else if activeTab === 'macro'}
                     <div class="flex flex-col gap-4 overflow-y-auto">
                         <MacroView assetId={asset} {macro} {cot} loading={macroLoading} />
@@ -310,10 +363,13 @@
             ? currentHeatmap?.contract || visibleContract?.contract || '—'
             : activeTab === 'gamma'
                 ? currentGamma?.contract || visibleContract?.contract || '—'
+            : activeTab === 'vol2vol'
+                ? currentOIData?.contract || visibleContract?.contract || '—'
                 : visibleContract?.contract || '—'}
         dataType={activeTab === 'analysis' ? 'Position Bias'
             : activeTab === 'heatmap' ? 'OI Heatmap'
             : activeTab === 'gamma' ? 'Gamma Heatmap'
+            : activeTab === 'vol2vol' ? 'Vol2Vol · SD / OI'
             : activeTab === 'macro' ? 'Macro / COT'
             : activeTab === 'strategy' ? 'Daily Strategy'
             : 'Position Bias'}

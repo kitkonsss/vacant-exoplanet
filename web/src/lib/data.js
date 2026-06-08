@@ -1,4 +1,5 @@
-import { CONTRACT_OPTIONS, briefUrl, cotUrl, gammaHeatmapUrl, heatmapUrl, macroUrl, positionBiasUrl, strategyUrl } from './config.js';
+import { CONTRACT_OPTIONS, briefUrl, cotUrl, gammaHeatmapUrl, heatmapUrl, macroUrl, oiDataUrl, positionBiasUrl, strategyUrl } from './config.js';
+import { parseOIData } from './vol2vol.js';
 
 async function fetchJsonSoft(url) {
     try {
@@ -48,6 +49,16 @@ export async function fetchHeatmap(assetId, contractKey) {
  */
 export async function fetchGammaHeatmap(assetId, contractKey) {
     return fetchJsonSoft(gammaHeatmapUrl(assetId, contractKey));
+}
+
+/**
+ * Fetches + parses the raw Vol2Vol OI text dump for one contract.
+ * Returns the structured shape from `parseOIData`
+ * ({ contract, futPrc, futureChg, vol, dte, settle, strikes:[...] }) or null.
+ */
+export async function fetchOIData(assetId, contractKey) {
+    const text = await fetchTextSoft(oiDataUrl(assetId, contractKey));
+    return parseOIData(text);
 }
 
 /**
