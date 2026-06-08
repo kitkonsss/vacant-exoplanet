@@ -41,6 +41,12 @@ export function gammaHeatmapUrl(assetId, contractKey) {
     return dataUrl(assetId, `${contractKey}_GammaHeatmap.json`);
 }
 
+// Per-contract raw Vol2Vol OI text dump (header + `Strike,Call,Put,Vol Settle`).
+// Powers the Vol2Vol Expected Range (SD bands) + the per-strike OI table.
+export function oiDataUrl(assetId, contractKey) {
+    return dataUrl(assetId, `${contractKey}_OIData.txt`);
+}
+
 // OHLC for the asset's underlying futures (yfinance-sourced, rollover back-adjusted).
 // `tf` is '1d' (default, file=OHLC.json) or '1h' (file=OHLC_1h.json).
 export function ohlcUrl(assetId, tf = '1d') {
