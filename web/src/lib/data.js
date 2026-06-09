@@ -62,8 +62,8 @@ export async function fetchOIData(assetId, contractKey) {
 }
 
 /**
- * Fetches the macro snapshot (yields / real yields / DXY / VIX + gold
- * tailwind/headwind interpretation). Shape: { series, interpretation: { gold } }.
+ * Fetches the shared macro snapshot (yields / real yields / DXY / VIX + per-asset
+ * tailwind/headwind interpretation). Shape: { series, interpretation: { gold, nq } }.
  */
 export async function fetchMacro() {
     return fetchJsonSoft(macroUrl());
@@ -72,6 +72,7 @@ export async function fetchMacro() {
 /**
  * Fetches CFTC COT positioning for an asset.
  * GC shape: { managed_money, producer_merchant, swap_dealer, interpretation }.
+ * NQ shape: { leveraged_funds, asset_manager, dealer, interpretation }.
  */
 export async function fetchCot(assetId) {
     return fetchJsonSoft(cotUrl(assetId));

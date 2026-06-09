@@ -1,8 +1,9 @@
-# QuikStrike Vol2Vol Scraper v4 — GC (Gold) only
+# QuikStrike Vol2Vol Scraper v4 — Multi-Asset (GC + NQ)
 # Scrapes options Vol2Vol data from CME QuikStrike
 #
 # Supports:
 #   - GC (Gold)  : pid=40, pf=6
+#   - NQ (Nasdaq): pid=121, pf=26
 #
 # From screenshots, QuikStrike UI has:
 #   - EXPIRATION dropdown: custom popup grid (not standard <select>)
@@ -61,6 +62,32 @@ ASSET_PROFILES = {
         'monthly_check': lambda sym: len(sym) >= 4 and sym[:2] == 'OG' and sym[2].isalpha(),
         'friday_check': lambda sym: len(sym) >= 4 and sym[:2] == 'OG' and sym[2].isdigit(),
     },
+    'nq': {
+        'name': 'Nasdaq (NQ)',
+        'short': 'NQ',
+        'pid': 121,
+        'pf': 26,
+        'yahoo_symbol': 'NQ=F',
+        'min_price': 5000,          # NQ futures price > 5000
+        'data_subfolder': 'nq',     # data/nq/
+        # Contract symbol patterns for NQ (from screenshot):
+        #   NQH6   = quarterly  (NQ + month_letter + year)
+        #   NEG6   = EOM        (NE + month_letter + year)
+        #   QN1H6  = friday     (QN + digit + month + year)
+        #   Q1AH6  = monday     (Q + digit + A = Mon, B = Tue, C = Wed, D = Thu)
+        #   QN3H6  = 3rd friday etc.
+        'contract_pattern': r'^(NQ|NE|QN|Q[0-9])',
+        'monthly_check': lambda sym: (
+            # NQH6 = quarterly (NQ + letter + digit)
+            (len(sym) >= 4 and sym[:2] == 'NQ' and sym[2].isalpha()) or
+            # NEG6 = EOM (NE + letter + digit)
+            (len(sym) >= 4 and sym[:2] == 'NE' and sym[2].isalpha())
+        ),
+        'friday_check': lambda sym: (
+            # QN1H6 = friday (QN + digit + letter + digit)
+            len(sym) >= 5 and sym[:2] == 'QN' and sym[2].isdigit()
+        ),
+    },
 }
 
 # ============================================================
@@ -79,7 +106,7 @@ if HEATMAP_STRIKE_WINDOW not in {'10', '15', '25', '50', '-1'}:
     HEATMAP_STRIKE_WINDOW = '50'
 
 # Which assets to scrape (can be overridden via CLI args)
-ASSETS_TO_SCRAPE = ['gc']
+ASSETS_TO_SCRAPE = ['gc', 'nq']
 
 def get_quikstrike_url(asset_id):
     """Build QuikStrike URL for a given asset."""
@@ -700,9 +727,9 @@ def classify_contracts(contracts, asset_profile):
 
     # Primary filter: drop contracts whose listed expiration date is strictly
     # before "today" in NY time. This handles the case where DTE alone is
-    # ambiguous: GC settles 1:30pm ET, so its same-day contract still reports a
-    # small positive DTE after settlement and would otherwise be read as today's
-    # contract when it is logically already expired.
+    # ambiguous because settlement times differ per asset (NQ 4pm ET,
+    # GC 1:30pm ET) — e.g. on Mon 1pm ET, NQ Mon-weekly still has DTE 0.13
+    # but is logically yesterday's contract for someone viewing on Tuesday.
     today_ny = _today_ny()
 
     def _parse_date(c):
@@ -757,7 +784,7 @@ def classify_contracts(contracts, asset_profile):
     #
     # The MIN_DTE floor must NOT evict a contract that still expires *today*.
     # GC settles 1:30pm ET, so its same-day contract dips under MIN_DTE from
-    # ~11:06am ET onward. Applying the floor unconditionally
+    # ~11:06am ET onward; NQ settles 4pm ET. Applying the floor unconditionally
     # made "current" wrongly jump to *tomorrow's* contract every day around
     # 11:19am ET (and Friday -> Monday). We keep a same-day contract eligible
     # until QuikStrike marks it actually expired (DTE < 0). The floor still
@@ -1219,7 +1246,7 @@ def get_futures_price(asset_id):
 def _backadjust_rollovers(candles, threshold_pct):
     """Detect futures rollover gaps and back-adjust earlier candles to remove them.
 
-    Yahoo's `GC=F` is a front-month future, *unadjusted* — when the
+    Yahoo's `GC=F` / `NQ=F` are front-month futures, *unadjusted* — when the
     front contract rolls (e.g. June -> August), the price series shows a large
     overnight gap that isn't a real price move. Standard fix (what TradingView,
     Stooq continuous, etc. do): shift everything before the rollover by the
@@ -2996,9 +3023,9 @@ def scrape_asset(driver, asset_id):
 def main():
     # Parse CLI args
     import argparse
-    parser = argparse.ArgumentParser(description='QuikStrike Vol2Vol Scraper v4 — GC only')
-    parser.add_argument('--asset', choices=['gc', 'all'], default='all',
-                        help='Which asset to scrape (default: all = gc)')
+    parser = argparse.ArgumentParser(description='QuikStrike Vol2Vol Scraper v4 — Multi-Asset')
+    parser.add_argument('--asset', choices=['gc', 'nq', 'all'], default='all',
+                        help='Which asset to scrape (default: all)')
     parser.add_argument('--analyze-only', action='store_true',
                         help='Build position-bias JSON from existing data files without opening QuikStrike')
     args = parser.parse_args()
@@ -3093,7 +3120,7 @@ def push_data_to_repo(assets=None):
     for asset_id in assets:
         profile = ASSET_PROFILES[asset_id]
         src_dir = get_output_dir(asset_id)
-        # Destination mirrors the source structure: data/ for GC
+        # Destination mirrors the source structure: data/ for GC, data/nq/ for NQ
         if profile['data_subfolder']:
             dst_dir = os.path.join(DATA_REPO_DIR, profile['data_subfolder'])
         else:

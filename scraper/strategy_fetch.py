@@ -5,7 +5,7 @@
 #   - Positioning : data/position_bias_summary.json (CME options OI walls / bias)
 #   - Macro       : data/macro.json (yields / real yields / DXY / VIX interpretation)
 #   - COT         : data/cot.json   (CFTC institutional net positioning)
-# -> writes data/daily_strategy.json (GC).
+# -> writes data/daily_strategy.json (GC) + data/nq/daily_strategy.json (NQ).
 #
 # This is the v1 *mechanical* engine — transparent and fully testable with no
 # credentials. Phase 3 swaps/augments build_strategy() with a Claude API call
@@ -24,6 +24,7 @@ BASE_OUTPUT_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(_
 
 ASSETS = {
     'gc': {'short': 'GC', 'subfolder': '',   'macro_key': 'gold'},
+    'nq': {'short': 'NQ', 'subfolder': 'nq', 'macro_key': 'nq'},
 }
 
 # Blend weights — options positioning is the system's core read; macro is a strong
@@ -979,9 +980,9 @@ def write_strategy(asset_id):
 
 def main():
     parser = argparse.ArgumentParser(description='Vol2Vol daily strategy synthesizer (v1, rule-based)')
-    parser.add_argument('--asset', choices=['gc', 'all'], default='all')
+    parser.add_argument('--asset', choices=['gc', 'nq', 'all'], default='all')
     args = parser.parse_args()
-    assets = ['gc'] if args.asset == 'all' else [args.asset]
+    assets = ['gc', 'nq'] if args.asset == 'all' else [args.asset]
 
     print('=' * 60)
     print('  Vol2Vol Daily Strategy Synthesizer (v1)')

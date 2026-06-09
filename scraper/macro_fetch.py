@@ -1,9 +1,9 @@
 # Macro Fetch — Phase 0 macro-context layer for Vol2Vol
 #
-# Pulls the macro drivers that actually move GC (gold) and writes data/macro.json
-# — a small, frontend-friendly snapshot plus a ready-made interpretation
-# ("tailwind / headwind") that the daily-strategy engine (Phase 3) and a Macro
-# tab can consume directly.
+# Pulls the macro drivers that actually move GC (gold) and NQ (Nasdaq-100) and
+# writes data/macro.json — a small, frontend-friendly snapshot plus a ready-made
+# per-asset interpretation ("tailwind / headwind") that the daily-strategy engine
+# (Phase 3) and a Macro tab can consume directly.
 #
 # ZERO credentials required:
 #   - Yields / real yields / breakevens / broad USD / VIX come from the FRED
@@ -181,13 +181,16 @@ def _clamp(v, lo, hi):
 
 
 def interpret(series):
-    """Turn raw macro series into a gold tailwind/headwind read.
+    """Turn raw macro series into per-asset tailwind/headwind reads.
 
     Gold: inversely driven by 10Y REAL yield (DFII10) and the US dollar.
-    Scores are clamped to [-100, +100]; positive = tailwind (bullish for gold).
+    NQ:   helped by falling nominal yields and low/falling VIX (risk-on).
+    Scores are clamped to [-100, +100]; positive = tailwind (bullish for that asset).
     """
     ry = series.get('real_yield_10y')
+    n10 = series.get('nominal_10y')
     dxy = series.get('dxy') or series.get('dxy_broad')
+    vix = series.get('vix_live') or series.get('vix')
 
     # ---- Gold ----
     gold_drivers, gold_score = [], 0
@@ -207,6 +210,26 @@ def interpret(series):
                 f"DXY {pct5:+.2f}%/5d → {'tailwind' if dxy_sig >= 0 else 'headwind'}")
     gold_score = round(_clamp(gold_score, -100, 100))
 
+    # ---- NQ ----
+    nq_drivers, nq_score = [], 0
+    if n10 and n10.get('chg_5d_bp') is not None:
+        rate_sig = _clamp(-n10['chg_5d_bp'] * 2.5, -40, 40)  # falling 10Y helps tech
+        nq_score += rate_sig
+        nq_drivers.append(
+            f"10Y {n10['chg_5d_bp']:+.0f}bp/5d → {'tailwind' if rate_sig >= 0 else 'headwind'}")
+    if vix:
+        lvl = vix['value']
+        lvl_sig = _clamp((18 - lvl) * 5, -30, 30)            # <18 risk-on, >18 risk-off
+        nq_score += lvl_sig
+        trend_note = ''
+        if vix.get('trend') == 'down':
+            nq_score += 10; trend_note = ', falling'
+        elif vix.get('trend') == 'up':
+            nq_score -= 10; trend_note = ', rising'
+        nq_drivers.append(
+            f"VIX {lvl:.1f}{trend_note} → {'risk-on' if lvl_sig >= 0 else 'risk-off'}")
+    nq_score = round(_clamp(nq_score, -100, 100))
+
     def label(s):
         if s >= 25:
             return 'tailwind'
@@ -216,6 +239,7 @@ def interpret(series):
 
     return {
         'gold': {'score': gold_score, 'label': label(gold_score), 'drivers': gold_drivers},
+        'nq':   {'score': nq_score,   'label': label(nq_score),   'drivers': nq_drivers},
     }
 
 
@@ -233,14 +257,14 @@ def fetch_macro():
         'generated_at': datetime.now(timezone.utc).isoformat(timespec='seconds'),
         'series': series,
         'interpretation': interpretation,
-        'note': 'Macro context only. Gold ~ inverse 10Y real yield + USD.',
+        'note': 'Macro context only. Gold ~ inverse 10Y real yield + USD; NQ ~ falling yields + low VIX.',
     }
     os.makedirs(BASE_OUTPUT_DIR, exist_ok=True)
     out_path = os.path.join(BASE_OUTPUT_DIR, 'macro.json')
     with open(out_path, 'w', encoding='utf-8') as f:
         json.dump(payload, f, indent=2)
-    g = interpretation['gold']
-    print(f"[MACRO] gold: {g['label']} ({g['score']:+d})")
+    g, n = interpretation['gold'], interpretation['nq']
+    print(f"[MACRO] gold: {g['label']} ({g['score']:+d}) | nq: {n['label']} ({n['score']:+d})")
     print(f'[MACRO] wrote {out_path} ({len(series)} series)')
     return True
 

@@ -5,8 +5,9 @@
 
     let { assetId = 'gc', macro = null, cot = null, loading = false } = $props();
 
-    // The macro file keys its GC interpretation under 'gold'.
-    const interp = $derived(macro?.interpretation?.gold || null);
+    // 'gc' -> the macro file keys its interpretation under 'gold'; 'nq' -> 'nq'.
+    const macroKey = $derived(assetId === 'gc' ? 'gold' : 'nq');
+    const interp = $derived(macro?.interpretation?.[macroKey] || null);
     const series = $derived(macro?.series || {});
 
     // Which series to show, in display order. label -> friendly heading.
@@ -66,7 +67,7 @@
         return 'muted';
     }
 
-    // GC COT uses the Disaggregated report (Managed Money / Producer / Swap).
+    // COT trader groups vary by asset (gold = Disaggregated, NQ = TFF).
     const cotGroups = $derived.by(() => {
         if (!cot) return [];
         if (cot.managed_money) {
