@@ -1,12 +1,16 @@
 <script>
-    import { fmtK, fmtStrike } from '$lib/utils.js';
+    import { cn, fmtK, fmtStrike } from '$lib/utils.js';
 
     // Vertical grouped-bar "wall profile": strikes along the X axis (low → high),
-    // wall strength (OI + volume) as bar height, Put (orange) and Call (cyan) bars
-    // sitting side-by-side at each strike. Each bar is split into two shades:
-    // solid base = open interest (the resting "wall"), faded top = today's intraday
-    // volume (flow) — so you can read both the wall height and how much is fresh flow.
+    // wall strength (OI + volume) as bar height. Two view modes via the toggle:
+    //   • split — Put (orange) and Call (cyan) bars side-by-side at each strike.
+    //   • total — one combined (green) bar per strike = Put + Call.
+    // Each bar is split into two shades: solid base = today's intraday volume
+    // (flow), faded top = open interest (the resting "wall") — so you can read
+    // both the wall height and how much of it is fresh flow.
     let { positionMap = [], futurePrice = null, compact = false } = $props();
+
+    let mode = $state('split'); // 'split' | 'total'
 
     // ascending strike → left-to-right on the X axis
     const sorted = $derived([...(positionMap || [])].sort((a, b) => a.strike - b.strike));
@@ -18,9 +22,11 @@
         return (l.put_oi || 0) + (l.put_volume || 0);
     }
 
-    const maxVal = $derived(
-        Math.max(...sorted.flatMap((l) => [callTotal(l), putTotal(l)]), 1)
-    );
+    // Axis scale tracks the active mode: tallest single side in split view,
+    // tallest combined Put+Call in total view (≈2× taller, so it needs its own max).
+    const maxSplit = $derived(Math.max(...sorted.flatMap((l) => [callTotal(l), putTotal(l)]), 1));
+    const maxTotal = $derived(Math.max(...sorted.map((l) => callTotal(l) + putTotal(l)), 1));
+    const maxVal = $derived(mode === 'total' ? maxTotal : maxSplit);
 
     function hPct(v) {
         // floor so even tiny walls show a sliver
@@ -57,28 +63,35 @@
 
     const chartHeight = $derived(compact ? 120 : 172);
     const barMax = $derived(compact ? '8px' : '11px');
+    const totalBarMax = $derived(compact ? '12px' : '16px');
     const labelSize = $derived(compact ? 'text-[7px]' : 'text-[8px]');
+
+    const TONES = {
+        call: { solid: 'bg-call/90 group-hover:bg-call', faded: 'bg-call/35 group-hover:bg-call/55' },
+        put: { solid: 'bg-put/90 group-hover:bg-put', faded: 'bg-put/35 group-hover:bg-put/55' },
+        total: { solid: 'bg-up/90 group-hover:bg-up', faded: 'bg-up/35 group-hover:bg-up/55' }
+    };
 </script>
 
-{#snippet bar(oi, vol, isCall)}
+{#snippet bar(oi, vol, tone)}
     {@const o = oi || 0}
     {@const v = vol || 0}
     {@const total = o + v}
     <div
         class="flex w-full flex-col overflow-hidden rounded-t-sm"
-        style={`height:${hPct(total)}%;max-width:${barMax}`}
+        style={`height:${hPct(total)}%;max-width:${tone === 'total' ? totalBarMax : barMax}`}
     >
         {#if v > 0}
             <!-- intraday volume (today's flow) — solid shade, sits on top -->
             <div
-                class={`transition-colors ${isCall ? 'bg-call/90 group-hover:bg-call' : 'bg-put/90 group-hover:bg-put'}`}
+                class={`transition-colors ${TONES[tone].solid}`}
                 style={`height:${total > 0 ? (v / total) * 100 : 0}%`}
             ></div>
         {/if}
         {#if o > 0}
             <!-- open interest (the resting wall) — faded shade, sits at the base -->
             <div
-                class={`transition-colors ${isCall ? 'bg-call/35 group-hover:bg-call/55' : 'bg-put/35 group-hover:bg-put/55'}`}
+                class={`transition-colors ${TONES[tone].faded}`}
                 style={`height:${total > 0 ? (o / total) * 100 : 0}%`}
             ></div>
         {/if}
@@ -91,17 +104,24 @@
     </div>
 {:else}
     <div class={`rounded-md border border-border bg-background ${compact ? 'p-2.5' : 'p-3'}`}>
-        <!-- Legend + live readout -->
+        <!-- Legend + live readout + Split/Total toggle -->
         <div class={`mb-2 flex items-center justify-between gap-2 ${compact ? 'text-[9px]' : 'text-[10px]'}`}>
-            <div class="flex items-center gap-2.5">
-                <span class="flex items-center gap-1">
-                    <span class="inline-block h-2 w-2 rounded-sm bg-put"></span>
-                    <span class="text-muted-foreground">Put</span>
-                </span>
-                <span class="flex items-center gap-1">
-                    <span class="inline-block h-2 w-2 rounded-sm bg-call"></span>
-                    <span class="text-muted-foreground">Call</span>
-                </span>
+            <div class="flex min-w-0 items-center gap-2.5">
+                {#if mode === 'total'}
+                    <span class="flex items-center gap-1">
+                        <span class="inline-block h-2 w-2 rounded-sm bg-up"></span>
+                        <span class="text-muted-foreground">Total</span>
+                    </span>
+                {:else}
+                    <span class="flex items-center gap-1">
+                        <span class="inline-block h-2 w-2 rounded-sm bg-put"></span>
+                        <span class="text-muted-foreground">Put</span>
+                    </span>
+                    <span class="flex items-center gap-1">
+                        <span class="inline-block h-2 w-2 rounded-sm bg-call"></span>
+                        <span class="text-muted-foreground">Call</span>
+                    </span>
+                {/if}
                 <span class="mx-0.5 h-2.5 w-px bg-border"></span>
                 <span class="flex items-center gap-1" title="faded = open interest (resting wall)">
                     <span class="inline-block h-2 w-2 rounded-sm bg-foreground/35"></span>
@@ -112,18 +132,42 @@
                     <span class="text-muted-foreground">Vol</span>
                 </span>
             </div>
-            {#if hovered != null && sorted[hovered]}
-                {@const lv = sorted[hovered]}
-                <div class="truncate font-mono tabular-nums">
-                    <span class="font-semibold text-foreground">{fmtStrike(lv.strike)}</span>
-                    <span class="text-put">· P {fmtK(lv.put_oi) || 0}+{fmtK(lv.put_volume) || 0}</span>
-                    <span class="text-call">· C {fmtK(lv.call_oi) || 0}+{fmtK(lv.call_volume) || 0}</span>
+            <div class="flex min-w-0 items-center gap-2">
+                {#if hovered != null && sorted[hovered]}
+                    {@const lv = sorted[hovered]}
+                    {#if mode === 'total'}
+                        <div class="truncate font-mono tabular-nums">
+                            <span class="font-semibold text-foreground">{fmtStrike(lv.strike)}</span>
+                            <span class="text-up">· OI {fmtK((lv.put_oi || 0) + (lv.call_oi || 0)) || 0}+Vol {fmtK((lv.put_volume || 0) + (lv.call_volume || 0)) || 0}</span>
+                        </div>
+                    {:else}
+                        <div class="truncate font-mono tabular-nums">
+                            <span class="font-semibold text-foreground">{fmtStrike(lv.strike)}</span>
+                            <span class="text-put">· P {fmtK(lv.put_oi) || 0}+{fmtK(lv.put_volume) || 0}</span>
+                            <span class="text-call">· C {fmtK(lv.call_oi) || 0}+{fmtK(lv.call_volume) || 0}</span>
+                        </div>
+                    {/if}
+                {:else}
+                    <div class="truncate font-mono tabular-nums text-muted-foreground">
+                        Future <span class="font-semibold text-primary">{fmtStrike(futurePrice)}</span>
+                    </div>
+                {/if}
+                <div class="flex shrink-0 items-center gap-0.5 rounded border border-border bg-surface p-0.5">
+                    {#each [['split', 'Split'], ['total', 'Total']] as [key, label]}
+                        <button
+                            type="button"
+                            onclick={() => (mode = key)}
+                            class={cn(
+                                'rounded px-1.5 py-0.5 font-semibold uppercase tracking-wider transition-colors',
+                                compact ? 'text-[7px]' : 'text-[8px]',
+                                mode === key ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'
+                            )}
+                        >
+                            {label}
+                        </button>
+                    {/each}
                 </div>
-            {:else}
-                <div class="font-mono tabular-nums text-muted-foreground">
-                    Future <span class="font-semibold text-primary">{fmtStrike(futurePrice)}</span>
-                </div>
-            {/if}
+            </div>
         </div>
 
         <!-- Plot area -->
@@ -154,8 +198,12 @@
                         onblur={() => (hovered = null)}
                         aria-label={`Strike ${fmtStrike(lv.strike)}: put oi ${lv.put_oi || 0} vol ${lv.put_volume || 0}, call oi ${lv.call_oi || 0} vol ${lv.call_volume || 0}`}
                     >
-                        {@render bar(lv.put_oi, lv.put_volume, false)}
-                        {@render bar(lv.call_oi, lv.call_volume, true)}
+                        {#if mode === 'total'}
+                            {@render bar((lv.put_oi || 0) + (lv.call_oi || 0), (lv.put_volume || 0) + (lv.call_volume || 0), 'total')}
+                        {:else}
+                            {@render bar(lv.put_oi, lv.put_volume, 'put')}
+                            {@render bar(lv.call_oi, lv.call_volume, 'call')}
+                        {/if}
                     </button>
                 {/each}
             </div>
