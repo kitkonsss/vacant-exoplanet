@@ -1,16 +1,15 @@
 <script>
-    import { cn, fmtK, fmtStrike } from '$lib/utils.js';
+    import { fmtK, fmtStrike } from '$lib/utils.js';
 
     // Vertical grouped-bar "wall profile": strikes along the X axis (low → high),
-    // wall strength (OI + volume) as bar height. Two view modes via the toggle:
+    // wall strength (OI + volume) as bar height. Two view modes (driven by the
+    // `mode` prop — a single Split/Total selector lives on the Position Bias view):
     //   • split — Put (orange) and Call (cyan) bars side-by-side at each strike.
     //   • total — one combined (green) bar per strike = Put + Call.
     // Each bar is split into two shades: solid base = today's intraday volume
     // (flow), faded top = open interest (the resting "wall") — so you can read
     // both the wall height and how much of it is fresh flow.
-    let { positionMap = [], futurePrice = null, compact = false } = $props();
-
-    let mode = $state('split'); // 'split' | 'total'
+    let { positionMap = [], futurePrice = null, compact = false, mode = 'split' } = $props();
 
     // ascending strike → left-to-right on the X axis
     const sorted = $derived([...(positionMap || [])].sort((a, b) => a.strike - b.strike));
@@ -104,7 +103,7 @@
     </div>
 {:else}
     <div class={`rounded-md border border-border bg-background ${compact ? 'p-2.5' : 'p-3'}`}>
-        <!-- Legend + live readout + Split/Total toggle -->
+        <!-- Legend + live readout (Split/Total selector lives on the Position Bias view) -->
         <div class={`mb-2 flex items-center justify-between gap-2 ${compact ? 'text-[9px]' : 'text-[10px]'}`}>
             <div class="flex min-w-0 items-center gap-2.5">
                 {#if mode === 'total'}
@@ -132,42 +131,25 @@
                     <span class="text-muted-foreground">Vol</span>
                 </span>
             </div>
-            <div class="flex min-w-0 items-center gap-2">
-                {#if hovered != null && sorted[hovered]}
-                    {@const lv = sorted[hovered]}
-                    {#if mode === 'total'}
-                        <div class="truncate font-mono tabular-nums">
-                            <span class="font-semibold text-foreground">{fmtStrike(lv.strike)}</span>
-                            <span class="text-up">· OI {fmtK((lv.put_oi || 0) + (lv.call_oi || 0)) || 0}+Vol {fmtK((lv.put_volume || 0) + (lv.call_volume || 0)) || 0}</span>
-                        </div>
-                    {:else}
-                        <div class="truncate font-mono tabular-nums">
-                            <span class="font-semibold text-foreground">{fmtStrike(lv.strike)}</span>
-                            <span class="text-put">· P {fmtK(lv.put_oi) || 0}+{fmtK(lv.put_volume) || 0}</span>
-                            <span class="text-call">· C {fmtK(lv.call_oi) || 0}+{fmtK(lv.call_volume) || 0}</span>
-                        </div>
-                    {/if}
+            {#if hovered != null && sorted[hovered]}
+                {@const lv = sorted[hovered]}
+                {#if mode === 'total'}
+                    <div class="truncate font-mono tabular-nums">
+                        <span class="font-semibold text-foreground">{fmtStrike(lv.strike)}</span>
+                        <span class="text-up">· OI {fmtK((lv.put_oi || 0) + (lv.call_oi || 0)) || 0}+Vol {fmtK((lv.put_volume || 0) + (lv.call_volume || 0)) || 0}</span>
+                    </div>
                 {:else}
-                    <div class="truncate font-mono tabular-nums text-muted-foreground">
-                        Future <span class="font-semibold text-primary">{fmtStrike(futurePrice)}</span>
+                    <div class="truncate font-mono tabular-nums">
+                        <span class="font-semibold text-foreground">{fmtStrike(lv.strike)}</span>
+                        <span class="text-put">· P {fmtK(lv.put_oi) || 0}+{fmtK(lv.put_volume) || 0}</span>
+                        <span class="text-call">· C {fmtK(lv.call_oi) || 0}+{fmtK(lv.call_volume) || 0}</span>
                     </div>
                 {/if}
-                <div class="flex shrink-0 items-center gap-0.5 rounded border border-border bg-surface p-0.5">
-                    {#each [['split', 'Split'], ['total', 'Total']] as [key, label]}
-                        <button
-                            type="button"
-                            onclick={() => (mode = key)}
-                            class={cn(
-                                'rounded px-1.5 py-0.5 font-semibold uppercase tracking-wider transition-colors',
-                                compact ? 'text-[7px]' : 'text-[8px]',
-                                mode === key ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'
-                            )}
-                        >
-                            {label}
-                        </button>
-                    {/each}
+            {:else}
+                <div class="truncate font-mono tabular-nums text-muted-foreground">
+                    Future <span class="font-semibold text-primary">{fmtStrike(futurePrice)}</span>
                 </div>
-            </div>
+            {/if}
         </div>
 
         <!-- Plot area -->

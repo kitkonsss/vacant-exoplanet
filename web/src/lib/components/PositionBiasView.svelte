@@ -1,10 +1,15 @@
 <script>
     import Card from './ui/Card.svelte';
     import ContractCard from './ContractCard.svelte';
+    import { cn } from '$lib/utils.js';
 
     let { payload = null, loading = false } = $props();
 
     const contracts = $derived(payload?.contracts || []);
+
+    // One selector for the whole view: flip every contract's wall chart between
+    // split (Call/Put side-by-side) and total (combined Put+Call) at once.
+    let mode = $state('split'); // 'split' | 'total'
 </script>
 
 {#if loading}
@@ -22,9 +27,34 @@
         </p>
     </Card>
 {:else}
-    <div class="grid grid-cols-1 gap-4">
-        {#each contracts as contract (contract.contract_key)}
-            <ContractCard {contract} />
-        {/each}
+    <div class="flex flex-col gap-3">
+        <!-- View-level Split/Total selector — controls every wall chart below -->
+        <div class="flex flex-wrap items-center justify-between gap-3">
+            <div class="flex min-w-0 items-center gap-2.5">
+                <span class="h-3 w-1 rounded-sm bg-primary"></span>
+                <span class="text-[11px] font-semibold uppercase tracking-[0.16em] text-foreground">OI Walls</span>
+                <span class="text-[10px] text-muted-foreground">{contracts.length} contract{contracts.length === 1 ? '' : 's'}</span>
+            </div>
+            <div class="flex items-center gap-1 rounded-md border border-border bg-surface p-0.5">
+                {#each [['split', 'Call / Put'], ['total', 'Total']] as [key, label]}
+                    <button
+                        type="button"
+                        onclick={() => (mode = key)}
+                        class={cn(
+                            'rounded px-3 py-1 text-[10px] font-semibold uppercase tracking-wider transition-colors',
+                            mode === key ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'
+                        )}
+                    >
+                        {label}
+                    </button>
+                {/each}
+            </div>
+        </div>
+
+        <div class="grid grid-cols-1 gap-4">
+            {#each contracts as contract (contract.contract_key)}
+                <ContractCard {contract} {mode} />
+            {/each}
+        </div>
     </div>
 {/if}

@@ -4,7 +4,7 @@
     import OILadder from './OILadder.svelte';
     import { fmtNumber, fmtStrike, toneClasses } from '$lib/utils.js';
 
-    let { contract = null, compact = false } = $props();
+    let { contract = null, compact = false, mode = 'split' } = $props();
 
     const totals = $derived(contract?.totals || {});
     const walls = $derived(contract?.walls || {});
@@ -49,7 +49,7 @@
         </header>
 
         <!-- OI Ladder -->
-        <OILadder positionMap={contract?.position_map} futurePrice={contract?.future_price} {compact} />
+        <OILadder positionMap={contract?.position_map} futurePrice={contract?.future_price} {compact} {mode} />
 
         <!-- Metrics row -->
         <div class={`grid grid-cols-3 ${compact ? 'gap-1.5' : 'gap-2'}`}>
