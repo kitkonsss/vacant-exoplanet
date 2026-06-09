@@ -28,8 +28,9 @@
     const maxVal = $derived(mode === 'total' ? maxTotal : maxSplit);
 
     function hPct(v) {
-        // floor so even tiny walls show a sliver
-        return (v || 0) > 0 ? Math.max(((v || 0) / maxVal) * 100, 2) : 0;
+        // floor so even tiny walls show a sliver; cap at 85% to leave headroom
+        // above the tallest bar for its contract-count label.
+        return (v || 0) > 0 ? Math.max(((v || 0) / maxVal) * 85, 2) : 0;
     }
 
     function isKey(lv) {
@@ -77,23 +78,31 @@
     {@const v = vol || 0}
     {@const total = o + v}
     <div
-        class="flex w-full flex-col overflow-hidden rounded-t-sm"
-        style={`height:${hPct(total)}%;max-width:${tone === 'total' ? totalBarMax : barMax}`}
+        class="flex h-full flex-col items-center justify-end"
+        style={`max-width:${tone === 'total' ? totalBarMax : barMax}`}
     >
-        {#if v > 0}
-            <!-- intraday volume (today's flow) — solid shade, sits on top -->
-            <div
-                class={`transition-colors ${TONES[tone].solid}`}
-                style={`height:${total > 0 ? (v / total) * 100 : 0}%`}
-            ></div>
+        {#if total > 0}
+            <!-- contract count for this bar (OI + intraday volume), vertical so it fits the thin column -->
+            <span
+                class={`mb-0.5 font-mono leading-none text-muted-foreground [writing-mode:vertical-rl] rotate-180 ${compact ? 'text-[6px]' : 'text-[7px]'}`}
+            >{fmtK(total)}</span>
         {/if}
-        {#if o > 0}
-            <!-- open interest (the resting wall) — faded shade, sits at the base -->
-            <div
-                class={`transition-colors ${TONES[tone].faded}`}
-                style={`height:${total > 0 ? (o / total) * 100 : 0}%`}
-            ></div>
-        {/if}
+        <div class="flex w-full flex-col overflow-hidden rounded-t-sm" style={`height:${hPct(total)}%`}>
+            {#if v > 0}
+                <!-- intraday volume (today's flow) — solid shade, sits on top -->
+                <div
+                    class={`transition-colors ${TONES[tone].solid}`}
+                    style={`height:${total > 0 ? (v / total) * 100 : 0}%`}
+                ></div>
+            {/if}
+            {#if o > 0}
+                <!-- open interest (the resting wall) — faded shade, sits at the base -->
+                <div
+                    class={`transition-colors ${TONES[tone].faded}`}
+                    style={`height:${total > 0 ? (o / total) * 100 : 0}%`}
+                ></div>
+            {/if}
+        </div>
     </div>
 {/snippet}
 
