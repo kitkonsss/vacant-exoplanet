@@ -28,9 +28,9 @@
     const maxVal = $derived(mode === 'total' ? maxTotal : maxSplit);
 
     function hPct(v) {
-        // floor so even tiny walls show a sliver; cap at 85% to leave headroom
-        // above the tallest bar for its contract-count label.
-        return (v || 0) > 0 ? Math.max(((v || 0) / maxVal) * 85, 2) : 0;
+        // floor so even tiny walls show a sliver; cap at 80% to leave headroom
+        // above the tallest bar for its (now larger) contract-count label.
+        return (v || 0) > 0 ? Math.max(((v || 0) / maxVal) * 80, 2) : 0;
     }
 
     function isKey(lv) {
@@ -61,10 +61,10 @@
 
     let hovered = $state(null);
 
-    const chartHeight = $derived(compact ? 120 : 172);
-    const barMax = $derived(compact ? '8px' : '11px');
-    const totalBarMax = $derived(compact ? '12px' : '16px');
-    const labelSize = $derived(compact ? 'text-[7px]' : 'text-[8px]');
+    const chartHeight = $derived(compact ? 160 : 230);
+    const barMax = $derived(compact ? '12px' : '18px');
+    const totalBarMax = $derived(compact ? '20px' : '30px');
+    const labelSize = $derived(compact ? 'text-[8px]' : 'text-[9px]');
 
     const TONES = {
         call: { solid: 'bg-call/90 group-hover:bg-call', faded: 'bg-call/35 group-hover:bg-call/55' },
@@ -84,7 +84,7 @@
         {#if total > 0}
             <!-- contract count for this bar (OI + intraday volume), vertical so it fits the thin column -->
             <span
-                class={`mb-0.5 font-mono leading-none text-muted-foreground [writing-mode:vertical-rl] rotate-180 ${compact ? 'text-[6px]' : 'text-[7px]'}`}
+                class={`mb-0.5 font-mono font-semibold leading-none tabular-nums text-foreground/75 [writing-mode:vertical-rl] rotate-180 ${compact ? 'text-[8px]' : 'text-[10px]'}`}
             >{fmtK(total)}</span>
         {/if}
         <div class="flex w-full flex-col overflow-hidden rounded-t-sm" style={`height:${hPct(total)}%`}>
