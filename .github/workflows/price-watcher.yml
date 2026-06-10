@@ -50,18 +50,18 @@ jobs:
         TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
       run: python scraper/price_watcher.py
 
-    - name: Commit watcher state
-      # Persists alert-dedupe state so the same level doesn't re-alert all day.
+    - name: Commit watcher state + signal log
+      # Persists alert-dedupe state and the Phase-4 signal log (input for
+      # signal_eval.py scoring, which runs hourly in macro.yml).
       run: |
         git config --global user.name "github-actions[bot]"
         git config --global user.email "github-actions[bot]@users.noreply.github.com"
         branch="${GITHUB_REF_NAME:-main}"
 
-        if git diff --quiet data/watcher_state.json 2>/dev/null && \
-           git ls-files --error-unmatch data/watcher_state.json >/dev/null 2>&1; then
+        if [ -z "$(git status --porcelain data/watcher_state.json data/signal_log.json)" ]; then
           echo "No state changes to commit"
         else
-          git add data/watcher_state.json
+          git add data/watcher_state.json data/signal_log.json
           git commit -m "Update price watcher state [skip ci]" || exit 0
           git pull --rebase origin "$branch"
           git push origin HEAD:"$branch"

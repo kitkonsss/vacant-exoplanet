@@ -35,6 +35,7 @@ if sys.stdout.encoding and sys.stdout.encoding.lower() not in ('utf-8', 'utf8'):
 REPO_ROOT = Path(__file__).resolve().parent.parent
 STRATEGY_PATH = REPO_ROOT / 'data' / 'daily_strategy.json'
 STATE_PATH = REPO_ROOT / 'data' / 'watcher_state.json'
+SIGNAL_LOG_PATH = REPO_ROOT / 'data' / 'signal_log.json'
 
 YAHOO_SYMBOL = 'GC=F'
 STALE_HOURS = 36          # strategy older than this -> warn, don't signal
@@ -214,8 +215,34 @@ def bias_line(strategy):
             f"regime: {regime.get('regime', '?')} → {regime.get('lead_playbook', '?')}")
 
 
+def _signal_record(it, price, strategy, direction):
+    """Structured record of a fired signal, for Phase 4 self-eval."""
+    return {
+        'ts': utcnow().isoformat(timespec='seconds'),
+        'kind': it['kind'],
+        'level': it['level'],
+        'direction': direction,                 # long / short / None (approach)
+        'price_at_alert': price,
+        'target': it.get('target'),
+        'invalidation': it.get('invalidation'),
+        'label': it.get('label'),
+        'bias': (strategy.get('directional_bias') or {}).get('label'),
+        'regime': (strategy.get('regime') or {}).get('regime'),
+        'strategy_ts': strategy.get('generated_at'),
+        'status': 'open' if it['kind'] != 'approach' else 'info',
+    }
+
+
+def log_signal(record):
+    log = load_json(SIGNAL_LOG_PATH) or []
+    log.append(record)
+    SIGNAL_LOG_PATH.write_text(json.dumps(log, indent=2, ensure_ascii=False) + '\n',
+                               encoding='utf-8')
+
+
 def check_items(price, items, atr, strategy, state):
-    """Evaluate all watch items against the current price; return alert messages."""
+    """Evaluate all watch items against the current price; return alerts as
+    (dedupe_key, message_text, signal_record) tuples."""
     msgs = []
     day = utcnow().strftime('%Y-%m-%d')
     foot = f"\n{bias_line(strategy)}\n<i>สัญญาณจากระบบ ไม่ใช่คำแนะนำการลงทุน</i>"
@@ -238,7 +265,9 @@ def check_items(price, items, atr, strategy, state):
                     lines.append(f"เป้า: {fmt(tp) if tp else '-'} | Invalidation: {fmt(sl) if sl else '-'}")
                 if it['extra']:
                     lines.append(it['extra'])
-                msgs.append((key, '\n'.join(lines) + foot))
+                direction = 'long' if it['side'] == 'above' else 'short'
+                msgs.append((key, '\n'.join(lines) + foot,
+                             _signal_record(it, price, strategy, direction)))
 
         elif it['kind'] == 'zone_touch':
             if abs(price - level) <= max(3.0, ZONE_TOUCH_ATR * atr):
@@ -250,7 +279,9 @@ def check_items(price, items, atr, strategy, state):
                     lines.append(f"Confluence: {it['extra']}")
                 if not it.get('aligned', True):
                     lines.append('⚠️ โซน MR สวน regime วันนี้ — ลดขนาด/รอ confirm')
-                msgs.append((key, '\n'.join(lines) + foot))
+                direction = 'long' if 'long' in it.get('action', '') else 'short'
+                msgs.append((key, '\n'.join(lines) + foot,
+                             _signal_record(it, price, strategy, direction)))
 
         elif it['kind'] == 'approach':
             dist = abs(price - level)
@@ -258,7 +289,8 @@ def check_items(price, items, atr, strategy, state):
                 side_txt = 'เหนือราคา' if level > price else 'ใต้ราคา'
                 msgs.append((key,
                              f"⚠️ <b>GC เข้าใกล้ level {fmt(level)}</b> ({it['label']}, {side_txt} {fmt(dist)} pts)\n"
-                             f"ราคา {fmt(price)}\nSources: {it['extra']}" + foot))
+                             f"ราคา {fmt(price)}\nSources: {it['extra']}" + foot,
+                             _signal_record(it, price, strategy, None)))
 
     return msgs
 
@@ -308,9 +340,11 @@ def main():
     print(f'[WATCH] watching {len(items)} items (ATR {atr})')
     msgs = check_items(price, items, atr, strategy, state)
 
-    for key, text in msgs:
+    for key, text, record in msgs:
         if send_telegram(text, dry_run=args.dry_run):
             mark_alerted(state, key)
+            if not args.dry_run:
+                log_signal(record)
 
     state['last_price'] = price
     save_state(state)

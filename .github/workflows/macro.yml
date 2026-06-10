@@ -62,17 +62,25 @@ jobs:
       run: python scraper/strategy_fetch.py --asset all
       continue-on-error: true
 
+    - name: Score fired signals (Phase 4 self-eval)
+      # Resolves open entries in data/signal_log.json against 15m candles ->
+      # win/loss/expired + data/signal_scorecard.json win-rate aggregates.
+      run: python scraper/signal_eval.py
+      continue-on-error: true
+
     - name: Commit and push changes
       run: |
         git config --global user.name "github-actions[bot]"
         git config --global user.email "github-actions[bot]@users.noreply.github.com"
         branch="${GITHUB_REF_NAME:-main}"
 
-        if git diff --quiet data/; then
+        # porcelain so brand-new files (first signal_log/scorecard) count too
+        if [ -z "$(git status --porcelain data/)" ]; then
           echo "No changes to commit in data/"
         else
           git add data/macro.json data/cot.json data/vwap.json data/daily_strategy.json \
-                  data/expected_range.json data/nq/cot.json data/nq/daily_strategy.json
+                  data/expected_range.json data/signal_log.json data/signal_scorecard.json \
+                  data/nq/cot.json data/nq/daily_strategy.json
           git commit -m "Auto-update macro + COT + VWAP + strategy [skip ci]"
           git pull --rebase origin "$branch"
           git push origin HEAD:"$branch"
