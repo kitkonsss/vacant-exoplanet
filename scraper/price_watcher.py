@@ -265,6 +265,7 @@ def _signal_record(it, price, strategy, direction):
         'target': it.get('target'),
         'invalidation': it.get('invalidation'),
         'label': it.get('label'),
+        'context': it.get('extra') or None,
         'bias': (strategy.get('directional_bias') or {}).get('label'),
         'regime': (strategy.get('regime') or {}).get('regime'),
         'strategy_ts': strategy.get('generated_at'),

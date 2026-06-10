@@ -66,6 +66,13 @@ jobs:
       # just scraped above (stdlib only, no extra navigation).
       run: python scraper/expected_range_fetch.py || true
 
+    - name: Analyze intraday option flow
+      # Phase 2a: snapshot the intraday volumes just scraped and difference
+      # against the rolling history -> data/option_flow.json (flow velocity,
+      # magnet, wall attack/defense). Runs in BOTH modes - light runs are the
+      # whole point (10-min flow resolution).
+      run: python scraper/flow_analyze.py || true
+
     - name: Rebuild daily strategy with fresh positioning
       # Refresh levels immediately after the scrape so the price watcher acts on
       # current walls instead of waiting for the next macro.yml cycle.

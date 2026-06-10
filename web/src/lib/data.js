@@ -1,4 +1,4 @@
-import { CONTRACT_OPTIONS, briefUrl, cotUrl, expectedRangeUrl, gammaHeatmapUrl, heatmapUrl, macroUrl, oiDataUrl, positionBiasUrl, signalLogUrl, signalScorecardUrl, strategyUrl } from './config.js';
+import { CONTRACT_OPTIONS, briefUrl, cotUrl, expectedRangeUrl, gammaHeatmapUrl, heatmapUrl, macroUrl, oiDataUrl, optionFlowUrl, positionBiasUrl, signalLogUrl, signalScorecardUrl, strategyUrl } from './config.js';
 import { parseOIData } from './vol2vol.js';
 
 async function fetchJsonSoft(url) {
@@ -99,10 +99,11 @@ export async function fetchBrief(assetId) {
  * pipeline hasn't produced it yet (e.g. no signals fired).
  */
 export async function fetchSignals(assetId) {
-    const [expectedRange, log, scorecard] = await Promise.all([
+    const [expectedRange, log, scorecard, optionFlow] = await Promise.all([
         fetchJsonSoft(expectedRangeUrl(assetId)),
         fetchJsonSoft(signalLogUrl(assetId)),
-        fetchJsonSoft(signalScorecardUrl(assetId))
+        fetchJsonSoft(signalScorecardUrl(assetId)),
+        fetchJsonSoft(optionFlowUrl(assetId))
     ]);
-    return { expectedRange, log: Array.isArray(log) ? log : [], scorecard };
+    return { expectedRange, log: Array.isArray(log) ? log : [], scorecard, optionFlow };
 }

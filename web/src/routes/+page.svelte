@@ -343,6 +343,7 @@
                             expectedRange={signals?.expectedRange}
                             log={signals?.log || []}
                             scorecard={signals?.scorecard}
+                            optionFlow={signals?.optionFlow}
                             loading={signalsLoading}
                         />
                     </div>

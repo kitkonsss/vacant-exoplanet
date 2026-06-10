@@ -460,6 +460,31 @@ def _score_from_flow(flow):
     return round(_clamp((sup - res) / total * 45, -45, 45), 1)
 
 
+def load_option_flow(asset_id, max_age_h=2):
+    """Phase 2a intraday flow (flow_analyze.py). Returns (score, summary) —
+    score scaled like the other layers (±45) from the 1h above/below-spot
+    imbalance, or (None, None) when stale/thin/warming up."""
+    of = _load_json(os.path.join(_data_dir(asset_id), 'option_flow.json'))
+    if not of:
+        return None, None
+    try:
+        age_h = (datetime.now(timezone.utc)
+                 - datetime.fromisoformat(of['generated_at'])).total_seconds() / 3600
+    except (KeyError, TypeError, ValueError):
+        return None, None
+    summary = {
+        'generated_at': of.get('generated_at'),
+        'imbalance_1h': of.get('imbalance_1h'),
+        'flow_magnet_1h': of.get('flow_magnet_1h'),
+        'wall_activity_1h': (of.get('wall_activity_1h') or [])[:3],
+        'note': of.get('method'),
+    }
+    imb = of.get('imbalance_1h') or {}
+    if age_h > max_age_h or imb.get('label') in (None, 'thin'):
+        return None, summary
+    return round(_clamp(float(imb['score']) * 4.5, -45, 45), 1), summary
+
+
 def build_key_levels(contracts, price):
     """Gather wall strikes from all tenors into nearest supports/resistances + magnet."""
     if not price:
@@ -684,6 +709,11 @@ def build_strategy(asset_id):
         # Keep the old 3-layer score dominant, but let fresh heatmap build-up nudge
         # the read because this is the fastest options-positioning signal we have.
         parts.append((flow_score, 0.15))
+    of_score, option_flow_summary = load_option_flow(asset_id)
+    if of_score:
+        # Phase 2a intraday flow — fresher than the heatmap (10-min snapshots)
+        # but unsigned volume, so it gets the smallest voice in the blend.
+        parts.append((of_score, 0.10))
     wsum = sum(w for _, w in parts) or 1.0
     blended = round(sum(s * w for s, w in parts) / wsum, 1)
     label = _label_from_score(blended)
@@ -972,6 +1002,7 @@ def build_strategy(asset_id):
         'agreement': {'bullish_layers': bull, 'bearish_layers': bear, 'aligned': agree, 'total': total},
         'regime': regime,
         'expected_range': expected_range,
+        'option_flow': option_flow_summary,
         'vwap': None if not vwap else {
             'daily': vwap.get('daily'),
             'weekly_vwap': (vwap.get('weekly') or {}).get('vwap'),

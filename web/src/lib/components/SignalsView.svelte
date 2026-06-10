@@ -2,11 +2,22 @@
     import Card from './ui/Card.svelte';
     import Badge from './ui/Badge.svelte';
 
-    let { expectedRange = null, log = [], scorecard = null, loading = false } = $props();
+    let { expectedRange = null, log = [], scorecard = null, optionFlow = null, loading = false } = $props();
 
     const er = $derived(expectedRange);
     const tenors = $derived(er?.tenors || []);
     const bands = $derived(er?.bands_1d || null);
+
+    const flow = $derived(optionFlow);
+    const flow1h = $derived(flow?.windows?.last_1h || null);
+    const flowImb = $derived(flow?.imbalance_1h || null);
+    const flowMagnet = $derived(flow?.flow_magnet_1h || null);
+    const flowWalls = $derived(flow?.wall_activity_1h || []);
+    function imbVariant(label) {
+        if (label === 'upside_flow') return 'up';
+        if (label === 'downside_flow') return 'down';
+        return 'muted';
+    }
 
     // Newest first; signal_eval appends statuses in place.
     const recent = $derived([...log].reverse().slice(0, 50));
@@ -137,6 +148,102 @@
             </Card>
         {/if}
 
+        <!-- ===== Intraday option flow (Phase 2a) ===== -->
+        <Card class="p-4">
+            <div class="flex flex-wrap items-center justify-between gap-3">
+                <div class="flex flex-wrap items-center gap-3">
+                    <span class="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                        Intraday Option Flow — 1h
+                    </span>
+                    {#if flowImb}
+                        <Badge variant={imbVariant(flowImb.label)}>{flowImb.label}</Badge>
+                        {#if flowImb.score != null}
+                            <span class="font-mono text-sm tabular-nums {flowImb.score > 0 ? 'text-up' : flowImb.score < 0 ? 'text-down' : 'text-muted-foreground'}">
+                                {flowImb.score > 0 ? '+' : ''}{flowImb.score}
+                            </span>
+                        {/if}
+                    {/if}
+                </div>
+                {#if flow?.generated_at}
+                    <span class="font-mono text-[10px] text-muted-foreground">{new Date(flow.generated_at).toLocaleString()}</span>
+                {/if}
+            </div>
+
+            {#if flow1h}
+                <div class="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
+                    <div class="rounded-md border border-border bg-background p-3 text-center">
+                        <div class="text-[10px] font-semibold uppercase text-muted-foreground">Calls Added</div>
+                        <div class="font-mono text-xl tabular-nums text-call">+{fmt(flow1h.call_added, 0)}</div>
+                    </div>
+                    <div class="rounded-md border border-border bg-background p-3 text-center">
+                        <div class="text-[10px] font-semibold uppercase text-muted-foreground">Puts Added</div>
+                        <div class="font-mono text-xl tabular-nums text-put">+{fmt(flow1h.put_added, 0)}</div>
+                    </div>
+                    <div class="rounded-md border border-border bg-background p-3 text-center">
+                        <div class="text-[10px] font-semibold uppercase text-muted-foreground">Above / Below Spot</div>
+                        <div class="font-mono text-xl tabular-nums text-foreground">{fmt(flow1h.added_above_spot, 0)} / {fmt(flow1h.added_below_spot, 0)}</div>
+                    </div>
+                    <div class="rounded-md border border-border bg-background p-3 text-center">
+                        <div class="text-[10px] font-semibold uppercase text-muted-foreground">Flow Magnet</div>
+                        <div class="font-mono text-xl tabular-nums {flowMagnet?.side === 'above' ? 'text-up' : 'text-down'}">
+                            {flowMagnet ? fmt(flowMagnet.strike) : '—'}
+                        </div>
+                    </div>
+                </div>
+
+                {#if flowWalls.length}
+                    <div class="mt-3">
+                        <div class="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Flow hitting strategy walls</div>
+                        <div class="mt-1.5 overflow-x-auto">
+                            <table class="w-full text-left text-xs">
+                                <thead>
+                                    <tr class="border-b border-border text-[10px] uppercase tracking-wider text-muted-foreground">
+                                        <th class="py-1.5 pr-3 text-right">Wall</th>
+                                        <th class="py-1.5 pr-3 text-right">Added 1h</th>
+                                        <th class="py-1.5 pr-3 text-right">Share</th>
+                                        <th class="py-1.5 pr-3">Side</th>
+                                        <th class="py-1.5">Sources</th>
+                                    </tr>
+                                </thead>
+                                <tbody class="font-mono tabular-nums">
+                                    {#each flowWalls as w}
+                                        <tr class="border-b border-border/50">
+                                            <td class="py-1.5 pr-3 text-right font-semibold">{fmt(w.strike)}</td>
+                                            <td class="py-1.5 pr-3 text-right">+{fmt(w.added, 0)}</td>
+                                            <td class="py-1.5 pr-3 text-right">{w.share_pct}%</td>
+                                            <td class="py-1.5 pr-3 {w.side === 'above' ? 'text-up' : 'text-down'}">{w.side} ({w.distance_points > 0 ? '+' : ''}{fmt(w.distance_points)})</td>
+                                            <td class="py-1.5 text-muted-foreground">×{w.confluence}: {(w.sources || []).join(', ')}</td>
+                                        </tr>
+                                    {/each}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                {/if}
+
+                {#if flow1h.top_strikes?.length}
+                    <div class="mt-3">
+                        <div class="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Most active strikes (1h)</div>
+                        <div class="mt-1.5 flex flex-wrap gap-2">
+                            {#each flow1h.top_strikes.slice(0, 6) as t}
+                                <div class="rounded-md border border-border bg-background px-2.5 py-1.5 font-mono text-xs tabular-nums">
+                                    <span class="font-semibold">{fmt(t.strike)}</span>
+                                    <span class="text-muted-foreground">({t.contract})</span>
+                                    {#if t.call_added}<span class="text-call"> +{fmt(t.call_added, 0)}C</span>{/if}
+                                    {#if t.put_added}<span class="text-put"> +{fmt(t.put_added, 0)}P</span>{/if}
+                                </div>
+                            {/each}
+                        </div>
+                    </div>
+                {/if}
+            {:else}
+                <p class="mt-2 text-sm text-muted-foreground">
+                    Warming up — flow needs at least an hour of intraday snapshots
+                    ({flow?.snapshots_in_history ?? 0} stored so far at ~10-min cadence).
+                </p>
+            {/if}
+        </Card>
+
         <!-- ===== Scorecard ===== -->
         <Card class="p-4">
             <div class="flex flex-wrap items-center justify-between gap-3">
@@ -208,10 +315,12 @@
                                 <th class="py-1.5 pr-3">Kind</th>
                                 <th class="py-1.5 pr-3">Dir</th>
                                 <th class="py-1.5 pr-3 text-right">Level</th>
+                                <th class="py-1.5 pr-3 text-right">Price@Alert</th>
                                 <th class="py-1.5 pr-3 text-right">Target</th>
                                 <th class="py-1.5 pr-3 text-right">Invalid.</th>
                                 <th class="py-1.5 pr-3">Status</th>
-                                <th class="py-1.5 text-right">MFE</th>
+                                <th class="py-1.5 pr-3 text-right">MFE</th>
+                                <th class="py-1.5">Context</th>
                             </tr>
                         </thead>
                         <tbody class="font-mono tabular-nums">
@@ -223,10 +332,14 @@
                                         {s.direction || '—'}
                                     </td>
                                     <td class="py-1.5 pr-3 text-right">{fmt(s.level)}</td>
+                                    <td class="py-1.5 pr-3 text-right">{fmt(s.price_at_alert)}</td>
                                     <td class="py-1.5 pr-3 text-right">{fmt(s.target)}</td>
                                     <td class="py-1.5 pr-3 text-right">{fmt(s.invalidation)}</td>
                                     <td class="py-1.5 pr-3"><Badge variant={statusMeta[s.status]?.variant || 'muted'}>{statusMeta[s.status]?.label || s.status}</Badge></td>
-                                    <td class="py-1.5 text-right text-muted-foreground">{s.mfe_points != null ? fmt(s.mfe_points) : '—'}</td>
+                                    <td class="py-1.5 pr-3 text-right text-muted-foreground">{s.mfe_points != null ? fmt(s.mfe_points) : '—'}</td>
+                                    <td class="py-1.5 max-w-64 truncate text-muted-foreground" title={[s.label, s.context, s.bias && `bias: ${s.bias}`, s.regime && `regime: ${s.regime}`].filter(Boolean).join(' · ')}>
+                                        {[s.label, s.context].filter(Boolean).join(' · ') || '—'}
+                                    </td>
                                 </tr>
                             {/each}
                         </tbody>

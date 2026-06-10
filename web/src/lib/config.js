@@ -96,3 +96,9 @@ export function signalLogUrl(assetId) {
 export function signalScorecardUrl(assetId) {
     return dataUrl(assetId, 'signal_scorecard.json');
 }
+
+// Phase 2a intraday option flow — snapshot deltas of the Vol2Vol intraday
+// volumes (flow velocity / magnet / wall activity), from flow_analyze.py.
+export function optionFlowUrl(assetId) {
+    return dataUrl(assetId, 'option_flow.json');
+}
