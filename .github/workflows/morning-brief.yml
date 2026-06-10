@@ -1,0 +1,75 @@
+name: Morning Brief
+
+# 06:00 Thai-morning Telegram summary of the day's GC strategy.
+#
+# OI only publishes once per CME day (~midday Thai), so there is no fresh OI
+# to scrape at dawn. Instead this refreshes everything that DOES move
+# overnight (price / macro / VWAP) with the light stdlib fetchers, rebuilds
+# the strategy on last night's OI, then sends the brief. expected_range_fetch
+# drops tenors whose contracts expired overnight, and the message states the
+# OI vintage explicitly.
+#
+# GitHub cron can lag 10-30 min; for a punctual 06:00 point cron-job.org at
+# the workflow_dispatch API instead (same pattern as scrape.yml).
+
+on:
+  workflow_dispatch:
+  schedule:
+    # 22:45 UTC = 05:45 ICT next day, Sun-Thu UTC = Mon-Fri Thai mornings.
+    # Slightly early so the brief lands near 06:00 despite scheduler lag.
+    - cron: '45 22 * * 0-4'
+
+concurrency:
+  group: morning-brief
+  cancel-in-progress: false
+
+jobs:
+  brief:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install yfinance
+
+    - name: Refresh overnight data (macro / VWAP / IV / strategy)
+      run: |
+        python scraper/macro_fetch.py || true
+        python scraper/vwap_fetch.py || true
+        python scraper/expected_range_fetch.py || true
+        python scraper/strategy_fetch.py --asset gc || true
+
+    - name: Send morning brief
+      env:
+        TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+        TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+      run: python scraper/morning_brief.py
+
+    - name: Commit refreshed data
+      run: |
+        git config --global user.name "github-actions[bot]"
+        git config --global user.email "github-actions[bot]@users.noreply.github.com"
+        branch="${GITHUB_REF_NAME:-main}"
+
+        if [ -z "$(git status --porcelain data/)" ]; then
+          echo "No data changes to commit"
+        else
+          git add data/macro.json data/vwap.json data/expected_range.json data/daily_strategy.json
+          git commit -m "Morning brief data refresh [skip ci]" || exit 0
+          git pull --rebase origin "$branch"
+          git push origin HEAD:"$branch"
+        fi

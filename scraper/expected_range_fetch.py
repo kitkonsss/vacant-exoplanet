@@ -88,10 +88,24 @@ def interp_iv(smile, strike):
     return None
 
 
+def _is_expired(expiration):
+    """True if the contract's expiry has passed. GC daily/weekly options stop
+    trading 12:30 CT (~17:30 UTC); scraped data can outlive the contract when
+    the morning pipeline runs before the day's new scrape."""
+    try:
+        m, d, y = (int(x) for x in str(expiration).split('/'))
+        expiry = datetime(y, m, d, 17, 30, tzinfo=timezone.utc)
+    except (TypeError, ValueError):
+        return False
+    return datetime.now(timezone.utc) > expiry
+
+
 def build_tenor(key, parsed):
     f, dte = parsed['future_price'], parsed['dte']
     atm_iv = interp_iv(parsed['smile'], f)
     if atm_iv is None or dte is None or dte <= 0:
+        return None
+    if _is_expired(parsed.get('expiration')):
         return None
     move_1sd = f * atm_iv * math.sqrt(dte / 365.0)
     bands = {}
@@ -144,6 +158,8 @@ def main():
             tenors.append(t)
             print(f"[ER] {key} {t['symbol']}: DTE {t['dte']} | ATM IV {t['atm_iv_pct']}% "
                   f"| 1SD to expiry ±{t['expected_move_to_expiry']}")
+        elif _is_expired(parsed.get('expiration')):
+            print(f"[ER] {key} {parsed.get('symbol')}: expired {parsed.get('expiration')} — skipped")
 
     if not tenors:
         print('[ER] no tenors parsed — nothing to write')
