@@ -14,9 +14,16 @@ name: Morning Brief
 
 on:
   workflow_dispatch:
+    inputs:
+      send_message:
+        description: 'Also send the Telegram brief (off by default — user opted out)'
+        type: boolean
+        default: false
   schedule:
     # 22:45 UTC = 05:45 ICT next day, Sun-Thu UTC = Mon-Fri Thai mornings.
-    # Slightly early so the brief lands near 06:00 despite scheduler lag.
+    # Scheduled runs only refresh the overnight data (price/macro/VWAP/IV/
+    # strategy) so the watcher starts the Thai morning on fresh levels —
+    # the Telegram message itself is opt-in via workflow_dispatch.
     - cron: '45 22 * * 0-4'
 
 concurrency:
@@ -54,6 +61,9 @@ jobs:
         python scraper/strategy_fetch.py --asset gc || true
 
     - name: Send morning brief
+      # Telegram message is opt-in only (user stopped reading it); scheduled
+      # runs skip this and just keep the dawn data refresh above.
+      if: inputs.send_message == true
       env:
         TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
         TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
