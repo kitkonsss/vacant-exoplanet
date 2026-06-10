@@ -8,9 +8,10 @@
     import MacroView from '$lib/components/MacroView.svelte';
     import StrategyView from '$lib/components/StrategyView.svelte';
     import Vol2VolView from '$lib/components/Vol2VolView.svelte';
-    import { fetchGammaHeatmap, fetchHeatmap, fetchPositionBias, fetchMacro, fetchCot, fetchStrategy, fetchBrief, fetchOIData } from '$lib/data.js';
+    import SignalsView from '$lib/components/SignalsView.svelte';
+    import { fetchGammaHeatmap, fetchHeatmap, fetchPositionBias, fetchMacro, fetchCot, fetchStrategy, fetchBrief, fetchOIData, fetchSignals } from '$lib/data.js';
     import { ASSET_PROFILES, DEFAULT_CONTRACT_KEY } from '$lib/config.js';
-    import { LineChart, Grid3X3, Activity, Landmark, Compass, Sigma } from 'lucide-svelte';
+    import { LineChart, Grid3X3, Activity, Landmark, Compass, Sigma, Radio } from 'lucide-svelte';
 
     let asset = $state('gc');
     let activeTab = $state('strategy');
@@ -49,6 +50,10 @@
     let brief = $state(null);          // LLM narrative brief (markdown)
     let strategyLoading = $state(false);
 
+    // Signals tab: IV expected range + fired-signal log + win/loss scorecard.
+    let signals = $state(null);
+    let signalsLoading = $state(false);
+
     const profile = $derived(ASSET_PROFILES[asset]);
     const availableContractKeys = $derived(
         (payload?.contracts || []).map((contract) => contract.contract_key)
@@ -56,6 +61,7 @@
 
     const tabs = [
         { key: 'strategy',   label: 'Daily Strategy', tone: 'warn',   icon: Compass },
+        { key: 'signals',    label: 'Signals',       tone: 'warn',    icon: Radio },
         { key: 'vol2vol',    label: 'Vol2Vol',       tone: 'mag',     icon: Sigma },
         { key: 'analysis',   label: 'Position Bias', tone: 'primary', icon: LineChart },
         { key: 'heatmap',    label: 'OI Heatmap',    tone: 'mag',     icon: Grid3X3 },
@@ -170,6 +176,15 @@
         }
     }
 
+    async function ensureSignals() {
+        signalsLoading = true;
+        try {
+            signals = await fetchSignals(asset);
+        } finally {
+            signalsLoading = false;
+        }
+    }
+
     async function refresh() {
         if (refreshing) return;
         refreshing = true;
@@ -188,6 +203,8 @@
                 await ensureMacro({ force: true });
             } else if (activeTab === 'strategy') {
                 await ensureStrategy();
+            } else if (activeTab === 'signals') {
+                await ensureSignals();
             }
         } finally {
             refreshing = false;
@@ -239,6 +256,8 @@
             void ensureMacro();
         } else if (key === 'strategy') {
             void ensureStrategy();
+        } else if (key === 'signals') {
+            void ensureSignals();
         }
     }
 
@@ -274,6 +293,8 @@
                     void ensureMacro();   // refetch COT for the new asset (macro is shared/cached)
                 } else if (activeTab === 'strategy') {
                     void ensureStrategy();
+                } else if (activeTab === 'signals') {
+                    void ensureSignals();
                 }
             });
         });
@@ -296,6 +317,8 @@
                 ? 'Macro · COT'
             : activeTab === 'strategy'
                 ? 'Daily Strategy'
+            : activeTab === 'signals'
+                ? 'Signals · Self-Eval'
                 : visibleContract?.contract || ''}
         price={visibleContract?.future_price}
         dte={visibleContract?.dte}
@@ -313,6 +336,15 @@
                 {#if activeTab === 'strategy'}
                     <div class="flex flex-col gap-4 overflow-y-auto">
                         <StrategyView {strategy} {brief} loading={strategyLoading} />
+                    </div>
+                {:else if activeTab === 'signals'}
+                    <div class="flex flex-col gap-4 overflow-y-auto">
+                        <SignalsView
+                            expectedRange={signals?.expectedRange}
+                            log={signals?.log || []}
+                            scorecard={signals?.scorecard}
+                            loading={signalsLoading}
+                        />
                     </div>
                 {:else if activeTab === 'analysis'}
                     <div class="flex flex-col gap-4 overflow-y-auto">
@@ -372,6 +404,7 @@
             : activeTab === 'vol2vol' ? 'Vol2Vol · SD / OI'
             : activeTab === 'macro' ? 'Macro / COT'
             : activeTab === 'strategy' ? 'Daily Strategy'
+            : activeTab === 'signals' ? 'Signals · Self-Eval'
             : 'Position Bias'}
     />
 </div>

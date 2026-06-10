@@ -1,4 +1,4 @@
-import { CONTRACT_OPTIONS, briefUrl, cotUrl, gammaHeatmapUrl, heatmapUrl, macroUrl, oiDataUrl, positionBiasUrl, strategyUrl } from './config.js';
+import { CONTRACT_OPTIONS, briefUrl, cotUrl, expectedRangeUrl, gammaHeatmapUrl, heatmapUrl, macroUrl, oiDataUrl, positionBiasUrl, signalLogUrl, signalScorecardUrl, strategyUrl } from './config.js';
 import { parseOIData } from './vol2vol.js';
 
 async function fetchJsonSoft(url) {
@@ -91,4 +91,18 @@ export async function fetchStrategy(assetId) {
  */
 export async function fetchBrief(assetId) {
     return fetchTextSoft(briefUrl(assetId));
+}
+
+/**
+ * Fetches everything the Signals tab shows: the IV-based expected range,
+ * the fired-signal log, and the win/loss scorecard. Each may be null if the
+ * pipeline hasn't produced it yet (e.g. no signals fired).
+ */
+export async function fetchSignals(assetId) {
+    const [expectedRange, log, scorecard] = await Promise.all([
+        fetchJsonSoft(expectedRangeUrl(assetId)),
+        fetchJsonSoft(signalLogUrl(assetId)),
+        fetchJsonSoft(signalScorecardUrl(assetId))
+    ]);
+    return { expectedRange, log: Array.isArray(log) ? log : [], scorecard };
 }

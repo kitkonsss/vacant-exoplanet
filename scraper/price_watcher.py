@@ -299,7 +299,19 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--dry-run', action='store_true', help='print alerts instead of sending')
     ap.add_argument('--price', type=float, default=None, help='override live price (testing)')
+    ap.add_argument('--test-message', action='store_true',
+                    help='send a Telegram connectivity test message and exit')
     args = ap.parse_args()
+
+    if args.test_message:
+        price = fetch_price()
+        ok = send_telegram(
+            '✅ <b>GC Price Watcher — ทดสอบการเชื่อมต่อ</b>\n'
+            f'ระบบส่งสัญญาณทำงานปกติ | ราคาตอนนี้ {fmt(price) if price else "n/a"}\n'
+            '<i>ข้อความนี้มาจากปุ่ม Run workflow (test_message)</i>',
+            dry_run=args.dry_run)
+        print(f'[WATCH] test message sent ok={ok}')
+        return 0 if ok else 1
 
     # GC closes Fri 21:00 UTC, reopens Sun 22:00 UTC — Saturday is always dead.
     if utcnow().weekday() == 5:

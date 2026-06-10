@@ -16,6 +16,11 @@ name: Price Watcher
 
 on:
   workflow_dispatch:
+    inputs:
+      test_message:
+        description: 'Send a Telegram connectivity test message'
+        type: boolean
+        default: false
   schedule:
     - cron: '*/15 * * * 0-5'   # every 15 min, Sun-Fri (GC is closed Saturday)
 
@@ -48,7 +53,7 @@ jobs:
       env:
         TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
         TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-      run: python scraper/price_watcher.py
+      run: python scraper/price_watcher.py ${{ inputs.test_message && '--test-message' || '' }}
 
     - name: Commit watcher state + signal log
       # Persists alert-dedupe state and the Phase-4 signal log (input for

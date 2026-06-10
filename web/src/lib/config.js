@@ -81,3 +81,18 @@ export function strategyUrl(assetId) {
 export function briefUrl(assetId) {
     return dataUrl(assetId, 'daily_brief.md');
 }
+
+// IV-based expected range (ATM IV / SD bands / term structure / skew) —
+// computed by scraper/expected_range_fetch.py from the Vol2Vol smile.
+export function expectedRangeUrl(assetId) {
+    return dataUrl(assetId, 'expected_range.json');
+}
+
+// Entry signals fired by the price watcher + their win/loss self-eval.
+export function signalLogUrl(assetId) {
+    return dataUrl(assetId, 'signal_log.json');
+}
+
+export function signalScorecardUrl(assetId) {
+    return dataUrl(assetId, 'signal_scorecard.json');
+}
