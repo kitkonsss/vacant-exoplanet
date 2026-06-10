@@ -33,11 +33,19 @@ if sys.stdout.encoding and sys.stdout.encoding.lower() not in ('utf-8', 'utf8'):
     sys.stdout.reconfigure(encoding='utf-8', errors='replace')
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-STRATEGY_PATH = REPO_ROOT / 'data' / 'daily_strategy.json'
 STATE_PATH = REPO_ROOT / 'data' / 'watcher_state.json'
-SIGNAL_LOG_PATH = REPO_ROOT / 'data' / 'signal_log.json'
 
-YAHOO_SYMBOL = 'GC=F'
+# Multi-asset: each asset watches its own strategy/signal-log files; the
+# dedupe state file is shared with asset-prefixed keys.
+ASSETS = {
+    'gc': {'subdir': '', 'label': 'GC', 'yahoo': 'GC=F', 'stooq': 'gc.f',
+           'micro': 'MGC', 'micro_point': 10.0, 'full': 'GC', 'micro_per_full': 10},
+    'nq': {'subdir': 'nq', 'label': 'NQ', 'yahoo': 'NQ=F', 'stooq': 'nq.f',
+           'micro': 'MNQ', 'micro_point': 2.0, 'full': 'NQ', 'micro_per_full': 10},
+}
+# Back-compat for morning_brief.py imports (GC paths).
+STRATEGY_PATH = REPO_ROOT / 'data' / 'daily_strategy.json'
+
 STALE_HOURS = 36          # strategy older than this -> warn, don't signal
 STATE_KEEP_DAYS = 3       # prune alert dedupe keys older than this
 MAX_BREAKOUT_LAG_ATR = 0.5   # don't call "breakout" if price is already this far past the level
@@ -45,21 +53,22 @@ ZONE_TOUCH_ATR = 0.08        # zone counts as touched within this fraction of AT
 APPROACH_ATR = 0.25          # "approaching" window for confluence levels
 DEFAULT_ATR = 60.0           # fallback if expected_range is missing
 RISK_BUDGET_USD = float(os.environ.get('RISK_BUDGET_USD', '500'))
-MGC_POINT_USD = 10.0
 
 
-def sizing_line(price, invalidation):
+def sizing_line(price, invalidation, cfg):
     """Suggested size so a stop-out costs at most RISK_BUDGET_USD."""
     if not invalidation:
         return None
     rp = abs(price - float(invalidation))
     if rp <= 0:
         return None
-    mgc = int(RISK_BUDGET_USD // (rp * MGC_POINT_USD))
-    if mgc < 1:
-        return f'ขนาด: SL ห่าง {rp:.0f} pts — เกิน budget ${RISK_BUDGET_USD:.0f} แม้ 1 MGC, ข้ามหรือรอจุดที่แคบกว่า'
-    gc = mgc // 10
-    return (f'ขนาด (เสี่ยง ${RISK_BUDGET_USD:.0f}): {mgc} MGC' + (f' / {gc} GC' if gc else '')
+    micro = int(RISK_BUDGET_USD // (rp * cfg['micro_point']))
+    if micro < 1:
+        return (f"ขนาด: SL ห่าง {rp:.0f} pts — เกิน budget ${RISK_BUDGET_USD:.0f} "
+                f"แม้ 1 {cfg['micro']}, ข้ามหรือรอจุดที่แคบกว่า")
+    full = micro // cfg['micro_per_full']
+    return (f"ขนาด (เสี่ยง ${RISK_BUDGET_USD:.0f}): {micro} {cfg['micro']}"
+            + (f" / {full} {cfg['full']}" if full else '')
             + f' — SL ห่าง {rp:.0f} pts')
 
 
@@ -67,10 +76,11 @@ def utcnow():
     return datetime.now(timezone.utc)
 
 
-def fetch_price():
-    """Live GC front-month price from yfinance (same source as quikstrike_scraper)."""
+def fetch_price(cfg=None):
+    """Live front-month price from yfinance (same source as quikstrike_scraper)."""
     import yfinance as yf
-    ticker = yf.Ticker(YAHOO_SYMBOL)
+    cfg = cfg or ASSETS['gc']
+    ticker = yf.Ticker(cfg['yahoo'])
     price = None
     try:
         info = ticker.fast_info
@@ -82,13 +92,13 @@ def fetch_price():
         if hist is not None and len(hist):
             price = float(hist['Close'].iloc[-1])
     if not price:
-        price = _stooq_price()
+        price = _stooq_price(cfg['stooq'])
     return float(price) if price else None
 
 
-def _stooq_price():
+def _stooq_price(symbol):
     """Backup quote from Stooq (free CSV endpoint) when yfinance fails."""
-    url = 'https://stooq.com/q/l/?s=gc.f&f=sd2t2ohlcv&h&e=csv'
+    url = f'https://stooq.com/q/l/?s={symbol}&f=sd2t2ohlcv&h&e=csv'
     try:
         with urllib.request.urlopen(url, timeout=10) as resp:
             lines = resp.read().decode().strip().splitlines()
@@ -102,14 +112,14 @@ def _stooq_price():
     return None
 
 
-def fetch_last_closed_15m():
+def fetch_last_closed_15m(yahoo_symbol):
     """Close of the most recent COMPLETED 15m candle, or None.
 
     Breakouts confirm against this instead of the live tick so a wick
     poking through a level doesn't fire the alert."""
     import yfinance as yf
     try:
-        hist = yf.Ticker(YAHOO_SYMBOL).history(period='1d', interval='15m')
+        hist = yf.Ticker(yahoo_symbol).history(period='1d', interval='15m')
     except Exception as e:
         print(f'[WATCH] 15m history error: {e}')
         return None
@@ -289,10 +299,11 @@ def bias_line(strategy):
             f"regime: {regime.get('regime', '?')} → {regime.get('lead_playbook', '?')}")
 
 
-def _signal_record(it, price, strategy, direction):
+def _signal_record(it, price, strategy, direction, asset_id='gc'):
     """Structured record of a fired signal, for Phase 4 self-eval."""
     return {
         'ts': utcnow().isoformat(timespec='seconds'),
+        'asset': asset_id,
         'kind': it['kind'],
         'level': it['level'],
         'direction': direction,                 # long / short / None (approach)
@@ -308,14 +319,14 @@ def _signal_record(it, price, strategy, direction):
     }
 
 
-def log_signal(record):
-    log = load_json(SIGNAL_LOG_PATH) or []
+def log_signal(record, log_path):
+    log = load_json(log_path) or []
     log.append(record)
-    SIGNAL_LOG_PATH.write_text(json.dumps(log, indent=2, ensure_ascii=False) + '\n',
-                               encoding='utf-8')
+    log_path.write_text(json.dumps(log, indent=2, ensure_ascii=False) + '\n',
+                        encoding='utf-8')
 
 
-def check_items(price, items, atr, strategy, state, candle_close=None):
+def check_items(asset_id, cfg, price, items, atr, strategy, state, candle_close=None):
     """Evaluate all watch items against the current price; return alerts as
     (dedupe_key, message_text, signal_record) tuples.
 
@@ -323,11 +334,12 @@ def check_items(price, items, atr, strategy, state, candle_close=None):
     available, so intrabar wicks through a level don't fire."""
     msgs = []
     day = utcnow().strftime('%Y-%m-%d')
+    name = cfg['label']
     foot = f"\n{bias_line(strategy)}\n<i>สัญญาณจากระบบ ไม่ใช่คำแนะนำการลงทุน</i>"
 
     for it in items:
         level = it['level']
-        key = f"{day}:{it['kind']}:{level:g}"
+        key = f"{asset_id}:{day}:{it['kind']}:{level:g}"
         if already_alerted(state, key):
             continue
 
@@ -337,31 +349,31 @@ def check_items(price, items, atr, strategy, state, candle_close=None):
             lag = abs(ref - level)
             if crossed and lag <= MAX_BREAKOUT_LAG_ATR * atr:
                 emoji = '🟢' if it['side'] == 'above' else '🔴'
-                lines = [f"{emoji} <b>GC Breakout</b> — {it['label']}",
+                lines = [f"{emoji} <b>{name} Breakout</b> — {it['label']}",
                          f"ราคา {fmt(price)} ({'ทะลุขึ้น' if it['side'] == 'above' else 'หลุดลง'} {fmt(level)})"]
                 if candle_close is not None:
                     lines.append(f"ยืนยันแล้ว: แท่ง 15 นาทีปิด {fmt(candle_close)} เลย level")
                 tp, sl = it.get('target'), it.get('invalidation')
                 if tp or sl:
                     lines.append(f"เป้า: {fmt(tp) if tp else '-'} | Invalidation: {fmt(sl) if sl else '-'}")
-                size = sizing_line(price, sl)
+                size = sizing_line(price, sl, cfg)
                 if size:
                     lines.append(size)
                 if it['extra']:
                     lines.append(it['extra'])
                 direction = 'long' if it['side'] == 'above' else 'short'
                 msgs.append((key, '\n'.join(lines) + foot,
-                             _signal_record(it, price, strategy, direction)))
+                             _signal_record(it, price, strategy, direction, asset_id)))
 
         elif it['kind'] in ('zone_touch', 'band_touch'):
             if abs(price - level) <= max(3.0, ZONE_TOUCH_ATR * atr):
                 emoji = '🔵' if 'long' in it.get('action', '') else '🟠'
                 what = f"แตะแบนด์ {it.get('label', '')}" if it['kind'] == 'band_touch' \
                     else f"แตะโซน {it.get('action', 'fade')}"
-                lines = [f"{emoji} <b>GC {what}</b> ที่ {fmt(level)} → {it.get('action', 'fade')}",
+                lines = [f"{emoji} <b>{name} {what}</b> ที่ {fmt(level)} → {it.get('action', 'fade')}",
                          f"ราคา {fmt(price)}",
                          f"เป้า: {fmt(it['target']) if it.get('target') else '-'} | SL: {fmt(it['invalidation']) if it.get('invalidation') else '-'}"]
-                size = sizing_line(price, it.get('invalidation'))
+                size = sizing_line(price, it.get('invalidation'), cfg)
                 if size:
                     lines.append(size)
                 if it['extra']:
@@ -370,89 +382,113 @@ def check_items(price, items, atr, strategy, state, candle_close=None):
                     lines.append('⚠️ fade สวน regime trending วันนี้ — ลดขนาด/รอ confirm')
                 direction = 'long' if 'long' in it.get('action', '') else 'short'
                 msgs.append((key, '\n'.join(lines) + foot,
-                             _signal_record(it, price, strategy, direction)))
+                             _signal_record(it, price, strategy, direction, asset_id)))
 
         elif it['kind'] == 'approach':
             dist = abs(price - level)
             if max(3.0, ZONE_TOUCH_ATR * atr) < dist <= APPROACH_ATR * atr:
                 side_txt = 'เหนือราคา' if level > price else 'ใต้ราคา'
                 msgs.append((key,
-                             f"⚠️ <b>GC เข้าใกล้ level {fmt(level)}</b> ({it['label']}, {side_txt} {fmt(dist)} pts)\n"
+                             f"⚠️ <b>{name} เข้าใกล้ level {fmt(level)}</b> ({it['label']}, {side_txt} {fmt(dist)} pts)\n"
                              f"ราคา {fmt(price)}\nSources: {it['extra']}" + foot,
-                             _signal_record(it, price, strategy, None)))
+                             _signal_record(it, price, strategy, None, asset_id)))
 
     return msgs
 
 
-def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument('--dry-run', action='store_true', help='print alerts instead of sending')
-    ap.add_argument('--price', type=float, default=None, help='override live price (testing)')
-    ap.add_argument('--test-message', action='store_true',
-                    help='send a Telegram connectivity test message and exit')
-    args = ap.parse_args()
-
-    if args.test_message:
-        price = fetch_price()
-        ok = send_telegram(
-            '✅ <b>GC Price Watcher — ทดสอบการเชื่อมต่อ</b>\n'
-            f'ระบบส่งสัญญาณทำงานปกติ | ราคาตอนนี้ {fmt(price) if price else "n/a"}\n'
-            '<i>ข้อความนี้มาจากปุ่ม Run workflow (test_message)</i>',
-            dry_run=args.dry_run)
-        print(f'[WATCH] test message sent ok={ok}')
-        return 0 if ok else 1
-
-    # GC closes Fri 21:00 UTC, reopens Sun 22:00 UTC — Saturday is always dead.
-    if utcnow().weekday() == 5:
-        print('[WATCH] Saturday — market closed, skipping.')
+def run_asset(asset_id, cfg, state, args):
+    """Watch one asset; returns number of alerts sent."""
+    dir_ = REPO_ROOT / 'data' / cfg['subdir'] if cfg['subdir'] else REPO_ROOT / 'data'
+    strategy = load_json(dir_ / 'daily_strategy.json')
+    if not strategy:
+        print(f'[WATCH:{asset_id}] no daily_strategy.json — skipped')
         return 0
 
-    strategy = load_json(STRATEGY_PATH)
-    if not strategy:
-        print(f'[WATCH] cannot read {STRATEGY_PATH}')
-        return 1
-
-    state = load_state()
     day = utcnow().strftime('%Y-%m-%d')
-
     gen = strategy.get('generated_at')
     try:
         age_h = (utcnow() - datetime.fromisoformat(gen)).total_seconds() / 3600
     except (TypeError, ValueError):
         age_h = None
     if age_h is None or age_h > STALE_HOURS:
-        key = f'{day}:stale'
-        print(f'[WATCH] strategy stale (age={age_h and round(age_h, 1)}h) — no signals.')
+        key = f'{asset_id}:{day}:stale'
+        print(f'[WATCH:{asset_id}] strategy stale (age={age_h and round(age_h, 1)}h) — no signals.')
         if not already_alerted(state, key):
-            send_telegram(f'⚠️ <b>GC watcher</b>: daily_strategy.json เก่า {round(age_h or 0)} ชม. '
-                          f'— งดส่งสัญญาณจนกว่า pipeline จะอัปเดต', dry_run=args.dry_run)
+            send_telegram(f"⚠️ <b>{cfg['label']} watcher</b>: daily_strategy.json เก่า "
+                          f'{round(age_h or 0)} ชม. — งดส่งสัญญาณจนกว่า pipeline จะอัปเดต',
+                          dry_run=args.dry_run)
             mark_alerted(state, key)
-        save_state(state)
         return 0
 
-    price = args.price or fetch_price()
+    price = args.price or fetch_price(cfg)
     if not price:
-        print('[WATCH] no live price available — skipping.')
-        save_state(state)
+        print(f'[WATCH:{asset_id}] no live price available — skipped')
         return 0
     # Confirm breakouts on the last completed 15m close (price override in
     # tests doubles as the close so simulations behave like before).
-    candle_close = args.price or fetch_last_closed_15m()
-    print(f'[WATCH] GC price {price} | 15m close {candle_close} | strategy age {round(age_h, 1)}h')
+    candle_close = args.price or fetch_last_closed_15m(cfg['yahoo'])
+    print(f"[WATCH:{asset_id}] price {price} | 15m close {candle_close} "
+          f"| strategy age {round(age_h, 1)}h")
 
     items, atr = build_watch_items(strategy)
-    print(f'[WATCH] watching {len(items)} items (ATR {atr})')
-    msgs = check_items(price, items, atr, strategy, state, candle_close=candle_close)
+    print(f'[WATCH:{asset_id}] watching {len(items)} items (move basis {atr})')
+    msgs = check_items(asset_id, cfg, price, items, atr, strategy, state,
+                       candle_close=candle_close)
 
+    sent = 0
     for key, text, record in msgs:
         if send_telegram(text, dry_run=args.dry_run):
             mark_alerted(state, key)
+            sent += 1
             if not args.dry_run:
-                log_signal(record)
+                log_signal(record, dir_ / 'signal_log.json')
 
-    state['last_price'] = price
+    state.setdefault('last_price', {})
+    if isinstance(state['last_price'], dict):
+        state['last_price'][asset_id] = price
+    else:
+        state['last_price'] = {asset_id: price}
+    return sent
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument('--dry-run', action='store_true', help='print alerts instead of sending')
+    ap.add_argument('--price', type=float, default=None, help='override live price (testing)')
+    ap.add_argument('--asset', choices=[*ASSETS, 'all'], default='all',
+                    help='watch one asset only (mainly for --price tests)')
+    ap.add_argument('--test-message', action='store_true',
+                    help='send a Telegram connectivity test message and exit')
+    args = ap.parse_args()
+
+    if args.test_message:
+        parts = []
+        for aid, cfg in ASSETS.items():
+            p = fetch_price(cfg)
+            parts.append(f"{cfg['label']} {fmt(p) if p else 'n/a'}")
+        ok = send_telegram(
+            '✅ <b>Price Watcher — ทดสอบการเชื่อมต่อ</b>\n'
+            f"ระบบส่งสัญญาณทำงานปกติ | {' | '.join(parts)}\n"
+            '<i>ข้อความนี้มาจากปุ่ม Run workflow (test_message)</i>',
+            dry_run=args.dry_run)
+        print(f'[WATCH] test message sent ok={ok}')
+        return 0 if ok else 1
+
+    # CME closes Fri 21:00 UTC, reopens Sun 22:00 UTC — Saturday is always dead.
+    if utcnow().weekday() == 5:
+        print('[WATCH] Saturday — market closed, skipping.')
+        return 0
+
+    state = load_state()
+    total = 0
+    assets = ASSETS if args.asset == 'all' else {args.asset: ASSETS[args.asset]}
+    for asset_id, cfg in assets.items():
+        try:
+            total += run_asset(asset_id, cfg, state, args)
+        except Exception as e:
+            print(f'[WATCH:{asset_id}] failed: {e}')
     save_state(state)
-    print(f'[WATCH] done — {len(msgs)} alert(s).')
+    print(f'[WATCH] done — {total} alert(s).')
     return 0
 
 

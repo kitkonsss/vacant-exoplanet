@@ -63,12 +63,12 @@ jobs:
         git config --global user.email "github-actions[bot]@users.noreply.github.com"
         branch="${GITHUB_REF_NAME:-main}"
 
-        if [ -z "$(git status --porcelain data/watcher_state.json data/signal_log.json)" ]; then
+        if [ -z "$(git status --porcelain data/watcher_state.json data/signal_log.json data/nq/signal_log.json)" ]; then
           echo "No state changes to commit"
         else
-          # signal_log.json doesn't exist until the first alert fires —
+          # signal logs don't exist until the first alert fires —
           # git add on a missing pathspec is fatal, so add only what exists.
-          for f in data/watcher_state.json data/signal_log.json; do
+          for f in data/watcher_state.json data/signal_log.json data/nq/signal_log.json; do
             [ -e "$f" ] && git add "$f"
           done
           git commit -m "Update price watcher state [skip ci]" || exit 0

@@ -33,9 +33,11 @@ if sys.stdout.encoding and sys.stdout.encoding.lower() not in ('utf-8', 'utf8'):
     sys.stdout.reconfigure(encoding='utf-8', errors='replace')
 
 BASE_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'data')
-HISTORY_PATH = os.path.join(BASE_DIR, 'flow_history.json')
-OUT_PATH = os.path.join(BASE_DIR, 'option_flow.json')
-STRATEGY_PATH = os.path.join(BASE_DIR, 'daily_strategy.json')
+
+ASSETS = {
+    'gc': {'subdir': ''},
+    'nq': {'subdir': 'nq'},
+}
 
 CONTRACT_KEYS = ('current', 'tomorrow', 'friday', 'monthly')
 FLOW_KEEP_HOURS = 36        # rolling history horizon
@@ -79,26 +81,26 @@ def parse_intraday(path):
     return {'symbol': sym, 'fut': fut, 'strikes': strikes}
 
 
-def load_history():
+def load_history(history_path):
     try:
-        with open(HISTORY_PATH, encoding='utf-8') as f:
+        with open(history_path, encoding='utf-8') as f:
             return json.load(f)
     except (OSError, json.JSONDecodeError):
         return {'snapshots': []}
 
 
-def save_history(hist):
+def save_history(history_path, hist):
     cutoff = (utcnow() - timedelta(hours=FLOW_KEEP_HOURS)).isoformat()
     hist['snapshots'] = [s for s in hist['snapshots'] if s['ts'] >= cutoff]
-    with open(HISTORY_PATH, 'w', encoding='utf-8') as f:
+    with open(history_path, 'w', encoding='utf-8') as f:
         json.dump(hist, f, separators=(',', ':'))
         f.write('\n')
 
 
-def take_snapshot():
+def take_snapshot(dir_):
     contracts = {}
     for key in CONTRACT_KEYS:
-        parsed = parse_intraday(os.path.join(BASE_DIR, f'{key}_IntradayData.txt'))
+        parsed = parse_intraday(os.path.join(dir_, f'{key}_IntradayData.txt'))
         if parsed:
             contracts[key] = parsed
     if not contracts:
@@ -191,13 +193,18 @@ def wall_activity(rows, strategy, spot):
     return out[:TOP_N]
 
 
-def main():
-    snap = take_snapshot()
-    if not snap:
-        print('[FLOW] no intraday data files — nothing to do')
-        return 1
+def run_asset(asset_id, cfg):
+    dir_ = os.path.join(BASE_DIR, cfg['subdir']) if cfg['subdir'] else BASE_DIR
+    history_path = os.path.join(dir_, 'flow_history.json')
+    out_path = os.path.join(dir_, 'option_flow.json')
+    strategy_path = os.path.join(dir_, 'daily_strategy.json')
 
-    history = load_history()
+    snap = take_snapshot(dir_)
+    if not snap:
+        print(f'[FLOW:{asset_id}] no intraday data files — skipped')
+        return False
+
+    history = load_history(history_path)
     now = utcnow()
     spot = (snap['contracts'].get('current') or next(iter(snap['contracts'].values())))['fut']
 
@@ -222,13 +229,13 @@ def main():
     rows_1h = diff_snapshots(snap, prev_1h) if prev_1h else []
     strategy = None
     try:
-        with open(STRATEGY_PATH, encoding='utf-8') as f:
+        with open(strategy_path, encoding='utf-8') as f:
             strategy = json.load(f)
     except (OSError, json.JSONDecodeError):
         pass
 
     out = {
-        'asset': 'GC',
+        'asset': asset_id.upper(),
         'generated_at': snap['ts'],
         'future_price': spot,
         'method': 'Successive Vol2Vol intraday-volume snapshot deltas (~10 min cadence). '
@@ -242,22 +249,31 @@ def main():
     }
 
     history['snapshots'].append(snap)
-    save_history(history)
-    with open(OUT_PATH, 'w', encoding='utf-8') as f:
+    save_history(history_path, hist=history)
+    with open(out_path, 'w', encoding='utf-8') as f:
         json.dump(out, f, indent=2)
         f.write('\n')
 
     w1h = windows['last_1h']
     if w1h:
-        print(f"[FLOW] 1h: +{w1h['call_added']}C/+{w1h['put_added']}P "
+        print(f"[FLOW:{asset_id}] 1h: +{w1h['call_added']}C/+{w1h['put_added']}P "
               f"(above {w1h['added_above_spot']} / below {w1h['added_below_spot']}) "
               f"| magnet {out['flow_magnet_1h'] and out['flow_magnet_1h']['strike']} "
               f"| {out['imbalance_1h'] and out['imbalance_1h']['label']}")
     else:
-        print(f"[FLOW] warming up — {out['snapshots_in_history']} snapshot(s) stored, "
-              'windows need history to difference against')
-    print(f'[FLOW] wrote {OUT_PATH}')
-    return 0
+        print(f"[FLOW:{asset_id}] warming up — {out['snapshots_in_history']} snapshot(s) stored")
+    print(f'[FLOW:{asset_id}] wrote {out_path}')
+    return True
+
+
+def main():
+    any_ok = False
+    for asset_id, cfg in ASSETS.items():
+        try:
+            any_ok = run_asset(asset_id, cfg) or any_ok
+        except Exception as e:
+            print(f'[FLOW:{asset_id}] failed: {e}')
+    return 0 if any_ok else 1
 
 
 if __name__ == '__main__':

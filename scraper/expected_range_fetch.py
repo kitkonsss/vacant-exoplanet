@@ -8,14 +8,19 @@ view shows can be recomputed from those:
 
     expected_move(nSD, horizon) = F * IV_atm * sqrt(DTE/365) * n
 
-Outputs data/expected_range.json:
-  - per-tenor ATM IV (smile-interpolated at FutPrc) + 1/2/3 SD bands to expiry
-  - 1-day expected move from the shortest-dated tenor's ATM IV
-  - IV term structure (shape: inverted/flat/contango) and a 2% put/call skew read
+Multi-asset: runs for every asset whose OIData files exist (GC at data/,
+NQ at data/nq/).
 
-strategy_fetch.py picks this up to replace its ATR(14) proxy when fresh.
+Skew interpretation differs by asset class:
+  - GC  : absolute read (gold put/call skew is roughly symmetric at baseline,
+          so put-dominant skew genuinely means downside fear)
+  - NQ  : RELATIVE read. Index options carry a permanent structural put skew
+          (portfolio hedging), so the absolute read would scream fear every
+          day. Each run appends today's skew to <dir>/iv_baseline.json and the
+          read becomes a z-score vs the asset's own rolling history; until
+          BASELINE_MIN_N sessions accumulate the read is 'baseline_building'.
 
-Dependencies: Python stdlib only.
+Outputs <dir>/expected_range.json per asset. Dependencies: stdlib only.
   python scraper/expected_range_fetch.py
 """
 
@@ -26,13 +31,19 @@ import re
 import sys
 from datetime import datetime, timezone
 
-# Windows consoles default to a legacy codepage that can't print ± etc.
 if sys.stdout.encoding and sys.stdout.encoding.lower() not in ('utf-8', 'utf8'):
     sys.stdout.reconfigure(encoding='utf-8', errors='replace')
 
 BASE_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'data')
 CONTRACT_KEYS = ('current', 'tomorrow', 'friday', 'monthly')
-SKEW_PCT = 0.02  # measure smile slope at +/-2% from the future price
+SKEW_PCT = 0.02            # measure smile slope at +/-2% from the future price
+BASELINE_MIN_N = 20        # sessions needed before relative skew reads activate
+BASELINE_KEEP = 60         # rolling sessions kept in iv_baseline.json
+
+ASSETS = {
+    'gc': {'subdir': '', 'skew_mode': 'absolute'},
+    'nq': {'subdir': 'nq', 'skew_mode': 'relative'},
+}
 
 
 def _num(text):
@@ -89,8 +100,8 @@ def interp_iv(smile, strike):
 
 
 def _is_expired(expiration):
-    """True if the contract's expiry has passed. GC daily/weekly options stop
-    trading 12:30 CT (~17:30 UTC); scraped data can outlive the contract when
+    """True if the contract's expiry has passed. Daily/weekly options stop
+    trading ~12:30 CT (~17:30 UTC); scraped data can outlive the contract when
     the morning pipeline runs before the day's new scrape."""
     try:
         m, d, y = (int(x) for x in str(expiration).split('/'))
@@ -145,28 +156,70 @@ def build_skew(parsed):
             'call_skew_volpts': call_skew, 'read': read}
 
 
-def main():
+# ---- per-asset rolling baseline (for relative skew reads) -------------------
+
+def update_baseline(dir_, entry):
+    """Append today's IV metrics to <dir>/iv_baseline.json (one per date)."""
+    path = os.path.join(dir_, 'iv_baseline.json')
+    try:
+        with open(path, encoding='utf-8') as f:
+            hist = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        hist = []
+    hist = [h for h in hist if h.get('date') != entry['date']]
+    hist.append(entry)
+    hist = sorted(hist, key=lambda h: h['date'])[-BASELINE_KEEP:]
+    with open(path, 'w', encoding='utf-8') as f:
+        json.dump(hist, f, indent=1)
+        f.write('\n')
+    return hist
+
+
+def relative_skew_read(skew, hist):
+    """Replace the absolute skew read with a z-score vs the asset's own
+    history — the only honest read for assets with structural skew."""
+    vals = [h['skew_spread'] for h in hist if h.get('skew_spread') is not None]
+    n = len(vals)
+    spread = skew['put_skew_volpts'] - skew['call_skew_volpts']
+    skew['skew_spread_volpts'] = round(spread, 2)
+    skew['baseline_n'] = n
+    if n < BASELINE_MIN_N:
+        skew['read'] = (f'baseline_building ({n}/{BASELINE_MIN_N} sessions) — '
+                        'structural put skew; absolute read suppressed')
+        return skew
+    mean = sum(vals) / n
+    sd = math.sqrt(sum((v - mean) ** 2 for v in vals) / n) or 1e-9
+    z = (spread - mean) / sd
+    skew['skew_z_vs_baseline'] = round(z, 2)
+    if z >= 1.0:
+        skew['read'] = f'put_skew_stretched_vs_norm (z={z:+.1f} — fear ABOVE its usual hedge level)'
+    elif z <= -1.0:
+        skew['read'] = f'put_skew_compressed_vs_norm (z={z:+.1f} — less fear than usual)'
+    else:
+        skew['read'] = f'normal_for_asset (z={z:+.1f} — typical hedging skew)'
+    return skew
+
+
+def run_asset(asset_id, cfg):
+    dir_ = os.path.join(BASE_DIR, cfg['subdir']) if cfg['subdir'] else BASE_DIR
     tenors = []
     for key in CONTRACT_KEYS:
-        parsed = parse_oidata(os.path.join(BASE_DIR, f'{key}_OIData.txt'))
+        parsed = parse_oidata(os.path.join(dir_, f'{key}_OIData.txt'))
         if not parsed:
-            print(f'[ER] {key}: no usable OIData — skipped')
             continue
         t = build_tenor(key, parsed)
         if t:
             t['_smile'] = parsed['smile']
             tenors.append(t)
-            print(f"[ER] {key} {t['symbol']}: DTE {t['dte']} | ATM IV {t['atm_iv_pct']}% "
+            print(f"[ER:{asset_id}] {key} {t['symbol']}: DTE {t['dte']} | ATM IV {t['atm_iv_pct']}% "
                   f"| 1SD to expiry ±{t['expected_move_to_expiry']}")
         elif _is_expired(parsed.get('expiration')):
-            print(f"[ER] {key} {parsed.get('symbol')}: expired {parsed.get('expiration')} — skipped")
+            print(f"[ER:{asset_id}] {key} {parsed.get('symbol')}: expired {parsed.get('expiration')} — skipped")
 
     if not tenors:
-        print('[ER] no tenors parsed — nothing to write')
-        return 1
+        print(f'[ER:{asset_id}] no tenors parsed — skipped')
+        return False
 
-    # 1-day expected move from the shortest-dated tenor (its IV is the best
-    # gauge of near-term realized vol). Horizon = min(1 day, its actual DTE).
     short = min(tenors, key=lambda t: t['dte'])
     long_ = max(tenors, key=lambda t: t['dte'])
     f = short['future_price']
@@ -177,7 +230,6 @@ def main():
         bands_1d[f'plus{n}'] = round(f + n * move_1d, 1)
         bands_1d[f'minus{n}'] = round(f - n * move_1d, 1)
 
-    # Term structure: short-dated IV above monthly IV = stress (inverted).
     slope = round((short['atm_iv'] - long_['atm_iv']) * 100, 2)
     if slope > 2.0:
         shape = 'inverted (event/stress premium in front)'
@@ -190,20 +242,34 @@ def main():
     for t in tenors:
         t.pop('_smile', None)
 
-    # Freshness stamp comes from the scrape that produced the OIData files.
+    # Rolling baseline (kept for BOTH assets so reads can become relative
+    # later); NQ's displayed read is relative from day one.
+    if skew:
+        hist = update_baseline(dir_, {
+            'date': datetime.now(timezone.utc).strftime('%Y-%m-%d'),
+            'atm_iv_pct': short['atm_iv_pct'],
+            'put_skew': skew['put_skew_volpts'],
+            'call_skew': skew['call_skew_volpts'],
+            'skew_spread': round(skew['put_skew_volpts'] - skew['call_skew_volpts'], 2),
+            'term_slope': slope,
+        })
+        if cfg['skew_mode'] == 'relative':
+            skew = relative_skew_read(skew, hist[:-1])  # today excluded from its own baseline
+
     pb = {}
     try:
-        with open(os.path.join(BASE_DIR, 'current_PositionBias.json'), encoding='utf-8') as fh:
+        with open(os.path.join(dir_, 'current_PositionBias.json'), encoding='utf-8') as fh:
             pb = json.load(fh)
     except (OSError, json.JSONDecodeError):
         pass
 
     out = {
-        'asset': 'GC',
+        'asset': asset_id.upper(),
         'generated_at': datetime.now(timezone.utc).isoformat(timespec='seconds'),
         'source_generated_at': pb.get('generated_at'),
         'method': 'ATM IV interpolated from Vol2Vol per-strike Vol Settle smile; '
                   'move = F x IV x sqrt(DTE/365)',
+        'skew_mode': cfg['skew_mode'],
         'future_price': f,
         'atm_iv_pct_1d_basis': short['atm_iv_pct'],
         'basis_tenor': {'contract_key': short['contract_key'], 'symbol': short['symbol'],
@@ -219,13 +285,23 @@ def main():
         'tenors': tenors,
     }
 
-    path = os.path.join(BASE_DIR, 'expected_range.json')
+    path = os.path.join(dir_, 'expected_range.json')
     with open(path, 'w', encoding='utf-8') as fh:
         json.dump(out, fh, indent=2)
         fh.write('\n')
-    print(f"[ER] wrote {path} | 1d move ±{out['expected_move_1d']} "
+    print(f"[ER:{asset_id}] wrote {path} | 1d move ±{out['expected_move_1d']} "
           f"({out['atm_iv_pct_1d_basis']}% IV) | term {shape} | skew {skew and skew['read']}")
-    return 0
+    return True
+
+
+def main():
+    any_ok = False
+    for asset_id, cfg in ASSETS.items():
+        try:
+            any_ok = run_asset(asset_id, cfg) or any_ok
+        except Exception as e:
+            print(f'[ER:{asset_id}] failed: {e}')
+    return 0 if any_ok else 1
 
 
 if __name__ == '__main__':

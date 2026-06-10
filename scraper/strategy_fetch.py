@@ -23,8 +23,13 @@ from datetime import datetime, timezone
 BASE_OUTPUT_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'data')
 
 ASSETS = {
-    'gc': {'short': 'GC', 'subfolder': '',   'macro_key': 'gold'},
-    'nq': {'short': 'NQ', 'subfolder': 'nq', 'macro_key': 'nq'},
+    # put_oi_discount: index options carry a permanent hedge-driven put OI
+    # surplus (NQ structural P/C ~1.6), so put OI is scaled down before
+    # call/put dominance classification — otherwise every strike below price
+    # reads "put wall / support". Refine from data/nq/iv_baseline.json once
+    # ~20 sessions accumulate. GC put/call OI is roughly symmetric -> 1.0.
+    'gc': {'short': 'GC', 'subfolder': '',   'macro_key': 'gold', 'put_oi_discount': 1.0},
+    'nq': {'short': 'NQ', 'subfolder': 'nq', 'macro_key': 'nq',   'put_oi_discount': 0.625},
 }
 
 # Blend weights — options positioning is the system's core read; macro is a strong
@@ -74,12 +79,13 @@ def _sign(s):
     return 1 if s > 8 else (-1 if s < -8 else 0)
 
 
-def _oi_type(call_oi, put_oi):
+def _oi_type(call_oi, put_oi, put_discount=1.0):
     """Classify a strike's open interest as call/put/mixed dominant.
 
     Aligns with the project's existing wall convention (call_wall = resistance,
-    put_wall = support) so the heatmap build read is consistent with vol2vol."""
-    c, p = float(call_oi or 0), float(put_oi or 0)
+    put_wall = support) so the heatmap build read is consistent with vol2vol.
+    put_discount normalizes assets with structural hedge-put surplus (NQ)."""
+    c, p = float(call_oi or 0), float(put_oi or 0) * put_discount
     if c == 0 and p == 0:
         return None
     if c >= p * 1.3:
@@ -204,7 +210,8 @@ def analyze_heatmap_flow(asset_id, oi_lookup=None):
                 continue
             side = 'above' if price is not None and strike > float(price) else ('below' if price is not None and strike < float(price) else 'at_price')
             ref = oi_lookup.get((key, round(strike, 2)))
-            oi_type = _oi_type(ref['call_oi'], ref['put_oi']) if ref else None
+            discount = ASSETS[asset_id].get('put_oi_discount', 1.0)
+            oi_type = _oi_type(ref['call_oi'], ref['put_oi'], discount) if ref else None
             item = {
                 'contract_key': key,
                 'contract': hm.get('contract'),

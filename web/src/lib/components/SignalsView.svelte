@@ -324,7 +324,7 @@
                             Net total (after {scorecard.cost_points_per_trade} pt cost/trade):
                             <span class="font-mono {scorecard.total_net_points > 0 ? 'text-up' : 'text-down'}">
                                 {scorecard.total_net_points > 0 ? '+' : ''}{scorecard.total_net_points} pts
-                                (≈ ${scorecard.total_net_usd_mgc}/MGC)
+                                (≈ ${scorecard.total_net_usd_micro ?? scorecard.total_net_usd_mgc}/{scorecard.micro_label ?? 'MGC'})
                             </span>
                             — verdicts need n ≥ {scorecard.min_n_for_verdict} AND the full CI clear of breakeven.
                         </div>

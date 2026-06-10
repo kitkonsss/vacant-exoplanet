@@ -33,11 +33,14 @@ if sys.stdout.encoding and sys.stdout.encoding.lower() not in ('utf-8', 'utf8'):
     sys.stdout.reconfigure(encoding='utf-8', errors='replace')
 
 BASE_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'data')
-OUT_PATH = os.path.join(BASE_DIR, 'wall_backtest.json')
 CONTRACT_KEYS = ('current', 'tomorrow', 'friday', 'monthly')
 
-YAHOO_SYMBOL = 'GC=F'
-TOL_POINTS = 5.0          # "at the wall" tolerance
+# Per-asset: tolerance scales with price (~0.1%); GC ~5 pts, NQ ~25 pts.
+ASSETS = {
+    'gc': {'subdir': '', 'yahoo': 'GC=F', 'tol_points': 5.0},
+    'nq': {'subdir': 'nq', 'yahoo': 'NQ=F', 'tol_points': 25.0},
+}
+
 WALL_WINDOW_PCT = 0.06    # consider strikes within +/-6% of that day's close
 TOP_N_WALLS = 5
 
@@ -80,20 +83,20 @@ def load_heatmap_matrix(path, day_oi):
                     day_oi.get(di, {}).get(float(strike), 0) + float(val)
 
 
-def collect_day_oi():
+def collect_day_oi(dir_):
     """Merge current heatmap files + all dated snapshot copies."""
     day_oi = {}
-    paths = [os.path.join(BASE_DIR, f'{k}_OIHeatmap.json') for k in CONTRACT_KEYS]
-    paths += glob.glob(os.path.join(BASE_DIR, 'snapshots', '*', '*_OIHeatmap.json'))
+    paths = [os.path.join(dir_, f'{k}_OIHeatmap.json') for k in CONTRACT_KEYS]
+    paths += glob.glob(os.path.join(dir_, 'snapshots', '*', '*_OIHeatmap.json'))
     for p in paths:
         load_heatmap_matrix(p, day_oi)
     return day_oi
 
 
-def fetch_daily_candles():
+def fetch_daily_candles(yahoo_symbol):
     """Unadjusted front-month daily candles {date_iso: (o, h, l, c)}."""
     import yfinance as yf
-    hist = yf.Ticker(YAHOO_SYMBOL).history(period='6mo', interval='1d')
+    hist = yf.Ticker(yahoo_symbol).history(period='6mo', interval='1d')
     out = {}
     for ts, row in hist.iterrows():
         out[ts.strftime('%Y-%m-%d')] = (float(row['Open']), float(row['High']),
@@ -101,15 +104,19 @@ def fetch_daily_candles():
     return out
 
 
-def main():
-    day_oi = collect_day_oi()
+def run_asset(asset_id, cfg):
+    dir_ = os.path.join(BASE_DIR, cfg['subdir']) if cfg['subdir'] else BASE_DIR
+    out_path = os.path.join(dir_, 'wall_backtest.json')
+    TOL_POINTS = cfg['tol_points']
+
+    day_oi = collect_day_oi(dir_)
     if not day_oi:
-        print('[BT] no heatmap data found')
-        return 1
-    candles = fetch_daily_candles()
+        print(f'[BT:{asset_id}] no heatmap data found — skipped')
+        return False
+    candles = fetch_daily_candles(cfg['yahoo'])
     if not candles:
-        print('[BT] no price data from yfinance')
-        return 1
+        print(f'[BT:{asset_id}] no price data from yfinance — skipped')
+        return False
 
     trade_days = sorted(set(day_oi) & set(candles))
     stats = {
@@ -169,7 +176,7 @@ def main():
     wall_days = stats['days_with_wall_above'] + stats['days_with_wall_below']
 
     out = {
-        'asset': 'GC',
+        'asset': asset_id.upper(),
         'generated_at': datetime.now(timezone.utc).isoformat(timespec='seconds'),
         'days_evaluated': len(evaluated),
         'date_range': [trade_days[0], trade_days[-1]] if trade_days else None,
@@ -205,18 +212,28 @@ def main():
         'daily_records': evaluated[-30:],
     }
 
-    with open(OUT_PATH, 'w', encoding='utf-8') as f:
+    with open(out_path, 'w', encoding='utf-8') as f:
         json.dump(out, f, indent=2)
         f.write('\n')
 
-    print(f"[BT] {len(evaluated)} days ({out['date_range']})")
-    print(f"[BT] touch rate {out['touch']['rate']} (n={wall_days}, ci {out['touch']['ci95']})")
-    print(f"[BT] respect|touch {out['respect_given_touch']['rate']} "
+    print(f"[BT:{asset_id}] {len(evaluated)} days ({out['date_range']})")
+    print(f"[BT:{asset_id}] touch rate {out['touch']['rate']} (n={wall_days}, ci {out['touch']['ci95']})")
+    print(f"[BT:{asset_id}] respect|touch {out['respect_given_touch']['rate']} "
           f"(n={touches}, ci {out['respect_given_touch']['ci95']})")
-    print(f"[BT] magnet pull {out['magnet_pull']['rate']} "
+    print(f"[BT:{asset_id}] magnet pull {out['magnet_pull']['rate']} "
           f"(n={stats['magnet_total']}, ci {out['magnet_pull']['ci95']})")
-    print(f'[BT] wrote {OUT_PATH}')
-    return 0
+    print(f'[BT:{asset_id}] wrote {out_path}')
+    return True
+
+
+def main():
+    any_ok = False
+    for asset_id, cfg in ASSETS.items():
+        try:
+            any_ok = run_asset(asset_id, cfg) or any_ok
+        except Exception as e:
+            print(f'[BT:{asset_id}] failed: {e}')
+    return 0 if any_ok else 1
 
 
 if __name__ == '__main__':

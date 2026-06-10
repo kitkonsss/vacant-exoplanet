@@ -28,13 +28,18 @@ if sys.stdout.encoding and sys.stdout.encoding.lower() not in ('utf-8', 'utf8'):
     sys.stdout.reconfigure(encoding='utf-8', errors='replace')
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-LOG_PATH = REPO_ROOT / 'data' / 'signal_log.json'
-SCORECARD_PATH = REPO_ROOT / 'data' / 'signal_scorecard.json'
 
-YAHOO_SYMBOL = 'GC=F'
+# Per-asset: data folder, price symbol, round-trip cost (spread+slippage in
+# points — NQ trades wider), micro-contract $/point for the USD line.
+ASSETS = {
+    'gc': {'subdir': '', 'yahoo': 'GC=F', 'cost_points': 0.5,
+           'micro': 'MGC', 'micro_point': 10.0},
+    'nq': {'subdir': 'nq', 'yahoo': 'NQ=F', 'cost_points': 1.0,
+           'micro': 'MNQ', 'micro_point': 2.0},
+}
+
 EVAL_HORIZON_H = 48          # signal expires if unresolved after this many hours
 MIN_AGE_MIN = 30             # let at least a few candles print before judging
-COST_POINTS = 0.5            # round-trip spread + slippage estimate, GC points
 MIN_N_DECIDED = 30           # below this the verdict is always insufficient_n
 
 
@@ -53,13 +58,13 @@ def utcnow():
     return datetime.now(timezone.utc)
 
 
-def fetch_candles(since):
-    """15m GC=F candles since `since` (UTC) as [(ts, high, low)], oldest first.
+def fetch_candles(yahoo_symbol, since):
+    """15m candles since `since` (UTC) as [(ts, high, low)], oldest first.
 
     yfinance keeps ~60 days of 15m history — far beyond the 48h horizon."""
     import yfinance as yf
     span_days = max(1, min(59, (utcnow() - since).days + 2))
-    hist = yf.Ticker(YAHOO_SYMBOL).history(period=f'{span_days}d', interval='15m')
+    hist = yf.Ticker(yahoo_symbol).history(period=f'{span_days}d', interval='15m')
     if hist is None or not len(hist):
         return []
     out = []
@@ -70,7 +75,7 @@ def fetch_candles(since):
     return out
 
 
-def resolve(sig, candles):
+def resolve(sig, candles, cost_points):
     """Walk candles after the alert; return updated signal or None if untouched."""
     target, stop = sig.get('target'), sig.get('invalidation')
     direction = sig.get('direction')
@@ -104,7 +109,7 @@ def resolve(sig, candles):
             sig['risk_points'] = round(risk, 1)
             sig['reward_points'] = round(reward, 1)
             # net P&L in points after round-trip cost — what a fill would have paid
-            sig['net_points'] = round((reward if won else -risk) - COST_POINTS, 1)
+            sig['net_points'] = round((reward if won else -risk) - cost_points, 1)
             return sig
         if ts >= deadline:
             break
@@ -129,7 +134,7 @@ def _verdict(decided_n, ci, breakeven):
     return 'inconclusive'
 
 
-def build_scorecard(log):
+def build_scorecard(log, cost_points, cfg):
     scored = [s for s in log if s.get('status') in ('win', 'loss', 'expired')]
     by_kind = {}
     for s in scored:
@@ -160,9 +165,9 @@ def build_scorecard(log):
             b['avg_risk_points'] = round(avg_risk, 1)
             b['avg_reward_points'] = round(avg_reward, 1)
             # p* such that p*reward - (1-p)*risk - cost = 0
-            b['breakeven_win_rate'] = round((avg_risk + COST_POINTS) / (avg_risk + avg_reward), 3)
+            b['breakeven_win_rate'] = round((avg_risk + cost_points) / (avg_risk + avg_reward), 3)
             if wr is not None:
-                b['expectancy_points'] = round(wr * avg_reward - (1 - wr) * avg_risk - COST_POINTS, 1)
+                b['expectancy_points'] = round(wr * avg_reward - (1 - wr) * avg_risk - cost_points, 1)
         else:
             b['breakeven_win_rate'] = None
         b['total_net_points'] = round(sum(b['nets']), 1) if b['nets'] else 0
@@ -177,54 +182,69 @@ def build_scorecard(log):
     return {
         'updated_at': utcnow().isoformat(timespec='seconds'),
         'horizon_hours': EVAL_HORIZON_H,
-        'cost_points_per_trade': COST_POINTS,
+        'cost_points_per_trade': cost_points,
+        'micro_label': cfg['micro'],
         'min_n_for_verdict': MIN_N_DECIDED,
         'total_signals': len(log),
         'open': open_n,
         'overall_win_rate': round(wins / (wins + losses), 3) if (wins + losses) else None,
         'overall_win_rate_ci95': wilson_ci(wins, wins + losses),
         'total_net_points': total_net,
-        'total_net_usd_mgc': round(total_net * 10, 0),
+        'total_net_usd_micro': round(total_net * cfg['micro_point'], 0),
+        # kept for older dashboard builds; same number as usd_micro for GC
+        'total_net_usd_mgc': round(total_net * cfg['micro_point'], 0),
         'by_kind': by_kind,
         'note': 'win = target before invalidation on 15m candles; both-in-one-candle counts '
                 'as loss (conservative); expired = neither within horizon (see mfe_points). '
-                f'All P&L net of {COST_POINTS} pt round-trip cost. Verdicts require the full '
+                f'All P&L net of {cost_points} pt round-trip cost. Verdicts require the full '
                 'Wilson 95% CI to clear the cost-adjusted breakeven win rate — '
                 f'and at least {MIN_N_DECIDED} decided signals.',
     }
 
 
-def main():
+def run_asset(asset_id, cfg):
+    dir_ = REPO_ROOT / 'data' / cfg['subdir'] if cfg['subdir'] else REPO_ROOT / 'data'
+    log_path = dir_ / 'signal_log.json'
+    card_path = dir_ / 'signal_scorecard.json'
     try:
-        log = json.loads(LOG_PATH.read_text(encoding='utf-8'))
+        log = json.loads(log_path.read_text(encoding='utf-8'))
     except (OSError, json.JSONDecodeError):
-        print('[EVAL] no signal log yet — nothing to score')
-        return 0
+        print(f'[EVAL:{asset_id}] no signal log yet — nothing to score')
+        return
 
     open_sigs = [s for s in log
                  if s.get('status') == 'open'
                  and (utcnow() - datetime.fromisoformat(s['ts'])).total_seconds() / 60 >= MIN_AGE_MIN]
     if open_sigs:
         oldest = min(datetime.fromisoformat(s['ts']) for s in open_sigs)
-        candles = fetch_candles(oldest)
-        print(f'[EVAL] {len(open_sigs)} open signal(s), {len(candles)} candles since {oldest:%Y-%m-%d %H:%M}')
+        candles = fetch_candles(cfg['yahoo'], oldest)
+        print(f'[EVAL:{asset_id}] {len(open_sigs)} open signal(s), {len(candles)} candles '
+              f'since {oldest:%Y-%m-%d %H:%M}')
         if candles:
             resolved = 0
             for sig in open_sigs:
-                if resolve(sig, candles) is not None:
+                if resolve(sig, candles, cfg['cost_points']) is not None:
                     resolved += 1
-                    print(f"[EVAL] {sig['ts']} {sig['kind']} {sig.get('direction')} @{sig['level']} "
-                          f"-> {sig['status']} (mfe {sig.get('mfe_points')})")
-            print(f'[EVAL] resolved {resolved}/{len(open_sigs)}')
+                    print(f"[EVAL:{asset_id}] {sig['ts']} {sig['kind']} {sig.get('direction')} "
+                          f"@{sig['level']} -> {sig['status']} (mfe {sig.get('mfe_points')})")
+            print(f'[EVAL:{asset_id}] resolved {resolved}/{len(open_sigs)}')
     else:
-        print('[EVAL] no open signals to score')
+        print(f'[EVAL:{asset_id}] no open signals to score')
 
-    LOG_PATH.write_text(json.dumps(log, indent=2, ensure_ascii=False) + '\n', encoding='utf-8')
-    card = build_scorecard(log)
-    SCORECARD_PATH.write_text(json.dumps(card, indent=2, ensure_ascii=False) + '\n', encoding='utf-8')
+    log_path.write_text(json.dumps(log, indent=2, ensure_ascii=False) + '\n', encoding='utf-8')
+    card = build_scorecard(log, cfg['cost_points'], cfg)
+    card_path.write_text(json.dumps(card, indent=2, ensure_ascii=False) + '\n', encoding='utf-8')
     wr = card['overall_win_rate']
-    print(f"[EVAL] scorecard: {card['total_signals']} signals | open {card['open']} | "
+    print(f"[EVAL:{asset_id}] scorecard: {card['total_signals']} signals | open {card['open']} | "
           f"win rate {wr if wr is not None else 'n/a'}")
+
+
+def main():
+    for asset_id, cfg in ASSETS.items():
+        try:
+            run_asset(asset_id, cfg)
+        except Exception as e:
+            print(f'[EVAL:{asset_id}] failed: {e}')
     return 0
 
 

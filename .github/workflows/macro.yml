@@ -80,7 +80,9 @@ jobs:
         else
           for f in data/macro.json data/cot.json data/vwap.json data/daily_strategy.json \
                    data/expected_range.json data/signal_log.json data/signal_scorecard.json \
-                   data/nq/cot.json data/nq/daily_strategy.json; do
+                   data/iv_baseline.json data/nq/cot.json data/nq/daily_strategy.json \
+                   data/nq/expected_range.json data/nq/signal_log.json \
+                   data/nq/signal_scorecard.json data/nq/iv_baseline.json; do
             [ -e "$f" ] && git add "$f"
           done
           git commit -m "Auto-update macro + COT + VWAP + strategy [skip ci]" || exit 0
