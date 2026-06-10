@@ -67,6 +67,25 @@ def fetch_price():
     return float(price) if price else None
 
 
+def fetch_last_closed_15m():
+    """Close of the most recent COMPLETED 15m candle, or None.
+
+    Breakouts confirm against this instead of the live tick so a wick
+    poking through a level doesn't fire the alert."""
+    import yfinance as yf
+    try:
+        hist = yf.Ticker(YAHOO_SYMBOL).history(period='1d', interval='15m')
+    except Exception as e:
+        print(f'[WATCH] 15m history error: {e}')
+        return None
+    if hist is None or len(hist) < 2:
+        return None
+    last_ts = hist.index[-1].tz_convert('UTC').to_pydatetime()
+    # yfinance includes the in-progress candle as the last row — drop it.
+    row = hist.iloc[-2] if last_ts + timedelta(minutes=15) > utcnow() else hist.iloc[-1]
+    return float(row['Close'])
+
+
 def parse_level(text):
     """Extract the first price-like number from trigger text like
     'break above 4400 (confluence x4)'. Returns float or None."""
@@ -192,7 +211,27 @@ def build_watch_items(strategy):
             'action': z.get('action', 'fade'),
         })
 
-    # 3. high-confluence levels (heads-up only)
+    # 3. IV ±2σ band fades (Phase 1 bands) — target ±1σ, invalidation ±3σ.
+    # Logged as their own kind so the scorecard can judge them separately;
+    # fading ±2σ in a trending regime gets a warning, not a suppression.
+    bands = er.get('bands_1d') or {}
+    trending = (strategy.get('regime') or {}).get('regime') == 'trending'
+    if all(bands.get(k) for k in ('minus1', 'minus2', 'minus3')):
+        items.append({
+            'kind': 'band_touch', 'side': None, 'level': float(bands['minus2']),
+            'label': 'IV −2σ', 'action': 'fade long',
+            'target': float(bands['minus1']), 'invalidation': float(bands['minus3']),
+            'extra': 'แบนด์ IV รายวัน (−2σ)', 'aligned': not trending,
+        })
+    if all(bands.get(k) for k in ('plus1', 'plus2', 'plus3')):
+        items.append({
+            'kind': 'band_touch', 'side': None, 'level': float(bands['plus2']),
+            'label': 'IV +2σ', 'action': 'fade short',
+            'target': float(bands['plus1']), 'invalidation': float(bands['plus3']),
+            'extra': 'แบนด์ IV รายวัน (+2σ)', 'aligned': not trending,
+        })
+
+    # 4. high-confluence levels (heads-up only)
     for c in strategy.get('confluence_levels') or []:
         if (c.get('confluence') or 0) < 3 or not c.get('level'):
             continue
@@ -240,9 +279,12 @@ def log_signal(record):
                                encoding='utf-8')
 
 
-def check_items(price, items, atr, strategy, state):
+def check_items(price, items, atr, strategy, state, candle_close=None):
     """Evaluate all watch items against the current price; return alerts as
-    (dedupe_key, message_text, signal_record) tuples."""
+    (dedupe_key, message_text, signal_record) tuples.
+
+    Breakouts confirm against `candle_close` (last completed 15m close) when
+    available, so intrabar wicks through a level don't fire."""
     msgs = []
     day = utcnow().strftime('%Y-%m-%d')
     foot = f"\n{bias_line(strategy)}\n<i>สัญญาณจากระบบ ไม่ใช่คำแนะนำการลงทุน</i>"
@@ -254,12 +296,15 @@ def check_items(price, items, atr, strategy, state):
             continue
 
         if it['kind'] == 'breakout':
-            crossed = price >= level if it['side'] == 'above' else price <= level
-            lag = abs(price - level)
+            ref = candle_close if candle_close is not None else price
+            crossed = ref >= level if it['side'] == 'above' else ref <= level
+            lag = abs(ref - level)
             if crossed and lag <= MAX_BREAKOUT_LAG_ATR * atr:
                 emoji = '🟢' if it['side'] == 'above' else '🔴'
                 lines = [f"{emoji} <b>GC Breakout</b> — {it['label']}",
                          f"ราคา {fmt(price)} ({'ทะลุขึ้น' if it['side'] == 'above' else 'หลุดลง'} {fmt(level)})"]
+                if candle_close is not None:
+                    lines.append(f"ยืนยันแล้ว: แท่ง 15 นาทีปิด {fmt(candle_close)} เลย level")
                 tp, sl = it.get('target'), it.get('invalidation')
                 if tp or sl:
                     lines.append(f"เป้า: {fmt(tp) if tp else '-'} | Invalidation: {fmt(sl) if sl else '-'}")
@@ -269,16 +314,18 @@ def check_items(price, items, atr, strategy, state):
                 msgs.append((key, '\n'.join(lines) + foot,
                              _signal_record(it, price, strategy, direction)))
 
-        elif it['kind'] == 'zone_touch':
+        elif it['kind'] in ('zone_touch', 'band_touch'):
             if abs(price - level) <= max(3.0, ZONE_TOUCH_ATR * atr):
                 emoji = '🔵' if 'long' in it.get('action', '') else '🟠'
-                lines = [f"{emoji} <b>GC แตะโซน {it.get('action', 'fade')}</b> ที่ {fmt(level)}",
+                what = f"แตะแบนด์ {it.get('label', '')}" if it['kind'] == 'band_touch' \
+                    else f"แตะโซน {it.get('action', 'fade')}"
+                lines = [f"{emoji} <b>GC {what}</b> ที่ {fmt(level)} → {it.get('action', 'fade')}",
                          f"ราคา {fmt(price)}",
                          f"เป้า: {fmt(it['target']) if it.get('target') else '-'} | SL: {fmt(it['invalidation']) if it.get('invalidation') else '-'}"]
                 if it['extra']:
                     lines.append(f"Confluence: {it['extra']}")
                 if not it.get('aligned', True):
-                    lines.append('⚠️ โซน MR สวน regime วันนี้ — ลดขนาด/รอ confirm')
+                    lines.append('⚠️ fade สวน regime trending วันนี้ — ลดขนาด/รอ confirm')
                 direction = 'long' if 'long' in it.get('action', '') else 'short'
                 msgs.append((key, '\n'.join(lines) + foot,
                              _signal_record(it, price, strategy, direction)))
@@ -346,11 +393,14 @@ def main():
         print('[WATCH] no live price available — skipping.')
         save_state(state)
         return 0
-    print(f'[WATCH] GC price {price} | strategy age {round(age_h, 1)}h')
+    # Confirm breakouts on the last completed 15m close (price override in
+    # tests doubles as the close so simulations behave like before).
+    candle_close = args.price or fetch_last_closed_15m()
+    print(f'[WATCH] GC price {price} | 15m close {candle_close} | strategy age {round(age_h, 1)}h')
 
     items, atr = build_watch_items(strategy)
     print(f'[WATCH] watching {len(items)} items (ATR {atr})')
-    msgs = check_items(price, items, atr, strategy, state)
+    msgs = check_items(price, items, atr, strategy, state, candle_close=candle_close)
 
     for key, text, record in msgs:
         if send_telegram(text, dry_run=args.dry_run):

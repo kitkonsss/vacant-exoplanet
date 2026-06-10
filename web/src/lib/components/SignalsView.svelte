@@ -14,6 +14,7 @@
     const kindMeta = {
         breakout: { label: 'Breakout', variant: 'warn' },
         zone_touch: { label: 'Zone Touch', variant: 'mag' },
+        band_touch: { label: 'Band ±2σ', variant: 'call' },
         approach: { label: 'Approach', variant: 'outline' }
     };
     const statusMeta = {
