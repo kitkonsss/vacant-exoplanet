@@ -50,6 +50,12 @@ jobs:
       run: python scraper/vwap_fetch.py
       continue-on-error: true
 
+    - name: Compute Expected Range from IV smile
+      # Phase 1: ATM IV / SD bands / term structure / skew from the committed
+      # *_OIData.txt Vol Settle columns (no scraping, stdlib only).
+      run: python scraper/expected_range_fetch.py
+      continue-on-error: true
+
     - name: Build daily strategy
       # Blends the freshly-fetched macro + COT with the latest committed options
       # positioning (position_bias_summary.json from the heavy scrape.yml run).
@@ -66,7 +72,7 @@ jobs:
           echo "No changes to commit in data/"
         else
           git add data/macro.json data/cot.json data/vwap.json data/daily_strategy.json \
-                  data/nq/cot.json data/nq/daily_strategy.json
+                  data/expected_range.json data/nq/cot.json data/nq/daily_strategy.json
           git commit -m "Auto-update macro + COT + VWAP + strategy [skip ci]"
           git pull --rebase origin "$branch"
           git push origin HEAD:"$branch"

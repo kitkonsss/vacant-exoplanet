@@ -558,20 +558,56 @@ def _atr(candles, period=14):
     return sum(window) / len(window)
 
 
-def analyze_expected_range(price, ohlc_daily):
-    """Daily expected move from ATR(14) — anchors realistic intraday targets."""
+def analyze_expected_range(asset_id, price, ohlc_daily):
+    """Daily expected move — IV-based (Vol2Vol smile via expected_range.json,
+    Phase 1) when fresh, with ATR(14) kept as cross-check and fallback."""
     candles = (ohlc_daily or {}).get('candles') or []
     atr = _atr(candles, 14)
-    if atr is None or price is None:
+    if price is None:
         return None
-    return {
-        'method': 'ATR(14) daily true-range proxy',
-        'atr': round(atr, 2),
-        'expected_move': round(atr, 2),
-        'day_high_est': round(price + atr, 2),
-        'day_low_est': round(price - atr, 2),
-        'note': 'Typical 1-day travel; a wall beyond ±ATR from price is unlikely to be reached intraday.',
-    }
+
+    out = None
+    if atr is not None:
+        out = {
+            'method': 'ATR(14) daily true-range proxy',
+            'atr': round(atr, 2),
+            'expected_move': round(atr, 2),
+            'day_high_est': round(price + atr, 2),
+            'day_low_est': round(price - atr, 2),
+            'note': 'Typical 1-day travel; a wall beyond ±ATR from price is unlikely to be reached intraday.',
+        }
+
+    iv = _load_json(os.path.join(_data_dir(asset_id), 'expected_range.json'))
+    move = (iv or {}).get('expected_move_1d')
+    stamp = (iv or {}).get('source_generated_at') or (iv or {}).get('generated_at')
+    fresh = False
+    if move and stamp:
+        try:
+            age_h = (datetime.now(timezone.utc)
+                     - datetime.fromisoformat(stamp.replace('Z', '+00:00'))).total_seconds() / 3600
+            fresh = age_h <= 48
+        except ValueError:
+            pass
+    if not fresh:
+        return out
+
+    if out is None:
+        out = {}
+    out.update({
+        'method': 'ATM IV from Vol2Vol smile (1-day move); ATR(14) kept as cross-check',
+        'expected_move': round(move, 1),
+        'day_high_est': round(price + move, 1),
+        'day_low_est': round(price - move, 1),
+        'atm_iv_pct': iv.get('atm_iv_pct_1d_basis'),
+        'iv_basis_tenor': iv.get('basis_tenor'),
+        'bands_1d': iv.get('bands_1d'),
+        'term_structure': iv.get('term_structure'),
+        'skew': iv.get('skew'),
+        'note': 'IV-based 1SD daily move (forward-looking). bands_1d are ±1/2/3 SD anchored '
+                'at the scrape-time future price; ATR retained for regime detection.',
+    })
+    out.setdefault('atr', round(atr, 2) if atr is not None else None)
+    return out
 
 
 def detect_regime(price, vwap, expected_range, macro):
@@ -680,8 +716,8 @@ def build_strategy(asset_id):
     price = nearest.get('future_price') if nearest else None
     key_levels, price = build_key_levels(contracts, price)
 
-    # Volatility context: daily expected range (ATR) + trending/range regime
-    expected_range = analyze_expected_range(price, ohlc_daily)
+    # Volatility context: daily expected range (IV-based w/ ATR fallback) + regime
+    expected_range = analyze_expected_range(asset_id, price, ohlc_daily)
     regime = detect_regime(price, vwap, expected_range, macro_raw)
 
     # Round numbers + confluence across OI walls / gamma walls / fresh builds / round# / VWAP SD

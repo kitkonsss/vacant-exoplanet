@@ -143,7 +143,9 @@ def build_watch_items(strategy):
     """Flatten the strategy into watchable items. Every item:
     {kind, side, level, label, target, invalidation, extra}"""
     items = []
-    atr = (strategy.get('expected_range') or {}).get('atr') or DEFAULT_ATR
+    er = strategy.get('expected_range') or {}
+    # expected_move is IV-based when Phase 1 data is fresh — prefer it over raw ATR.
+    atr = er.get('expected_move') or er.get('atr') or DEFAULT_ATR
 
     # 1. breakout triggers — momentum block first, scenarios as the source of
     # the opposite side (momentum only describes the leading direction).
