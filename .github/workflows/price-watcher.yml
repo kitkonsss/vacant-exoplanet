@@ -68,6 +68,14 @@ jobs:
         else
           git add data/watcher_state.json data/signal_log.json
           git commit -m "Update price watcher state [skip ci]" || exit 0
-          git pull --rebase origin "$branch"
-          git push origin HEAD:"$branch"
+          # The watcher runs every few minutes alongside other pushing
+          # workflows — retry the pull+push to survive push races.
+          for i in 1 2 3; do
+            if git pull --rebase origin "$branch" && git push origin HEAD:"$branch"; then
+              exit 0
+            fi
+            echo "push race (attempt $i) — retrying"
+            sleep 7
+          done
+          exit 1
         fi
