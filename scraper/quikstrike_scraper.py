@@ -2712,12 +2712,13 @@ def scrape_oi_heatmap_phase(driver, classified, asset_id, output_dir):
         print(f'[HEATMAP] ⚠ Vol2Vol restore raised: {e}')
 
 
-def scrape_contract(driver, contract, prefix, output_dir=None, asset_id='gc'):
+def scrape_contract(driver, contract, prefix, output_dir=None, asset_id='gc', intraday_only=False):
     """
     Scrape both Intraday + OI for one contract.
 
     IMPORTANT: After selecting a contract, Vol2Vol defaults to Intraday Volume.
     So we scrape Intraday FIRST (no extra click), then switch to OI.
+    With intraday_only, the OI view is skipped (it only changes once per day).
     """
     dte_str = f'{contract["dte"]:.1f} DTE' if contract.get('dte') else ''
     print(f'\n{"═"*60}')
@@ -2746,11 +2747,14 @@ def scrape_contract(driver, contract, prefix, output_dir=None, asset_id='gc'):
     if path:
         results['intraday'] = path
 
-    # 2. Open Interest
-    print(f'[SCRAPE] Switching to Open Interest...')
-    path = scrape_view(driver, 'oi', prefix, header_prefix=contract_text, output_dir=output_dir, asset_id=asset_id)
-    if path:
-        results['oi'] = path
+    # 2. Open Interest (skipped in light mode — OI updates once per CME day)
+    if intraday_only:
+        print('[SCRAPE] intraday-only mode — skipping OI view')
+    else:
+        print(f'[SCRAPE] Switching to Open Interest...')
+        path = scrape_view(driver, 'oi', prefix, header_prefix=contract_text, output_dir=output_dir, asset_id=asset_id)
+        if path:
+            results['oi'] = path
 
     return bool(results)
 
@@ -2874,14 +2878,18 @@ def discover_product_pid(driver, asset_id):
 # SCRAPE ASSET
 # ============================================================
 
-def scrape_asset(driver, asset_id):
-    """Scrape all contracts for one asset. Returns True if any data was scraped."""
+def scrape_asset(driver, asset_id, intraday_only=False):
+    """Scrape all contracts for one asset. Returns True if any data was scraped.
+
+    intraday_only: light mode for frequent runs — refresh only the Intraday
+    Volume view (the one dataset that updates all day) and skip the OI view +
+    heatmap/gamma phase, which only change once per CME day."""
     profile = ASSET_PROFILES[asset_id]
     output_dir = get_output_dir(asset_id)
     os.makedirs(output_dir, exist_ok=True)
 
     print(f'\n{"="*60}')
-    print(f'  SCRAPING: {profile["name"]}')
+    print(f'  SCRAPING: {profile["name"]}{" (intraday-only)" if intraday_only else ""}')
     print(f'  Output: {output_dir}')
     print(f'{"="*60}\n')
 
@@ -2990,26 +2998,32 @@ def scrape_asset(driver, asset_id):
             import shutil
             try:
                 shutil.copy(os.path.join(output_dir, 'current_IntradayData.txt'), os.path.join(output_dir, 'friday_IntradayData.txt'))
-                shutil.copy(os.path.join(output_dir, 'current_OIData.txt'), os.path.join(output_dir, 'friday_OIData.txt'))
+                if not intraday_only:
+                    shutil.copy(os.path.join(output_dir, 'current_OIData.txt'), os.path.join(output_dir, 'friday_OIData.txt'))
                 print('[COPY] Copied current data to friday files')
             except Exception as e:
                 print(f'[WARN] Could not copy current to friday: {e}')
             continue
 
         if c:
-            scrape_contract(driver, c, key, output_dir=output_dir, asset_id=asset_id)
+            scrape_contract(driver, c, key, output_dir=output_dir, asset_id=asset_id,
+                            intraday_only=intraday_only)
         else:
             print(f'\n[SKIP] {key}: no contract')
 
-    # OI Heatmap phase — one navigation, all three contracts
-    try:
-        scrape_oi_heatmap_phase(driver, classified, asset_id, output_dir)
-        # Matrix view writes one file per asset (not per contract), so the
-        # old friday==current mirror is no longer needed.
-    except Exception as e:
-        print(f'[HEATMAP] ⚠ Phase raised: {e}')
-        import traceback
-        traceback.print_exc()
+    # OI Heatmap phase — one navigation, all three contracts. OI heatmaps only
+    # gain a new column once per CME day, so light runs skip the whole phase.
+    if intraday_only:
+        print('[HEATMAP] intraday-only mode — skipping heatmap/gamma phase')
+    else:
+        try:
+            scrape_oi_heatmap_phase(driver, classified, asset_id, output_dir)
+            # Matrix view writes one file per asset (not per contract), so the
+            # old friday==current mirror is no longer needed.
+        except Exception as e:
+            print(f'[HEATMAP] ⚠ Phase raised: {e}')
+            import traceback
+            traceback.print_exc()
 
     build_asset_position_bias(asset_id)
     save_ohlc(asset_id, output_dir)
@@ -3028,6 +3042,10 @@ def main():
                         help='Which asset to scrape (default: all)')
     parser.add_argument('--analyze-only', action='store_true',
                         help='Build position-bias JSON from existing data files without opening QuikStrike')
+    parser.add_argument('--intraday-only', action='store_true',
+                        help='Light mode: scrape only the Intraday Volume view per contract '
+                             '(skip OI view + heatmap/gamma phase). OI publishes once per CME '
+                             'day, so frequent runs only need the intraday activity refresh.')
     args = parser.parse_args()
 
     if args.asset == 'all':
@@ -3070,7 +3088,7 @@ def main():
         # Scrape each asset
         for asset_id in assets:
             try:
-                scrape_asset(driver, asset_id)
+                scrape_asset(driver, asset_id, intraday_only=args.intraday_only)
             except Exception as e:
                 print(f'\n[ERROR] Failed to scrape {asset_id}: {e}')
                 import traceback

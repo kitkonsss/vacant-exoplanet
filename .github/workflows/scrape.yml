@@ -3,7 +3,20 @@ name: Scrape QuikStrike Data
 on:
   # Triggered by cron-job.org (on schedule) + manual trigger
   # GitHub schedule removed to avoid double-billing of Actions minutes
+  #
+  # Two modes (omitted input defaults to full):
+  #   full     — everything: Intraday + OI views, heatmap/gamma phase. Run a
+  #              few times a day (OI/heatmaps only change once per CME day).
+  #   intraday — light: only the Intraday Volume view per contract (the one
+  #              dataset that moves all day). Safe to run every 10 min.
+  #              cron-job.org body: {"ref":"main","inputs":{"mode":"intraday"}}
   workflow_dispatch:
+    inputs:
+      mode:
+        description: 'Scrape mode'
+        type: choice
+        options: [full, intraday]
+        default: full
 
 jobs:
   scrape:
@@ -38,12 +51,14 @@ jobs:
       run: |
         # Run from the scraper directory so relative paths work
         cd scraper
-        python quikstrike_scraper.py
+        python quikstrike_scraper.py ${{ inputs.mode == 'intraday' && '--intraday-only' || '' }}
 
     - name: Snapshot heatmap history
       # Archive a date-stamped copy of the OI + vol2vol (gamma) heatmaps and append
       # the per-day backtest record, so we can later check whether price reached the
       # walls. Resolves data/ from its own path, so no `cd` needed. Never hard-fails.
+      # Light runs don't touch heatmaps, so there is nothing new to snapshot.
+      if: inputs.mode != 'intraday'
       run: python scraper/snapshot_history.py || true
 
     - name: Compute Expected Range from IV smile
