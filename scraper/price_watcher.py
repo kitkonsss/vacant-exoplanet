@@ -44,6 +44,23 @@ MAX_BREAKOUT_LAG_ATR = 0.5   # don't call "breakout" if price is already this fa
 ZONE_TOUCH_ATR = 0.08        # zone counts as touched within this fraction of ATR
 APPROACH_ATR = 0.25          # "approaching" window for confluence levels
 DEFAULT_ATR = 60.0           # fallback if expected_range is missing
+RISK_BUDGET_USD = float(os.environ.get('RISK_BUDGET_USD', '500'))
+MGC_POINT_USD = 10.0
+
+
+def sizing_line(price, invalidation):
+    """Suggested size so a stop-out costs at most RISK_BUDGET_USD."""
+    if not invalidation:
+        return None
+    rp = abs(price - float(invalidation))
+    if rp <= 0:
+        return None
+    mgc = int(RISK_BUDGET_USD // (rp * MGC_POINT_USD))
+    if mgc < 1:
+        return f'ขนาด: SL ห่าง {rp:.0f} pts — เกิน budget ${RISK_BUDGET_USD:.0f} แม้ 1 MGC, ข้ามหรือรอจุดที่แคบกว่า'
+    gc = mgc // 10
+    return (f'ขนาด (เสี่ยง ${RISK_BUDGET_USD:.0f}): {mgc} MGC' + (f' / {gc} GC' if gc else '')
+            + f' — SL ห่าง {rp:.0f} pts')
 
 
 def utcnow():
@@ -64,7 +81,25 @@ def fetch_price():
         hist = ticker.history(period='1d', interval='5m')
         if hist is not None and len(hist):
             price = float(hist['Close'].iloc[-1])
+    if not price:
+        price = _stooq_price()
     return float(price) if price else None
+
+
+def _stooq_price():
+    """Backup quote from Stooq (free CSV endpoint) when yfinance fails."""
+    url = 'https://stooq.com/q/l/?s=gc.f&f=sd2t2ohlcv&h&e=csv'
+    try:
+        with urllib.request.urlopen(url, timeout=10) as resp:
+            lines = resp.read().decode().strip().splitlines()
+        if len(lines) >= 2:
+            close = lines[1].split(',')[6]
+            price = float(close)
+            print(f'[WATCH] price from Stooq fallback: {price}')
+            return price
+    except Exception as e:
+        print(f'[WATCH] stooq fallback error: {e}')
+    return None
 
 
 def fetch_last_closed_15m():
@@ -309,6 +344,9 @@ def check_items(price, items, atr, strategy, state, candle_close=None):
                 tp, sl = it.get('target'), it.get('invalidation')
                 if tp or sl:
                     lines.append(f"เป้า: {fmt(tp) if tp else '-'} | Invalidation: {fmt(sl) if sl else '-'}")
+                size = sizing_line(price, sl)
+                if size:
+                    lines.append(size)
                 if it['extra']:
                     lines.append(it['extra'])
                 direction = 'long' if it['side'] == 'above' else 'short'
@@ -323,6 +361,9 @@ def check_items(price, items, atr, strategy, state, candle_close=None):
                 lines = [f"{emoji} <b>GC {what}</b> ที่ {fmt(level)} → {it.get('action', 'fade')}",
                          f"ราคา {fmt(price)}",
                          f"เป้า: {fmt(it['target']) if it.get('target') else '-'} | SL: {fmt(it['invalidation']) if it.get('invalidation') else '-'}"]
+                size = sizing_line(price, it.get('invalidation'))
+                if size:
+                    lines.append(size)
                 if it['extra']:
                     lines.append(f"Confluence: {it['extra']}")
                 if not it.get('aligned', True):

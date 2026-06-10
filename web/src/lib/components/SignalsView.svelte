@@ -2,7 +2,17 @@
     import Card from './ui/Card.svelte';
     import Badge from './ui/Badge.svelte';
 
-    let { expectedRange = null, log = [], scorecard = null, optionFlow = null, loading = false } = $props();
+    let { expectedRange = null, log = [], scorecard = null, optionFlow = null, wallBacktest = null, loading = false } = $props();
+
+    const verdictMeta = {
+        edge_confirmed: { label: 'EDGE ✓', variant: 'up' },
+        no_edge: { label: 'NO EDGE', variant: 'down' },
+        inconclusive: { label: 'INCONCLUSIVE', variant: 'warn' },
+        insufficient_n: { label: 'NEED MORE N', variant: 'muted' }
+    };
+    function ciText(ci) {
+        return ci ? `${(ci[0] * 100).toFixed(0)}–${(ci[1] * 100).toFixed(0)}%` : '—';
+    }
 
     const er = $derived(expectedRange);
     const tenors = $derived(er?.tenors || []);
@@ -278,20 +288,47 @@
                 {#if byKind.length}
                     <div class="mt-3 grid gap-2 sm:grid-cols-2">
                         {#each byKind as [kind, b]}
-                            <div class="flex items-center justify-between rounded-md border border-border bg-background p-3">
-                                <Badge variant={kindMeta[kind]?.variant || 'outline'}>{kindMeta[kind]?.label || kind}</Badge>
-                                <div class="flex items-center gap-3 font-mono text-xs tabular-nums">
+                            <div class="rounded-md border border-border bg-background p-3">
+                                <div class="flex items-center justify-between">
+                                    <Badge variant={kindMeta[kind]?.variant || 'outline'}>{kindMeta[kind]?.label || kind}</Badge>
+                                    <Badge variant={verdictMeta[b.verdict]?.variant || 'muted'}>{verdictMeta[b.verdict]?.label || b.verdict}</Badge>
+                                </div>
+                                <div class="mt-2 flex flex-wrap items-center gap-3 font-mono text-xs tabular-nums">
                                     <span class="text-up">{b.win}W</span>
                                     <span class="text-down">{b.loss}L</span>
                                     <span class="text-muted-foreground">{b.expired}E</span>
                                     <span class="text-foreground">{fmtPct(b.win_rate)}</span>
+                                    <span class="text-muted-foreground">CI {ciText(b.win_rate_ci95)}</span>
+                                    {#if b.breakeven_win_rate != null}
+                                        <span class="text-muted-foreground">b/e {fmtPct(b.breakeven_win_rate)}</span>
+                                    {/if}
+                                </div>
+                                <div class="mt-1 flex flex-wrap items-center gap-3 font-mono text-xs tabular-nums text-muted-foreground">
+                                    {#if b.expectancy_points != null}
+                                        <span class={b.expectancy_points > 0 ? 'text-up' : 'text-down'}>
+                                            E[{b.expectancy_points > 0 ? '+' : ''}{b.expectancy_points} pts/trade]
+                                        </span>
+                                    {/if}
+                                    <span class={b.total_net_points > 0 ? 'text-up' : b.total_net_points < 0 ? 'text-down' : ''}>
+                                        net {b.total_net_points > 0 ? '+' : ''}{b.total_net_points} pts
+                                    </span>
                                     {#if b.avg_hours_to_resolution != null}
-                                        <span class="text-muted-foreground">~{b.avg_hours_to_resolution}h</span>
+                                        <span>~{b.avg_hours_to_resolution}h</span>
                                     {/if}
                                 </div>
                             </div>
                         {/each}
                     </div>
+                    {#if scorecard.total_net_points != null}
+                        <div class="mt-2 text-xs text-muted-foreground">
+                            Net total (after {scorecard.cost_points_per_trade} pt cost/trade):
+                            <span class="font-mono {scorecard.total_net_points > 0 ? 'text-up' : 'text-down'}">
+                                {scorecard.total_net_points > 0 ? '+' : ''}{scorecard.total_net_points} pts
+                                (≈ ${scorecard.total_net_usd_mgc}/MGC)
+                            </span>
+                            — verdicts need n ≥ {scorecard.min_n_for_verdict} AND the full CI clear of breakeven.
+                        </div>
+                    {/if}
                 {/if}
             {:else}
                 <p class="mt-2 text-sm text-muted-foreground">
@@ -300,6 +337,43 @@
                 </p>
             {/if}
         </Card>
+
+        <!-- ===== Wall backtest (historical evidence) ===== -->
+        {#if wallBacktest?.days_evaluated}
+            <Card class="p-4">
+                <div class="flex flex-wrap items-center justify-between gap-3">
+                    <span class="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                        Wall Backtest — {wallBacktest.days_evaluated} days
+                        ({wallBacktest.date_range?.[0]} → {wallBacktest.date_range?.[1]})
+                    </span>
+                    {#if wallBacktest.generated_at}
+                        <span class="font-mono text-[10px] text-muted-foreground">{new Date(wallBacktest.generated_at).toLocaleString()}</span>
+                    {/if}
+                </div>
+                <div class="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-3">
+                    <div class="rounded-md border border-border bg-background p-3 text-center">
+                        <div class="text-[10px] font-semibold uppercase text-muted-foreground">Touch Rate (D+1)</div>
+                        <div class="font-mono text-xl tabular-nums text-foreground">{fmtPct(wallBacktest.touch?.rate)}</div>
+                        <div class="font-mono text-[10px] text-muted-foreground">n={wallBacktest.touch?.n_wall_days} · CI {ciText(wallBacktest.touch?.ci95)}</div>
+                    </div>
+                    <div class="rounded-md border border-border bg-background p-3 text-center">
+                        <div class="text-[10px] font-semibold uppercase text-muted-foreground">Respect | Touch</div>
+                        <div class="font-mono text-xl tabular-nums {(wallBacktest.respect_given_touch?.ci95?.[0] ?? 0) > 0.5 ? 'text-up' : 'text-foreground'}">
+                            {fmtPct(wallBacktest.respect_given_touch?.rate)}
+                        </div>
+                        <div class="font-mono text-[10px] text-muted-foreground">n={wallBacktest.respect_given_touch?.n_touches} · CI {ciText(wallBacktest.respect_given_touch?.ci95)}</div>
+                    </div>
+                    <div class="rounded-md border border-border bg-background p-3 text-center">
+                        <div class="text-[10px] font-semibold uppercase text-muted-foreground">Magnet Pull</div>
+                        <div class="font-mono text-xl tabular-nums text-foreground">{fmtPct(wallBacktest.magnet_pull?.rate)}</div>
+                        <div class="font-mono text-[10px] text-muted-foreground">n={wallBacktest.magnet_pull?.n} · CI {ciText(wallBacktest.magnet_pull?.ci95)}</div>
+                    </div>
+                </div>
+                <p class="mt-2 text-xs text-muted-foreground">
+                    A stat only counts as edge when its whole CI clears 50%. Sample grows daily as snapshots accumulate.
+                </p>
+            </Card>
+        {/if}
 
         <!-- ===== Signal log ===== -->
         <Card class="p-4">

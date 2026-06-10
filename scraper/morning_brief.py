@@ -90,6 +90,17 @@ def build_message(strategy, er, price):
         lines.append(f"\n🎯 <b>Momentum:</b> {momentum['trigger']}")
         tgt = ', '.join(momentum.get('targets') or []) or '-'
         lines.append(f"   เป้า {tgt} | invalidation {momentum.get('invalidation', '-')}")
+        risk = strategy.get('risk') or {}
+        mom_size = next((s for s in risk.get('setups') or [] if s.get('setup') == 'momentum'), None)
+        if mom_size:
+            budget = risk.get('budget_usd_per_trade', 500)
+            if mom_size['mgc_contracts'] < 1:
+                lines.append(f"   📏 SL ห่าง {mom_size['risk_points']} pts — เกิน budget ${budget:.0f} "
+                             'แม้ 1 MGC → ข้าม setup นี้ หรือรอจุดเข้าที่แคบกว่า')
+            else:
+                lines.append(f"   📏 ขนาด (เสี่ยง ${budget:.0f}): {mom_size['mgc_contracts']} MGC "
+                             f"| SL ห่าง {mom_size['risk_points']} pts"
+                             + (f" | RR {mom_size['rr']}" if mom_size.get('rr') else ''))
     for sc in scenarios:
         if sc.get('trigger') and sc.get('trigger') != momentum.get('trigger'):
             lines.append(f"🔄 {sc.get('bias', '')}: {sc['trigger']} → {sc.get('then', '')}")

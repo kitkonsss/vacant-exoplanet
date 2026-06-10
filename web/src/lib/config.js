@@ -102,3 +102,8 @@ export function signalScorecardUrl(assetId) {
 export function optionFlowUrl(assetId) {
     return dataUrl(assetId, 'option_flow.json');
 }
+
+// Historical wall backtest (touch/respect/magnet rates with CIs) — backtest_walls.py.
+export function wallBacktestUrl(assetId) {
+    return dataUrl(assetId, 'wall_backtest.json');
+}

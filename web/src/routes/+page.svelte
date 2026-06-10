@@ -344,6 +344,7 @@
                             log={signals?.log || []}
                             scorecard={signals?.scorecard}
                             optionFlow={signals?.optionFlow}
+                            wallBacktest={signals?.wallBacktest}
                             loading={signalsLoading}
                         />
                     </div>

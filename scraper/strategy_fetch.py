@@ -635,6 +635,65 @@ def analyze_expected_range(asset_id, price, ohlc_daily):
     return out
 
 
+RISK_BUDGET_USD = float(os.environ.get('RISK_BUDGET_USD', '500'))
+POINT_VALUE = {'GC': 100.0, 'MGC': 10.0}
+
+
+def build_risk(momentum, mean_reversion, expected_range):
+    """Position sizing per setup: contracts such that a stop-out loses at most
+    RISK_BUDGET_USD. Sizing comes from the stop distance, never from
+    conviction — conviction picks WHETHER to trade, risk picks HOW MUCH."""
+    setups = []
+
+    def add(name, entry, stop, target):
+        if not entry or not stop:
+            return
+        rp = abs(float(entry) - float(stop))
+        if rp <= 0:
+            return
+        setups.append({
+            'setup': name,
+            'entry': float(entry), 'stop': float(stop),
+            'target': float(target) if target else None,
+            'risk_points': round(rp, 1),
+            'rr': round(abs(float(target) - float(entry)) / rp, 2) if target else None,
+            'mgc_contracts': int(RISK_BUDGET_USD // (rp * POINT_VALUE['MGC'])),
+            'gc_contracts': int(RISK_BUDGET_USD // (rp * POINT_VALUE['GC'])),
+        })
+
+    mom = momentum or {}
+    lvl = _num_from_text(mom.get('trigger'))
+    tgt = _num_from_text((mom.get('targets') or [None])[0])
+    add('momentum', lvl, _num_from_text(mom.get('invalidation')), tgt)
+    for z in (mean_reversion or {}).get('zones') or []:
+        add(f"mr_{z.get('action', 'fade').replace(' ', '_')}", z.get('at'),
+            z.get('invalidation'), z.get('target'))
+
+    em = (expected_range or {}).get('expected_move')
+    return {
+        'budget_usd_per_trade': RISK_BUDGET_USD,
+        'point_value_usd': POINT_VALUE,
+        'setups': setups,
+        'daily_guard': {
+            'max_losses_per_day': 2,
+            'note': f'2 stop-outs = -${RISK_BUDGET_USD * 2:.0f}; stop trading for the day. '
+                    'Size from the stop distance, never from conviction.',
+        },
+        'expected_move_context': em,
+    }
+
+
+def _num_from_text(text):
+    """First price-like number in free text ('break above 4400 (x4)' -> 4400)."""
+    import re
+    if text is None:
+        return None
+    if isinstance(text, (int, float)):
+        return float(text)
+    m = re.search(r'(\d{3,6}(?:\.\d+)?)', str(text))
+    return float(m.group(1)) if m else None
+
+
 def detect_regime(price, vwap, expected_range, macro):
     """Trending vs range — picks which playbook (momentum vs mean-reversion) leads.
 
@@ -1012,6 +1071,7 @@ def build_strategy(asset_id):
         'contrarian_flag': cot_contrarian,
         'momentum': momentum,
         'mean_reversion': mean_reversion,
+        'risk': build_risk(momentum, mean_reversion, expected_range),
         'data_freshness': data_freshness,
         'key_levels': key_levels,
         'confluence_levels': confluence_levels,
