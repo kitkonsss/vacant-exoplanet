@@ -1,0 +1,68 @@
+name: Price Watcher
+
+# Entry-signal watcher: pulls the live GC price (yfinance) and compares it to
+# the setups already computed in data/daily_strategy.json (breakout triggers,
+# mean-reversion zones, confluence levels). Sends Telegram alerts via
+# scraper/price_watcher.py.
+#
+# Cadence: the `schedule` cron below is the free backup (GitHub may delay it
+# 10-30 min). For tighter timing, point cron-job.org at the workflow_dispatch
+# API every 5 min, same as scrape.yml / macro.yml:
+#   POST https://api.github.com/repos/<owner>/<repo>/actions/workflows/price-watcher.yml/dispatches
+#   body: {"ref":"main"}
+#
+# Required repo secrets: TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID.
+# Without them the run still works but only prints alerts to the log.
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '*/15 * * * 0-5'   # every 15 min, Sun-Fri (GC is closed Saturday)
+
+concurrency:
+  group: price-watcher
+  cancel-in-progress: false
+
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install yfinance
+
+    - name: Run price watcher
+      env:
+        TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+        TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+      run: python scraper/price_watcher.py
+
+    - name: Commit watcher state
+      # Persists alert-dedupe state so the same level doesn't re-alert all day.
+      run: |
+        git config --global user.name "github-actions[bot]"
+        git config --global user.email "github-actions[bot]@users.noreply.github.com"
+        branch="${GITHUB_REF_NAME:-main}"
+
+        if git diff --quiet data/watcher_state.json 2>/dev/null && \
+           git ls-files --error-unmatch data/watcher_state.json >/dev/null 2>&1; then
+          echo "No state changes to commit"
+        else
+          git add data/watcher_state.json
+          git commit -m "Update price watcher state [skip ci]" || exit 0
+          git pull --rebase origin "$branch"
+          git push origin HEAD:"$branch"
+        fi
