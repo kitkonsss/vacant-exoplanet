@@ -55,12 +55,12 @@
         <div class={`grid grid-cols-4 ${compact ? 'gap-1.5' : 'gap-2'}`}>
             <div class={`rounded-md border border-border bg-background ${compact ? 'px-2 py-1.5' : 'px-2.5 py-2'}`}>
                 <div class={`font-semibold uppercase tracking-widest text-muted-foreground ${compact ? 'mb-0.5 text-[8px]' : 'mb-1 text-[9px]'}`}>
-                    OI · C / P
+                    OI · P / C
                 </div>
                 <div class={`font-mono font-semibold tabular-nums ${compact ? 'text-xs' : 'text-sm'}`}>
-                    <span class="text-call">{fmtNumber(totals.call_oi)}</span>
-                    <span class="text-muted-foreground">/</span>
                     <span class="text-put">{fmtNumber(totals.put_oi)}</span>
+                    <span class="text-muted-foreground">/</span>
+                    <span class="text-call">{fmtNumber(totals.call_oi)}</span>
                 </div>
             </div>
             <div class={`rounded-md border border-border bg-background ${compact ? 'px-2 py-1.5' : 'px-2.5 py-2'}`}>
