@@ -1,16 +1,16 @@
 {
   "version": 2,
   "asset": "GC",
-  "generated_at": "2026-06-11T04:12:54+00:00",
+  "generated_at": "2026-06-11T04:22:04+00:00",
   "future_price": 4121.2,
   "directional_bias": {
     "label": "neutral",
-    "score": -9.9,
+    "score": -8.6,
     "confidence": "low"
   },
   "components": {
     "positioning": {
-      "score": 16.1,
+      "score": 12.8,
       "label": "bullish",
       "weight": 0.45
     },
@@ -34,24 +34,24 @@
     }
   },
   "agreement": {
-    "bullish_layers": 2,
+    "bullish_layers": 3,
     "bearish_layers": 2,
     "aligned": 2,
-    "total": 4
+    "total": 5
   },
   "regime": {
     "regime": "trending",
     "score": 2,
     "reasons": [
       "price 23.8 SD from session VWAP",
-      "ATR/SD-band 2.3x",
+      "ATR/SD-band 2.6x",
       "VIX 18.9"
     ],
     "lead_playbook": "momentum"
   },
   "expected_range": {
     "method": "ATM IV from Vol2Vol smile (1-day move); ATR(14) kept as cross-check",
-    "atr": 82.4,
+    "atr": 91.26,
     "expected_move": 82.4,
     "day_high_est": 4203.6,
     "day_low_est": 4038.8,
@@ -84,14 +84,60 @@
     }
   },
   "option_flow": {
-    "generated_at": "2026-06-11T04:12:54+00:00",
+    "generated_at": "2026-06-11T04:22:04+00:00",
     "imbalance_1h": {
-      "score": 0,
-      "label": "thin",
-      "note": "only 0 contracts in window"
+      "score": -5.9,
+      "label": "downside_flow",
+      "above_share": 0.35,
+      "below_share": 0.65
     },
-    "flow_magnet_1h": null,
-    "wall_activity_1h": [],
+    "flow_magnet_1h": {
+      "strike": 4018.7,
+      "side": "below",
+      "distance_points": -83.0,
+      "total_volume": 939
+    },
+    "wall_activity_1h": [
+      {
+        "strike": 4000.0,
+        "added": 82,
+        "share_pct": 8.7,
+        "side": "below",
+        "distance_points": -101.7,
+        "confluence": 3,
+        "sources": [
+          "gamma_wall",
+          "oi_wall",
+          "round_100"
+        ]
+      },
+      {
+        "strike": 4100.0,
+        "added": 25,
+        "share_pct": 2.7,
+        "side": "below",
+        "distance_points": -1.7,
+        "confluence": 3,
+        "sources": [
+          "gamma_wall",
+          "oi_wall",
+          "round_100"
+        ]
+      },
+      {
+        "strike": 4200.0,
+        "added": 17,
+        "share_pct": 1.8,
+        "side": "above",
+        "distance_points": 98.3,
+        "confluence": 3,
+        "sources": [
+          "gamma_wall",
+          "oi_build",
+          "round_100"
+        ]
+      }
+    ],
     "note": "Successive Vol2Vol intraday-volume snapshot deltas (~10 min cadence). Volume is unsigned \u2014 reads describe location/intensity of flow, not aggressor side."
   },
   "vwap": {
@@ -123,7 +169,7 @@
       "4000"
     ],
     "invalidation": "4200",
-    "rationale": "macro headwind; downside magnet"
+    "rationale": "macro headwind; upside magnet"
   },
   "mean_reversion": {
     "vwap": 4540.68,
@@ -199,8 +245,8 @@
     "expected_move_context": 82.4
   },
   "data_freshness": {
-    "strategy": "2026-06-11T04:12:54+00:00",
-    "positioning": "2026-06-11T03:51:40Z",
+    "strategy": "2026-06-11T04:22:04+00:00",
+    "positioning": "2026-06-11T04:21:32Z",
     "macro": "2026-06-09T06:36:25+00:00",
     "cot_report_date": "2026-05-26",
     "vwap": "2026-06-03T00:30:16+00:00"
@@ -575,7 +621,7 @@
         "is_major": true,
         "side": "below",
         "distance_points": -221.2,
-        "oi": 1065,
+        "oi": 1067,
         "oi_pctile": 0.65,
         "thick": false,
         "oi_type": "put",
@@ -592,7 +638,7 @@
         "is_major": false,
         "side": "below",
         "distance_points": -171.2,
-        "oi": 1704,
+        "oi": 1696,
         "oi_pctile": 0.71,
         "thick": false,
         "oi_type": "mixed",
@@ -626,8 +672,8 @@
         "is_major": false,
         "side": "below",
         "distance_points": -71.2,
-        "oi": 765,
-        "oi_pctile": 0.62,
+        "oi": 94,
+        "oi_pctile": 0.29,
         "thick": false,
         "oi_type": "put",
         "role": "support",
@@ -660,8 +706,8 @@
         "is_major": false,
         "side": "above",
         "distance_points": 28.8,
-        "oi": 257,
-        "oi_pctile": 0.44,
+        "oi": 833,
+        "oi_pctile": 0.62,
         "thick": false,
         "oi_type": "put",
         "role": "support",
@@ -779,10 +825,10 @@
   },
   "heatmap_contract_flow": {
     "method": "latest OI heatmap build-up: newest non-null date minus previous non-null date",
-    "bias": "downside_magnet",
+    "bias": "upside_magnet",
     "added_above_price": 3517.0,
     "added_below_price": 1289.0,
-    "support_build": 80.0,
+    "support_build": 356.0,
     "resistance_build": 204.0,
     "magnet": {
       "strike": 4400.0,
@@ -833,8 +879,8 @@
         "change_1d": 274.0,
         "distance_points": -371.2,
         "side": "below",
-        "oi_type": null,
-        "wall_role": null
+        "oi_type": "put",
+        "wall_role": "support"
       },
       {
         "contract_key": "monthly",
@@ -1123,8 +1169,8 @@
             "change_1d": 274.0,
             "distance_points": -371.2,
             "side": "below",
-            "oi_type": null,
-            "wall_role": null
+            "oi_type": "put",
+            "wall_role": "support"
           },
           {
             "contract_key": "monthly",
@@ -1384,22 +1430,22 @@
       "total_oi": 83,
       "call_oi": 0,
       "put_oi": 83,
-      "intraday_volume": 78,
-      "activity_vs_oi": 0.9398,
+      "intraday_volume": 44,
+      "activity_vs_oi": 0.5301,
       "distance_points": 3.8,
       "distance_pct": 0.092,
       "location": "above"
     },
     "nearest_support": {
-      "contract_key": "current",
-      "contract": "G2RM6",
+      "contract_key": "tomorrow",
+      "contract": "G3MM6",
       "strike": 4120.0,
       "side": "put_wall",
-      "total_oi": 2,
+      "total_oi": 1,
       "call_oi": 0,
-      "put_oi": 2,
-      "intraday_volume": 103,
-      "activity_vs_oi": 51.5,
+      "put_oi": 1,
+      "intraday_volume": 3,
+      "activity_vs_oi": 3.0,
       "distance_points": -1.2,
       "distance_pct": -0.029,
       "location": "below"
@@ -1413,8 +1459,8 @@
         "total_oi": 5044,
         "call_oi": 2644,
         "put_oi": 2400,
-        "intraday_volume": 1239,
-        "activity_vs_oi": 0.2456,
+        "intraday_volume": 122,
+        "activity_vs_oi": 0.0242,
         "distance_points": 278.8,
         "distance_pct": 6.765,
         "location": "above"
@@ -1427,8 +1473,8 @@
         "total_oi": 4797,
         "call_oi": 3545,
         "put_oi": 1252,
-        "intraday_volume": 0,
-        "activity_vs_oi": 0,
+        "intraday_volume": 2,
+        "activity_vs_oi": 0.0004,
         "distance_points": 678.8,
         "distance_pct": 16.471,
         "location": "above"
@@ -1441,8 +1487,8 @@
         "total_oi": 4531,
         "call_oi": 34,
         "put_oi": 4497,
-        "intraday_volume": 2569,
-        "activity_vs_oi": 0.567,
+        "intraday_volume": 257,
+        "activity_vs_oi": 0.0567,
         "distance_points": -121.2,
         "distance_pct": -2.941,
         "location": "below"
@@ -1455,8 +1501,8 @@
         "total_oi": 4217,
         "call_oi": 1960,
         "put_oi": 2257,
-        "intraday_volume": 1805,
-        "activity_vs_oi": 0.428,
+        "intraday_volume": 80,
+        "activity_vs_oi": 0.019,
         "distance_points": 378.8,
         "distance_pct": 9.191,
         "location": "above"
@@ -1469,8 +1515,8 @@
         "total_oi": 4114,
         "call_oi": 2056,
         "put_oi": 2058,
-        "intraday_volume": 461,
-        "activity_vs_oi": 0.1121,
+        "intraday_volume": 115,
+        "activity_vs_oi": 0.028,
         "distance_points": -321.2,
         "distance_pct": -7.794,
         "location": "below"
@@ -1483,8 +1529,8 @@
         "total_oi": 3874,
         "call_oi": 2414,
         "put_oi": 1460,
-        "intraday_volume": 955,
-        "activity_vs_oi": 0.2465,
+        "intraday_volume": 54,
+        "activity_vs_oi": 0.0139,
         "distance_points": 478.8,
         "distance_pct": 11.618,
         "location": "above"
@@ -1497,8 +1543,8 @@
         "total_oi": 3467,
         "call_oi": 2698,
         "put_oi": 769,
-        "intraday_volume": 1560,
-        "activity_vs_oi": 0.45,
+        "intraday_volume": 42,
+        "activity_vs_oi": 0.0121,
         "distance_points": 578.8,
         "distance_pct": 14.044,
         "location": "above"
@@ -1525,8 +1571,8 @@
         "total_oi": 2368,
         "call_oi": 204,
         "put_oi": 2164,
-        "intraday_volume": 748,
-        "activity_vs_oi": 0.3159,
+        "intraday_volume": 73,
+        "activity_vs_oi": 0.0308,
         "distance_points": 178.8,
         "distance_pct": 4.339,
         "location": "above"
@@ -1539,8 +1585,8 @@
         "total_oi": 1991,
         "call_oi": 194,
         "put_oi": 1797,
-        "intraday_volume": 1892,
-        "activity_vs_oi": 0.9503,
+        "intraday_volume": 180,
+        "activity_vs_oi": 0.0904,
         "distance_points": -21.2,
         "distance_pct": -0.514,
         "location": "below"
@@ -1549,7 +1595,7 @@
     "note": "Use side + activity_vs_oi to distinguish static wall from active wall."
   },
   "execution_read": {
-    "primary_path": "downside_momentum_to_major_gamma_wall",
+    "primary_path": "upside_momentum_to_major_gamma_wall",
     "contract_build_up": "largest fresh OI build at 4360 (monthly, +728 contracts, above, mixed \u2192 magnet)",
     "oi_magnet": "4400 (mixed, 5044 OI, above)",
     "gamma_magnet": "4400 (\u03b3344)",
