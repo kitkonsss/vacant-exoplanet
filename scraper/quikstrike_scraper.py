@@ -17,6 +17,7 @@ import sys
 import json
 import time
 import re
+import random
 import shutil
 import subprocess
 import csv
@@ -130,10 +131,103 @@ def create_driver():
     options.add_argument('--disable-dev-shm-usage')
     options.add_argument('--headless=new')
     options.add_argument('--window-size=1920,1080')
+
+    # ── Stealth: reduce reCAPTCHA v3 bot-score ──
+    # 1) Hide the biggest signal: navigator.webdriver = true
+    options.add_argument('--disable-blink-features=AutomationControlled')
+    # 2) Remove "Chrome is being controlled by automated software" infobar
+    options.add_experimental_option('excludeSwitches', ['enable-automation'])
+    # 3) Disable automation extension
+    options.add_experimental_option('useAutomationExtension', False)
+    # 4) Realistic User-Agent (match the Chrome version installed on ubuntu-latest)
+    options.add_argument(
+        'user-agent=Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 '
+        '(KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36'
+    )
+    # 5) Accept-Language header to look like a real browser
+    options.add_argument('--lang=en-US,en')
+    # 6) Disable "navigator.plugins is empty" fingerprint
+    options.add_argument('--disable-extensions')
+
     service = Service(ChromeDriverManager().install())
     driver = webdriver.Chrome(service=service, options=options)
     driver.implicitly_wait(2)
+
+    # ── CDP stealth injection ──
+    # Patch JS properties that reCAPTCHA v3 / bot-management WAFs probe.
+    # This runs via Chrome DevTools Protocol before any page loads.
+    _inject_stealth(driver)
+
     return driver
+
+
+def _inject_stealth(driver):
+    """Inject JS via CDP to mask headless/automation signals.
+
+    reCAPTCHA v3 scores browsers silently by probing navigator.webdriver,
+    window.chrome, permissions, plugins count, WebGL vendor, etc.
+    We patch these before any page navigation so the scoring script
+    never sees bot signals.
+    """
+    stealth_js = """
+        // 1) Delete navigator.webdriver (belt-and-suspenders with the Chrome flag)
+        Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
+
+        // 2) Fake window.chrome object (missing in headless)
+        if (!window.chrome) {
+            window.chrome = {
+                runtime: {
+                    onMessage: { addListener: function() {} },
+                    sendMessage: function() {}
+                },
+                loadTimes: function() { return {}; },
+                csi: function() { return {}; }
+            };
+        }
+
+        // 3) Fake chrome.runtime.connect (probed by some WAFs)
+        if (window.chrome && window.chrome.runtime) {
+            window.chrome.runtime.connect = function() {
+                return { onMessage: { addListener: function() {} } };
+            };
+        }
+
+        // 4) Fix permissions query (headless returns "denied" for notifications)
+        const originalQuery = window.navigator.permissions.query;
+        window.navigator.permissions.query = (parameters) =>
+            parameters.name === 'notifications'
+                ? Promise.resolve({state: Notification.permission})
+                : originalQuery(parameters);
+
+        // 5) Fake plugins array (headless has length 0)
+        Object.defineProperty(navigator, 'plugins', {
+            get: () => [
+                { name: 'Chrome PDF Plugin',      filename: 'internal-pdf-viewer' },
+                { name: 'Chrome PDF Viewer',       filename: 'mhjfbmdgcfjbbpaeojofohoefgiehjai' },
+                { name: 'Native Client',           filename: 'internal-nacl-plugin' },
+            ],
+        });
+
+        // 6) Fake languages (headless sometimes has empty array)
+        Object.defineProperty(navigator, 'languages', {
+            get: () => ['en-US', 'en'],
+        });
+
+        // 7) Fake WebGL vendor/renderer (headless exposes "SwiftShader")
+        const getParameter = WebGLRenderingContext.prototype.getParameter;
+        WebGLRenderingContext.prototype.getParameter = function(parameter) {
+            if (parameter === 37445) return 'Intel Inc.';           // UNMASKED_VENDOR
+            if (parameter === 37446) return 'Intel Iris OpenGL Engine'; // UNMASKED_RENDERER
+            return getParameter.call(this, parameter);
+        };
+    """
+    try:
+        driver.execute_cdp_cmd('Page.addScriptToEvaluateOnNewDocument', {
+            'source': stealth_js
+        })
+        print('[STEALTH] Injected anti-detection patches via CDP')
+    except Exception as e:
+        print(f'[STEALTH] CDP injection failed (non-fatal): {e}')
 
 
 def save_debug(driver, label='', output_dir=None):
@@ -241,6 +335,15 @@ def _handle_disclaimer(driver):
       - A "Continue" button (input[type="submit"] value="Continue")
     The checkbox MUST be checked before the Continue button works.
     """
+    # ── Stealth: simulate reading the disclaimer ──
+    # A human would scroll down and pause before clicking. This reduces
+    # the reCAPTCHA v3 bot-score by making our timing non-deterministic.
+    try:
+        driver.execute_script('window.scrollTo(0, document.body.scrollHeight * 0.7);')
+    except Exception:
+        pass
+    time.sleep(random.uniform(1.0, 3.0))
+
     # ── Step 1: Check the agreement checkbox ──
     checkbox_checked = False
     try:
@@ -265,6 +368,8 @@ def _handle_disclaimer(driver):
         pass
 
     # ── Step 2: Click the Continue/Accept/Submit button ──
+    # Small random pause between checkbox and button (human doesn't instant-click)
+    time.sleep(random.uniform(0.3, 1.0))
     # Try specific selectors in priority order
     button_selectors = [
         '#btnContinue', '[id*="btnContinue"]',
