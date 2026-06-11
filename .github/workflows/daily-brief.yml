@@ -124,6 +124,15 @@ jobs:
                     data/nq/cot.json data/nq/daily_strategy.json \
                     data/daily_brief.md
             git commit -m "Daily brief + data refresh [skip ci]"
-            git pull --rebase origin "$branch"
-            git push origin HEAD:"$branch"
+            # Retry + -X theirs to survive concurrent pushes racing on the same
+            # generated JSON. Same pattern as morning-brief.yml.
+            for i in 1 2 3 4 5; do
+              if git pull --rebase -X theirs origin "$branch" && git push origin HEAD:"$branch"; then
+                exit 0
+              fi
+              echo "push race (attempt $i) — retrying"
+              git rebase --abort 2>/dev/null || true
+              sleep 7
+            done
+            exit 1
           fi

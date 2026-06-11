@@ -98,8 +98,22 @@ jobs:
         else
           git add data/
           git commit -m "Auto-update QuikStrike data [skip ci]"
-          git pull --rebase origin "$branch"
-          git push origin HEAD:"$branch"
+          # Full mode runs ~5 min and rewrites every generated file, so a
+          # concurrent intraday scrape / price-watcher / macro push almost
+          # always lands on origin mid-run. Retry the pull+push and resolve
+          # conflicts on the generated JSON with -X theirs (keep OUR freshly
+          # scraped data); abort the half-finished rebase between attempts so
+          # the next pull starts clean. Same pattern as morning-brief.yml.
+          for i in 1 2 3 4 5; do
+            if git pull --rebase -X theirs origin "$branch" && git push origin HEAD:"$branch"; then
+              echo "pushed on attempt $i"
+              exit 0
+            fi
+            echo "push race (attempt $i) — retrying"
+            git rebase --abort 2>/dev/null || true
+            sleep 7
+          done
+          exit 1
         fi
 
     - name: Telegram alert on failure

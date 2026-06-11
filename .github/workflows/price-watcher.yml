@@ -73,12 +73,16 @@ jobs:
           done
           git commit -m "Update price watcher state [skip ci]" || exit 0
           # The watcher runs every few minutes alongside other pushing
-          # workflows — retry the pull+push to survive push races.
-          for i in 1 2 3; do
-            if git pull --rebase origin "$branch" && git push origin HEAD:"$branch"; then
+          # workflows — retry the pull+push to survive push races. -X theirs
+          # keeps OUR freshly written state on conflict; abort the half-finished
+          # rebase between attempts so the next pull starts clean (otherwise the
+          # retry dies on "rebase in progress"). Same pattern as morning-brief.yml.
+          for i in 1 2 3 4 5; do
+            if git pull --rebase -X theirs origin "$branch" && git push origin HEAD:"$branch"; then
               exit 0
             fi
             echo "push race (attempt $i) — retrying"
+            git rebase --abort 2>/dev/null || true
             sleep 7
           done
           exit 1
