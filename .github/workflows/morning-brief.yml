@@ -58,7 +58,7 @@ jobs:
         python scraper/macro_fetch.py || true
         python scraper/vwap_fetch.py || true
         python scraper/expected_range_fetch.py || true
-        python scraper/strategy_fetch.py --asset gc || true
+        python scraper/strategy_fetch.py --asset all || true
 
     - name: Send morning brief
       # Telegram message is opt-in only (user stopped reading it); scheduled
@@ -78,10 +78,27 @@ jobs:
         if [ -z "$(git status --porcelain data/)" ]; then
           echo "No data changes to commit"
         else
-          git add data/macro.json data/vwap.json data/expected_range.json data/daily_strategy.json
+          # expected_range_fetch + strategy_fetch are multi-asset now — stage
+          # every file the refresh writes (GC + NQ), guarded on existence.
+          # Anything left unstaged would make `git pull --rebase` abort.
+          for f in data/macro.json data/vwap.json \
+                   data/expected_range.json data/iv_baseline.json data/daily_strategy.json \
+                   data/nq/expected_range.json data/nq/iv_baseline.json data/nq/daily_strategy.json; do
+            [ -e "$f" ] && git add "$f"
+          done
           git commit -m "Morning brief data refresh [skip ci]" || exit 0
-          git pull --rebase origin "$branch"
-          git push origin HEAD:"$branch"
+          # the 10-min intraday scrape pushes around the clock — retry to
+          # survive push races; -X theirs keeps our freshly generated data
+          # if a scrape commit touched the same generated files.
+          for i in 1 2 3; do
+            if git pull --rebase -X theirs origin "$branch" && git push origin HEAD:"$branch"; then
+              exit 0
+            fi
+            echo "push race (attempt $i) — retrying"
+            git rebase --abort 2>/dev/null || true
+            sleep 7
+          done
+          exit 1
         fi
 
     - name: Telegram alert on failure
@@ -92,4 +109,4 @@ jobs:
       run: |
         [ -n "$TG_TOKEN" ] && curl -s -X POST "https://api.telegram.org/bot$TG_TOKEN/sendMessage" \
           -d chat_id="$TG_CHAT" \
-          --data-urlencode "text=🛑 Morning Brief พัง — ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" > /dev/null || true
+          --data-urlencode "text=🛑 Dawn data refresh พัง (morning-brief.yml — ตัวข้อความเช้าปิดอยู่ ที่พังคือการ refresh ข้อมูลเช้าสำหรับ watcher) — ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" > /dev/null || true
