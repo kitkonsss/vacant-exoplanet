@@ -36,9 +36,11 @@ BASE_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__
 CONTRACT_KEYS = ('current', 'tomorrow', 'friday', 'monthly')
 
 # Per-asset: tolerance scales with price (~0.1%); GC ~5 pts, NQ ~25 pts.
+# round_step = the trader's round-number grid (GC every $50, NQ every $100),
+# replayed separately to test the round+thick-OI fade hypothesis.
 ASSETS = {
-    'gc': {'subdir': '', 'yahoo': 'GC=F', 'tol_points': 5.0},
-    'nq': {'subdir': 'nq', 'yahoo': 'NQ=F', 'tol_points': 25.0},
+    'gc': {'subdir': '', 'yahoo': 'GC=F', 'tol_points': 5.0, 'round_step': 50},
+    'nq': {'subdir': 'nq', 'yahoo': 'NQ=F', 'tol_points': 25.0, 'round_step': 100},
 }
 
 WALL_WINDOW_PCT = 0.06    # consider strikes within +/-6% of that day's close
@@ -124,6 +126,7 @@ def run_asset(asset_id, cfg):
         'touch_below': 0, 'respect_below': 0,
         'days_with_wall_above': 0, 'days_with_wall_below': 0,
         'magnet_total': 0, 'magnet_hit': 0,
+        'r_touch': 0, 'r_respect': 0, 'r_days': 0,
     }
     evaluated = []
 
@@ -169,6 +172,37 @@ def run_asset(asset_id, cfg):
             stats['magnet_total'] += 1
             pulled = (close1 > close_d) if biggest > close_d else (close1 < close_d)
             stats['magnet_hit'] += 1 if pulled else 0
+
+        # Round-number walls (the trader's grid) with top-quartile windowed OI,
+        # judged with the SAME touch/respect rules so the stats are comparable.
+        step = cfg['round_step']
+        win_vals = sorted(sum(o for s2, o in near.items() if abs(s2 - s) <= TOL_POINTS)
+                          for s in near)
+        p75 = win_vals[int(0.75 * (len(win_vals) - 1))]
+        rounds = []
+        lvl = int((close_d - close_d * WALL_WINDOW_PCT) // step) * step
+        while lvl <= close_d + close_d * WALL_WINDOW_PCT:
+            r = float(lvl)
+            lvl += step
+            if r <= 0 or abs(r - close_d) <= TOL_POINTS:
+                continue
+            oi = sum(o for s2, o in near.items() if abs(s2 - r) <= TOL_POINTS)
+            if oi > 0 and oi >= p75:
+                rounds.append(r)
+        r_above = min((r for r in rounds if r > close_d), default=None)
+        r_below = max((r for r in rounds if r < close_d), default=None)
+        for r_wall, is_above in ((r_above, True), (r_below, False)):
+            if r_wall is None:
+                continue
+            stats['r_days'] += 1
+            touched = high1 >= r_wall - TOL_POINTS if is_above else low1 <= r_wall + TOL_POINTS
+            if touched:
+                stats['r_touch'] += 1
+                respected = close1 <= r_wall + TOL_POINTS if is_above else close1 >= r_wall - TOL_POINTS
+                stats['r_respect'] += 1 if respected else 0
+                rec.setdefault('round_walls', []).append(
+                    {'wall': r_wall, 'side': 'above' if is_above else 'below',
+                     'touched': True, 'respected': respected})
         evaluated.append(rec)
 
     touches = stats['touch_above'] + stats['touch_below']
@@ -203,6 +237,17 @@ def run_asset(asset_id, cfg):
             'ci95': wilson_ci(stats['magnet_hit'], stats['magnet_total']),
             'meaning': 'next close moved toward the single biggest OI pile',
         },
+        'round_wall_fade': {
+            'round_step': cfg['round_step'],
+            'n_wall_sides': stats['r_days'], 'touched': stats['r_touch'],
+            'touch_rate': round(stats['r_touch'] / stats['r_days'], 3) if stats['r_days'] else None,
+            'respected': stats['r_respect'],
+            'respect_rate': round(stats['r_respect'] / stats['r_touch'], 3) if stats['r_touch'] else None,
+            'respect_ci95': wilson_ci(stats['r_respect'], stats['r_touch']),
+            'meaning': (f'nearest round number (every {cfg["round_step"]} pts) holding top-quartile '
+                        'OI in its ±tol window — touched next day and failed to close beyond it '
+                        '(the trader\'s round-to-round fade hypothesis)'),
+        },
         'caveats': [
             'price = yfinance front-month, unadjusted; days around contract rolls can distort',
             'OI is end-of-day; intraday wall migration is invisible at this resolution',
@@ -222,6 +267,9 @@ def run_asset(asset_id, cfg):
           f"(n={touches}, ci {out['respect_given_touch']['ci95']})")
     print(f"[BT:{asset_id}] magnet pull {out['magnet_pull']['rate']} "
           f"(n={stats['magnet_total']}, ci {out['magnet_pull']['ci95']})")
+    rw = out['round_wall_fade']
+    print(f"[BT:{asset_id}] round-wall respect|touch {rw['respect_rate']} "
+          f"(touched {rw['touched']}/{rw['n_wall_sides']}, ci {rw['respect_ci95']})")
     print(f'[BT:{asset_id}] wrote {out_path}')
     return True
 

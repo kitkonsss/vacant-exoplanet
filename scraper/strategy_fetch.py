@@ -28,8 +28,17 @@ ASSETS = {
     # call/put dominance classification — otherwise every strike below price
     # reads "put wall / support". Refine from data/nq/iv_baseline.json once
     # ~20 sessions accumulate. GC put/call OI is roughly symmetric -> 1.0.
-    'gc': {'short': 'GC', 'subfolder': '',   'macro_key': 'gold', 'put_oi_discount': 1.0},
-    'nq': {'short': 'NQ', 'subfolder': 'nq', 'macro_key': 'nq',   'put_oi_discount': 0.625},
+    #
+    # round: the round-number grid the asset actually trades on (GC every $50,
+    # NQ every $100), the OI-aggregation tolerance around each round level, and
+    # the trader's stop band in points for round-wall fades. SL inside the band
+    # is set from 0.25x the daily expected move, clamped to [sl_min, sl_max].
+    'gc': {'short': 'GC', 'subfolder': '',   'macro_key': 'gold', 'put_oi_discount': 1.0,
+           'round': {'step': 50, 'major': 100, 'range': 350, 'tol': 5.0,
+                     'sl_min': 10.0, 'sl_max': 20.0}},
+    'nq': {'short': 'NQ', 'subfolder': 'nq', 'macro_key': 'nq',   'put_oi_discount': 0.625,
+           'round': {'step': 100, 'major': 500, 'range': 2000, 'tol': 25.0,
+                     'sl_min': 50.0, 'sl_max': 100.0}},
 }
 
 # Blend weights — options positioning is the system's core read; macro is a strong
@@ -370,28 +379,126 @@ def analyze_vol2vol_walls(asset_id):
 VISIBLE_STRIKE_RANGE = 350   # mirrors web/src/lib/config.js gc.visibleStrikeRange
 
 
-def analyze_round_numbers(price, visible_range=VISIBLE_STRIKE_RANGE):
-    """Round-number levels around price: multiples of 100 (primary) and 50 (secondary)."""
+def analyze_round_numbers(price, step=50, major=100, visible_range=VISIBLE_STRIKE_RANGE):
+    """Round-number levels around price on the asset's own grid
+    (GC: every 50 with 100s major; NQ: every 100 with 500s major)."""
     if price is None:
         return {'levels': [], 'note': 'no price'}
     price = float(price)
     lo, hi = price - visible_range, price + visible_range
     levels = []
-    n = int(lo // 50) * 50
+    n = int(lo // step) * step
     while n <= hi:
-        if n >= lo and n != 0 and n % 50 == 0:
-            tag = 'round_100' if n % 100 == 0 else 'round_50'
+        if n >= lo and n != 0 and n % step == 0:
+            tag = f'round_{major}' if n % major == 0 else f'round_{step}'
             levels.append({
                 'level': float(n),
                 'tag': tag,
                 'distance_points': round(n - price, 2),
                 'side': 'above' if n > price else ('below' if n < price else 'at_price'),
             })
-        n += 50
+        n += step
     return {
         'levels': levels,
+        'step': step,
         'visible_range': visible_range,
-        'note': 'Round numbers within visible strike range (×100 primary, ×50 secondary).',
+        'note': f'Round numbers within visible strike range (×{major} primary, ×{step} secondary).',
+    }
+
+
+def build_round_walls(cfg, price, oi_lookup, expected_range, put_discount=1.0,
+                      mom_dir='none', regime_name='mixed'):
+    """The trader's core playbook, made measurable: round numbers that carry
+    genuinely thick OI are fade levels (GC every $50, NQ every $100).
+
+    Thickness is relative, not eyeballed: OI is summed in a ±tol window around
+    each round level and compared against the same windowed sum computed at
+    every strike in range — 'thick' means >= the 75th percentile. Trade params
+    follow the trader's own style: SL = 0.25x daily expected move clamped to
+    the per-asset stop band; target = the next round step (round-to-round)."""
+    rc = cfg['round']
+    if price is None or not oi_lookup:
+        return {'levels': [], 'note': 'no price or no position-map OI'}
+    price = float(price)
+
+    # per-strike total OI summed across tenors
+    strike_oi = {}
+    for (_key, s), row in oi_lookup.items():
+        strike_oi[s] = strike_oi.get(s, 0.0) + float(row.get('total_oi') or 0)
+    in_range = {s: oi for s, oi in strike_oi.items()
+                if abs(s - price) <= rc['range'] and oi > 0}
+    if not in_range:
+        return {'levels': [], 'note': 'no OI within round-number range'}
+
+    def window_sum(center):
+        return sum(oi for s, oi in in_range.items() if abs(s - center) <= rc['tol'])
+
+    # apples-to-apples threshold: windowed sum at every strike, take p75
+    window_vals = sorted(window_sum(s) for s in in_range)
+    p75 = window_vals[int(0.75 * (len(window_vals) - 1))] if window_vals else 0.0
+
+    sl_basis = (expected_range or {}).get('expected_move') or (expected_range or {}).get('atr')
+    sl_points = _clamp(0.25 * sl_basis, rc['sl_min'], rc['sl_max']) if sl_basis else rc['sl_min']
+
+    levels = []
+    n = int((price - rc['range']) // rc['step']) * rc['step']
+    while n <= price + rc['range']:
+        lvl = float(n)
+        n += rc['step']
+        if lvl <= 0 or abs(lvl - price) < 1e-9:
+            continue
+        oi = window_sum(lvl)
+        if oi <= 0:
+            continue
+        # percentile rank of this round level among all strike windows
+        rank = sum(1 for v in window_vals if v <= oi) / len(window_vals)
+        side = 'above' if lvl > price else 'below'
+        # call/put mix inside the window (put OI discounted for index hedging)
+        c = sum(float(r.get('call_oi') or 0) for (_k, s), r in oi_lookup.items()
+                if abs(s - lvl) <= rc['tol'])
+        p = sum(float(r.get('put_oi') or 0) for (_k, s), r in oi_lookup.items()
+                if abs(s - lvl) <= rc['tol'])
+        oi_type = _oi_type(c, p, put_discount)
+        fade_dir = 'short' if side == 'above' else 'long'
+        target = lvl - rc['step'] if fade_dir == 'short' else lvl + rc['step']
+        inval = lvl + sl_points if fade_dir == 'short' else lvl - sl_points
+        levels.append({
+            'level': lvl,
+            'is_major': lvl % rc['major'] == 0,
+            'side': side,
+            'distance_points': round(lvl - price, 2),
+            'oi': round(oi),
+            'oi_pctile': round(rank, 2),
+            'thick': oi >= p75,
+            'oi_type': oi_type,
+            'role': _wall_role(oi_type),
+            'action': f'fade {fade_dir}',
+            'target': target,
+            'invalidation': round(inval, 2),
+            'sl_points': round(sl_points, 1),
+            'rr': round(rc['step'] / sl_points, 2) if sl_points else None,
+            # fading into a trending move against momentum deserves a warning
+            'aligned': not (regime_name == 'trending'
+                            and ((fade_dir == 'short' and mom_dir == 'up')
+                                 or (fade_dir == 'long' and mom_dir == 'down'))),
+        })
+
+    thick = [l for l in levels if l['thick']]
+    above = sorted((l for l in thick if l['side'] == 'above'), key=lambda l: l['distance_points'])[:3]
+    below = sorted((l for l in thick if l['side'] == 'below'), key=lambda l: -l['distance_points'])[:3]
+    return {
+        'step': rc['step'],
+        'major': rc['major'],
+        'sl_range_points': [rc['sl_min'], rc['sl_max']],
+        'sl_points': round(sl_points, 1),
+        'oi_threshold_p75': round(p75),
+        'levels': above + below,
+        'all_round_levels': sorted(levels, key=lambda l: l['level']),
+        'note': (f'Round levels every {rc["step"]} pts whose ±{rc["tol"]:g}-pt OI window is in the top '
+                 f'quartile of all strike windows in range. Fade at touch, target the next round '
+                 f'({rc["step"]} pts), SL {sl_points:.0f} pts (0.25x expected move clamped to '
+                 f'{rc["sl_min"]:g}-{rc["sl_max"]:g}). Edge is unproven until the round_wall scorecard '
+                 'verdict says otherwise.'),
     }
 
 
@@ -817,7 +924,9 @@ def build_strategy(asset_id):
     regime = detect_regime(price, vwap, expected_range, macro_raw)
 
     # Round numbers + confluence across OI walls / gamma walls / fresh builds / round# / VWAP SD
-    round_numbers = analyze_round_numbers(price)
+    rc = cfg['round']
+    round_numbers = analyze_round_numbers(price, step=rc['step'], major=rc['major'],
+                                          visible_range=rc['range'])
     confluence_levels = build_confluence(price, gamma_1pct, vol2vol_walls, heatmap_flow, round_numbers, vwap)
     # split by side, nearest-first, for scenario triggers/targets
     conf_res = sorted((c for c in confluence_levels if c['side'] == 'above'), key=lambda c: abs(c['distance_points']))
@@ -1008,6 +1117,12 @@ def build_strategy(asset_id):
                      + ('. Regime is range → this mode leads.' if regime['regime'] == 'range' else '.'),
     }
 
+    # The trader's round-number playbook (GC $50 grid / NQ $100 grid) with OI
+    # thickness measured, not assumed — feeds the watcher's round_wall signals.
+    round_walls = build_round_walls(cfg, price, oi_lookup, expected_range,
+                                    put_discount=cfg.get('put_oi_discount', 1.0),
+                                    mom_dir=mom_dir, regime_name=regime['regime'])
+
     def _gamma_limit(nearest_w, major_w):
         if not nearest_w and not major_w:
             return None
@@ -1083,6 +1198,7 @@ def build_strategy(asset_id):
         'key_levels': key_levels,
         'confluence_levels': confluence_levels,
         'round_numbers': round_numbers,
+        'round_walls': round_walls,
         'heatmap_contract_flow': heatmap_flow,
         'gamma_1pct': gamma_1pct,
         'vol2vol_walls': vol2vol_walls,

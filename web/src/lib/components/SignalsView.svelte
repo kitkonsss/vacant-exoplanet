@@ -2,7 +2,7 @@
     import Card from './ui/Card.svelte';
     import Badge from './ui/Badge.svelte';
 
-    let { expectedRange = null, log = [], scorecard = null, optionFlow = null, wallBacktest = null, loading = false } = $props();
+    let { expectedRange = null, log = [], scorecard = null, optionFlow = null, wallBacktest = null, roundWalls = null, loading = false } = $props();
 
     const verdictMeta = {
         edge_confirmed: { label: 'EDGE ✓', variant: 'up' },
@@ -36,8 +36,12 @@
         breakout: { label: 'Breakout', variant: 'warn' },
         zone_touch: { label: 'Zone Touch', variant: 'mag' },
         band_touch: { label: 'Band ±2σ', variant: 'call' },
+        round_wall: { label: 'Round+OI', variant: 'put' },
         approach: { label: 'Approach', variant: 'outline' }
     };
+    const rwLevels = $derived(
+        [...(roundWalls?.levels || [])].sort((a, b) => b.level - a.level)
+    );
     const statusMeta = {
         win: { label: 'WIN', variant: 'up' },
         loss: { label: 'LOSS', variant: 'down' },
@@ -154,6 +158,72 @@
                             </tbody>
                         </table>
                     </div>
+                {/if}
+            </Card>
+        {/if}
+
+        <!-- ===== Round-number walls (the trader's grid + measured OI) ===== -->
+        {#if roundWalls}
+            <Card class="p-4">
+                <div class="flex flex-wrap items-center justify-between gap-3">
+                    <div class="flex flex-wrap items-center gap-3">
+                        <span class="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                            Round Number Walls — every {roundWalls.step} pts
+                        </span>
+                        <span class="text-xs text-muted-foreground">
+                            SL {fmt(roundWalls.sl_points, 0)} pts (band {roundWalls.sl_range_points?.[0]}–{roundWalls.sl_range_points?.[1]})
+                            · OI threshold p75 ≈ {fmt(roundWalls.oi_threshold_p75, 0)}
+                        </span>
+                    </div>
+                </div>
+                {#if rwLevels.length}
+                    <div class="mt-3 overflow-x-auto">
+                        <table class="w-full text-left text-xs">
+                            <thead>
+                                <tr class="border-b border-border text-[10px] uppercase tracking-wider text-muted-foreground">
+                                    <th class="py-1.5 pr-3 text-right">Level</th>
+                                    <th class="py-1.5 pr-3">Side</th>
+                                    <th class="py-1.5 pr-3 text-right">OI (±tol)</th>
+                                    <th class="py-1.5 pr-3 text-right">Pctile</th>
+                                    <th class="py-1.5 pr-3">Type → Role</th>
+                                    <th class="py-1.5 pr-3">Plan</th>
+                                    <th class="py-1.5 pr-3 text-right">Target</th>
+                                    <th class="py-1.5 pr-3 text-right">SL</th>
+                                    <th class="py-1.5 text-right">RR</th>
+                                </tr>
+                            </thead>
+                            <tbody class="font-mono tabular-nums">
+                                {#each rwLevels as r}
+                                    <tr class="border-b border-border/50">
+                                        <td class="py-1.5 pr-3 text-right font-semibold">
+                                            {fmt(r.level, 0)}{#if r.is_major}<span class="text-warn" title="major round">★</span>{/if}
+                                        </td>
+                                        <td class="py-1.5 pr-3 {r.side === 'above' ? 'text-up' : 'text-down'}">
+                                            {r.side} ({r.distance_points > 0 ? '+' : ''}{fmt(r.distance_points, 0)})
+                                        </td>
+                                        <td class="py-1.5 pr-3 text-right">{fmt(r.oi, 0)}</td>
+                                        <td class="py-1.5 pr-3 text-right">p{Math.round((r.oi_pctile ?? 0) * 100)}</td>
+                                        <td class="py-1.5 pr-3 text-muted-foreground">{r.oi_type || 'mixed'} → {r.role || '—'}</td>
+                                        <td class="py-1.5 pr-3 {r.action?.includes('long') ? 'text-up' : 'text-down'}">
+                                            {r.action}{#if !r.aligned}<span class="text-warn" title="fade against trending momentum"> ⚠</span>{/if}
+                                        </td>
+                                        <td class="py-1.5 pr-3 text-right">{fmt(r.target, 0)}</td>
+                                        <td class="py-1.5 pr-3 text-right">{fmt(r.invalidation, 0)}</td>
+                                        <td class="py-1.5 text-right">{r.rr ?? '—'}</td>
+                                    </tr>
+                                {/each}
+                            </tbody>
+                        </table>
+                    </div>
+                    <p class="mt-2 text-xs text-muted-foreground">
+                        Round levels whose ±tol OI window is in the top quartile of all strikes in range.
+                        The watcher alerts on touch (kind <span class="font-mono">round_wall</span>) — edge is
+                        unproven until that scorecard verdict clears breakeven.
+                    </p>
+                {:else}
+                    <p class="mt-2 text-sm text-muted-foreground">
+                        No round level currently carries top-quartile OI within range.
+                    </p>
                 {/if}
             </Card>
         {/if}
@@ -350,7 +420,7 @@
                         <span class="font-mono text-[10px] text-muted-foreground">{new Date(wallBacktest.generated_at).toLocaleString()}</span>
                     {/if}
                 </div>
-                <div class="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-3">
+                <div class="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-4">
                     <div class="rounded-md border border-border bg-background p-3 text-center">
                         <div class="text-[10px] font-semibold uppercase text-muted-foreground">Touch Rate (D+1)</div>
                         <div class="font-mono text-xl tabular-nums text-foreground">{fmtPct(wallBacktest.touch?.rate)}</div>
@@ -368,6 +438,15 @@
                         <div class="font-mono text-xl tabular-nums text-foreground">{fmtPct(wallBacktest.magnet_pull?.rate)}</div>
                         <div class="font-mono text-[10px] text-muted-foreground">n={wallBacktest.magnet_pull?.n} · CI {ciText(wallBacktest.magnet_pull?.ci95)}</div>
                     </div>
+                    {#if wallBacktest.round_wall_fade}
+                        <div class="rounded-md border border-border bg-background p-3 text-center">
+                            <div class="text-[10px] font-semibold uppercase text-muted-foreground">Round-Wall Respect</div>
+                            <div class="font-mono text-xl tabular-nums {(wallBacktest.round_wall_fade.respect_ci95?.[0] ?? 0) > 0.5 ? 'text-up' : 'text-foreground'}">
+                                {fmtPct(wallBacktest.round_wall_fade.respect_rate)}
+                            </div>
+                            <div class="font-mono text-[10px] text-muted-foreground">n={wallBacktest.round_wall_fade.touched} · CI {ciText(wallBacktest.round_wall_fade.respect_ci95)}</div>
+                        </div>
+                    {/if}
                 </div>
                 <p class="mt-2 text-xs text-muted-foreground">
                     A stat only counts as edge when its whole CI clears 50%. Sample grows daily as snapshots accumulate.

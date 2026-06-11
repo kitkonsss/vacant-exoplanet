@@ -345,6 +345,7 @@
                             scorecard={signals?.scorecard}
                             optionFlow={signals?.optionFlow}
                             wallBacktest={signals?.wallBacktest}
+                            roundWalls={signals?.roundWalls}
                             loading={signalsLoading}
                         />
                     </div>

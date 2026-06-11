@@ -99,12 +99,20 @@ export async function fetchBrief(assetId) {
  * pipeline hasn't produced it yet (e.g. no signals fired).
  */
 export async function fetchSignals(assetId) {
-    const [expectedRange, log, scorecard, optionFlow, wallBacktest] = await Promise.all([
+    const [expectedRange, log, scorecard, optionFlow, wallBacktest, strategy] = await Promise.all([
         fetchJsonSoft(expectedRangeUrl(assetId)),
         fetchJsonSoft(signalLogUrl(assetId)),
         fetchJsonSoft(signalScorecardUrl(assetId)),
         fetchJsonSoft(optionFlowUrl(assetId)),
-        fetchJsonSoft(wallBacktestUrl(assetId))
+        fetchJsonSoft(wallBacktestUrl(assetId)),
+        fetchJsonSoft(strategyUrl(assetId))
     ]);
-    return { expectedRange, log: Array.isArray(log) ? log : [], scorecard, optionFlow, wallBacktest };
+    return {
+        expectedRange,
+        log: Array.isArray(log) ? log : [],
+        scorecard,
+        optionFlow,
+        wallBacktest,
+        roundWalls: strategy?.round_walls ?? null
+    };
 }

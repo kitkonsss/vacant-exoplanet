@@ -3,9 +3,12 @@
 and push entry-signal alerts to Telegram.
 
 Signal kinds (all levels come from strategy_fetch.py output — no new analysis here):
-  1. breakout   — price crosses the momentum/scenario trigger level
-  2. zone_touch — price reaches a mean_reversion fade zone (has target + invalidation)
-  3. approach   — price gets near a confluence level with >= 3 sources (heads-up)
+  1. breakout    — price crosses the momentum/scenario trigger level
+  2. zone_touch  — price reaches a mean_reversion fade zone (has target + invalidation)
+  3. band_touch  — price reaches the IV ±2sigma daily band (fade toward ±1sigma)
+  4. round_wall  — price touches a round number carrying top-quartile OI
+                   (the trader's round-to-round fade: GC $50 grid, NQ $100 grid)
+  5. approach    — price gets near a confluence level with >= 3 sources (heads-up)
 
 Anti-spam: each (kind, level) alerts at most once per UTC day, tracked in
 data/watcher_state.json (committed back by the workflow). If the strategy file
@@ -276,7 +279,26 @@ def build_watch_items(strategy):
             'extra': 'แบนด์ IV รายวัน (+2σ)', 'aligned': not trending,
         })
 
-    # 4. high-confluence levels (heads-up only)
+    # 4. round numbers with top-quartile OI — the trader's own playbook
+    # (fade at touch, target the next round, SL in the per-asset stop band).
+    rw = strategy.get('round_walls') or {}
+    for r in rw.get('levels') or []:
+        if not r.get('thick') or not r.get('level'):
+            continue
+        oi_txt = (f"OI {r.get('oi', 0):,.0f} (p{round((r.get('oi_pctile') or 0) * 100)}), "
+                  f"{r.get('oi_type') or 'mixed'} → {r.get('role') or 'magnet'}")
+        items.append({
+            'kind': 'round_wall', 'side': None, 'level': float(r['level']),
+            'label': f"Round {fmt(r['level'])}" + (' (major)' if r.get('is_major') else ''),
+            'action': r.get('action', 'fade'),
+            'target': r.get('target'),
+            'invalidation': r.get('invalidation'),
+            'extra': oi_txt,
+            'aligned': r.get('aligned', True),
+            'rr': r.get('rr'),
+        })
+
+    # 5. high-confluence levels (heads-up only)
     for c in strategy.get('confluence_levels') or []:
         if (c.get('confluence') or 0) < 3 or not c.get('level'):
             continue
@@ -365,19 +387,26 @@ def check_items(asset_id, cfg, price, items, atr, strategy, state, candle_close=
                 msgs.append((key, '\n'.join(lines) + foot,
                              _signal_record(it, price, strategy, direction, asset_id)))
 
-        elif it['kind'] in ('zone_touch', 'band_touch'):
+        elif it['kind'] in ('zone_touch', 'band_touch', 'round_wall'):
             if abs(price - level) <= max(3.0, ZONE_TOUCH_ATR * atr):
-                emoji = '🔵' if 'long' in it.get('action', '') else '🟠'
-                what = f"แตะแบนด์ {it.get('label', '')}" if it['kind'] == 'band_touch' \
-                    else f"แตะโซน {it.get('action', 'fade')}"
+                emoji = '🧱' if it['kind'] == 'round_wall' else \
+                    ('🔵' if 'long' in it.get('action', '') else '🟠')
+                if it['kind'] == 'round_wall':
+                    what = f"แตะ {it.get('label', 'Round')} + OI หนา"
+                elif it['kind'] == 'band_touch':
+                    what = f"แตะแบนด์ {it.get('label', '')}"
+                else:
+                    what = f"แตะโซน {it.get('action', 'fade')}"
                 lines = [f"{emoji} <b>{name} {what}</b> ที่ {fmt(level)} → {it.get('action', 'fade')}",
                          f"ราคา {fmt(price)}",
-                         f"เป้า: {fmt(it['target']) if it.get('target') else '-'} | SL: {fmt(it['invalidation']) if it.get('invalidation') else '-'}"]
+                         f"เป้า: {fmt(it['target']) if it.get('target') else '-'} | SL: {fmt(it['invalidation']) if it.get('invalidation') else '-'}"
+                         + (f" | RR {it['rr']:g}" if it.get('rr') else '')]
                 size = sizing_line(price, it.get('invalidation'), cfg)
                 if size:
                     lines.append(size)
                 if it['extra']:
-                    lines.append(f"Confluence: {it['extra']}")
+                    prefix = '' if it['kind'] == 'round_wall' else 'Confluence: '
+                    lines.append(f"{prefix}{it['extra']}")
                 if not it.get('aligned', True):
                     lines.append('⚠️ fade สวน regime trending วันนี้ — ลดขนาด/รอ confirm')
                 direction = 'long' if 'long' in it.get('action', '') else 'short'
