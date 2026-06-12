@@ -984,6 +984,20 @@ def _saved_current_exp(output_dir):
         return None
 
 
+def _saved_slot_symbol(output_dir, slot):
+    """Option symbol recorded in the saved {slot}_OIData.txt header, or None
+    (no prior file / unparseable). Used to detect that a slot's OI file still
+    holds a previous trading day's contract after the date rolled over."""
+    path = os.path.join(output_dir, f'{slot}_OIData.txt')
+    try:
+        with open(path, 'r', encoding='utf-8', errors='replace') as fh:
+            header = fh.readline()
+    except OSError:
+        return None
+    m = re.search(r'Option Symbol:\s*([A-Z0-9]+)', header)
+    return m.group(1) if m else None
+
+
 # A holiday-adjusted "long weekend" front contract is at most +3 calendar days
 # ahead of today (e.g. Good Friday -> the Monday contract). Anything farther on
 # a regular scrape means the near-dated contracts simply were not listed yet.
@@ -1066,28 +1080,45 @@ def _promote_slots(output_dir):
     Idempotent: if tomorrow already has the same expiration as current
     (a previous run already promoted), this is a no-op.
     """
-    # Idempotency: parse expirations from tomorrow vs current headers.
-    # If they match, a prior promote already ran — skip.
+    # Parse expirations from the saved slot headers.
     def _exp_from(slot):
         path = os.path.join(output_dir, f'{slot}_OIData.txt')
         try:
             with open(path, 'r', encoding='utf-8', errors='replace') as fh:
                 hdr = fh.readline()
             m = re.search(r'Expiration:\s*(\d{1,2}/\d{1,2}/\d{4})', hdr)
-            return m.group(1) if m else None
-        except OSError:
+            if not m:
+                return None
+            return datetime.strptime(m.group(1), '%m/%d/%Y').date()
+        except (OSError, ValueError):
             return None
 
     cur_exp = _exp_from('current')
     tom_exp = _exp_from('tomorrow')
-    if cur_exp and tom_exp and cur_exp == tom_exp:
-        print(f'[PROMOTE] Already promoted (current & tomorrow both exp {cur_exp}) — skipping')
-        return
+    fri_exp = _exp_from('friday')
 
-    promotions = [
-        ('tomorrow', 'current'),
-        ('friday', 'tomorrow'),
-    ]
+    # The next current contract is whichever saved slot expires EARLIEST.
+    # On Mon-Wed that is the "tomorrow" slot. On Thursday the "tomorrow" slot
+    # intentionally holds Monday's daily (the Friday weekly has its own slot),
+    # so the Friday slot — not tomorrow — is the contract that becomes current
+    # on Friday. Promoting tomorrow→current there would skip straight to
+    # Monday's contract.
+    if fri_exp is not None and (tom_exp is None or fri_exp < tom_exp):
+        if cur_exp and fri_exp and cur_exp == fri_exp:
+            print(f'[PROMOTE] Already promoted (current & friday both exp {cur_exp}) — skipping')
+            return
+        # Friday weekly becomes current; tomorrow (next daily) stays as-is.
+        promotions = [
+            ('friday', 'current'),
+        ]
+    else:
+        if cur_exp and tom_exp and cur_exp == tom_exp:
+            print(f'[PROMOTE] Already promoted (current & tomorrow both exp {cur_exp}) — skipping')
+            return
+        promotions = [
+            ('tomorrow', 'current'),
+            ('friday', 'tomorrow'),
+        ]
     for src_slot, dst_slot in promotions:
         for suffix in _SLOT_SUFFIXES:
             src = os.path.join(output_dir, f'{src_slot}{suffix}')
@@ -2817,13 +2848,16 @@ def scrape_oi_heatmap_phase(driver, classified, asset_id, output_dir):
         print(f'[HEATMAP] ⚠ Vol2Vol restore raised: {e}')
 
 
-def scrape_contract(driver, contract, prefix, output_dir=None, asset_id='gc', intraday_only=False):
+def scrape_contract(driver, contract, prefix, output_dir=None, asset_id='gc', intraday_only=False,
+                    force_oi=False):
     """
     Scrape both Intraday + OI for one contract.
 
     IMPORTANT: After selecting a contract, Vol2Vol defaults to Intraday Volume.
     So we scrape Intraday FIRST (no extra click), then switch to OI.
-    With intraday_only, the OI view is skipped (it only changes once per day).
+    With intraday_only, the OI view is skipped (it only changes once per day) —
+    unless force_oi is set, which the caller uses to repair a slot whose saved
+    OIData file still holds a previous trading day's contract.
     """
     dte_str = f'{contract["dte"]:.1f} DTE' if contract.get('dte') else ''
     print(f'\n{"═"*60}')
@@ -2853,7 +2887,7 @@ def scrape_contract(driver, contract, prefix, output_dir=None, asset_id='gc', in
         results['intraday'] = path
 
     # 2. Open Interest (skipped in light mode — OI updates once per CME day)
-    if intraday_only:
+    if intraday_only and not force_oi:
         print('[SCRAPE] intraday-only mode — skipping OI view')
     else:
         print(f'[SCRAPE] Switching to Open Interest...')
@@ -3103,7 +3137,11 @@ def scrape_asset(driver, asset_id, intraday_only=False):
             import shutil
             try:
                 shutil.copy(os.path.join(output_dir, 'current_IntradayData.txt'), os.path.join(output_dir, 'friday_IntradayData.txt'))
-                if not intraday_only:
+                # Copy OI too whenever current_OIData actually holds the current
+                # contract (always true after a full run; true after an intraday
+                # run when the OI-repair pass above refreshed it). Guarding on
+                # the symbol avoids propagating a stale current file into friday.
+                if not intraday_only or _saved_slot_symbol(output_dir, 'current') == c.get('text'):
                     shutil.copy(os.path.join(output_dir, 'current_OIData.txt'), os.path.join(output_dir, 'friday_OIData.txt'))
                 print('[COPY] Copied current data to friday files')
             except Exception as e:
@@ -3111,8 +3149,21 @@ def scrape_asset(driver, asset_id, intraday_only=False):
             continue
 
         if c:
+            # OI-repair: intraday-only runs normally never touch *_OIData.txt,
+            # so after the CME trading date rolls over the OI files keep serving
+            # the PREVIOUS day's contract until the next full run succeeds
+            # (consumers like expected_range read these files). When the saved
+            # OI header's symbol no longer matches the classified contract,
+            # scrape the OI view for this slot despite intraday-only mode.
+            force_oi = False
+            if intraday_only:
+                saved_sym = _saved_slot_symbol(output_dir, key)
+                if saved_sym != c.get('text'):
+                    force_oi = True
+                    print(f'[REPAIR] {key}_OIData.txt holds {saved_sym or "no contract"} '
+                          f'but classified contract is {c.get("text")} — refreshing OI view')
             scrape_contract(driver, c, key, output_dir=output_dir, asset_id=asset_id,
-                            intraday_only=intraday_only)
+                            intraday_only=intraday_only, force_oi=force_oi)
         else:
             print(f'\n[SKIP] {key}: no contract')
 
@@ -3180,12 +3231,21 @@ def main():
     driver = create_driver()
 
     try:
-        # Login with the first asset's URL (we'll navigate to others later)
+        # Login with the first asset's URL (we'll navigate to others later).
+        # SSO is flaky — retry within the run so a transient failure doesn't
+        # cost a whole scrape cycle. If all attempts fail, exit non-zero so the
+        # workflow's Telegram alert fires instead of silently serving stale data.
         first_url = get_quikstrike_url(assets[0])
-        if not login_cme(driver, first_url, max_wait=120):
-            print('[ERROR] Could not reach QuikStrike.')
+        for attempt in range(1, 4):
+            if login_cme(driver, first_url, max_wait=120):
+                break
+            print(f'[LOGIN] Attempt {attempt}/3 failed.')
             save_debug(driver, 'login_fail')
-            return
+            if attempt < 3:
+                time.sleep(20)
+        else:
+            print('[ERROR] Could not reach QuikStrike after 3 login attempts.')
+            sys.exit(1)
 
         wait_ready(driver)
         time.sleep(1)
