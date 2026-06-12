@@ -139,26 +139,76 @@ def create_driver():
     options.add_experimental_option('excludeSwitches', ['enable-automation'])
     # 3) Disable automation extension
     options.add_experimental_option('useAutomationExtension', False)
-    # 4) Realistic User-Agent (match the Chrome version installed on ubuntu-latest)
-    options.add_argument(
-        'user-agent=Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 '
-        '(KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36'
-    )
-    # 5) Accept-Language header to look like a real browser
+    # 4) Accept-Language header to look like a real browser
     options.add_argument('--lang=en-US,en')
-    # 6) Disable "navigator.plugins is empty" fingerprint
+    # 5) Disable "navigator.plugins is empty" fingerprint
     options.add_argument('--disable-extensions')
+    # NOTE: We deliberately do NOT hardcode a User-Agent here. A fixed UA
+    # ("Chrome/137") goes stale the moment setup-chrome installs a newer build,
+    # and the mismatch between the UA version and the REAL Sec-CH-UA client-hint
+    # version is itself a strong bot signal that Akamai Bot Manager (which fronts
+    # cmegroup.com) flags — a likely contributor to the 403s. Instead we pin a
+    # version-consistent UA after the driver exists — see _apply_consistent_ua().
 
-    service = Service(ChromeDriverManager().install())
-    driver = webdriver.Chrome(service=service, options=options)
+    # Selenium Manager (built into Selenium >=4.6) resolves the matching
+    # chromedriver for whatever Chrome setup-chrome installed. webdriver-manager
+    # sometimes lags a fresh Chrome release and returns a mismatched driver that
+    # fails to start (an intermittent hard crash) — so try it, then fall back.
+    try:
+        service = Service(ChromeDriverManager().install())
+        driver = webdriver.Chrome(service=service, options=options)
+    except Exception as e:
+        print(f'[DRIVER] webdriver-manager failed ({e}); using Selenium Manager')
+        driver = webdriver.Chrome(options=options)
     driver.implicitly_wait(2)
 
     # ── CDP stealth injection ──
     # Patch JS properties that reCAPTCHA v3 / bot-management WAFs probe.
     # This runs via Chrome DevTools Protocol before any page loads.
     _inject_stealth(driver)
+    _apply_consistent_ua(driver)
 
     return driver
+
+
+def _apply_consistent_ua(driver):
+    """Pin a User-Agent that matches the REAL installed Chrome version.
+
+    Akamai Bot Manager cross-checks the UA string against the Sec-CH-UA client
+    hints the browser sends. A hardcoded/stale UA version that disagrees with
+    the actual engine is a high-confidence bot signal. By deriving both the UA
+    string and the userAgentMetadata brand versions from the live browser
+    version, and stripping the "HeadlessChrome" token, we present a single,
+    self-consistent identity. Applied via CDP before any navigation, so the
+    very first request to CME already carries the clean UA.
+    """
+    try:
+        ver = (driver.capabilities or {}).get('browserVersion', '') or ''
+        major = ver.split('.')[0] if ver else ''
+        ua = (f'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 '
+              f'(KHTML, like Gecko) Chrome/{ver or "0.0.0.0"} Safari/537.36')
+        meta = {
+            'brands': [
+                {'brand': 'Chromium', 'version': major},
+                {'brand': 'Google Chrome', 'version': major},
+                {'brand': 'Not?A_Brand', 'version': '99'},
+            ],
+            'fullVersion': ver,
+            'platform': 'Linux',
+            'platformVersion': '6.5.0',
+            'architecture': 'x86',
+            'model': '',
+            'mobile': False,
+        }
+        driver.execute_cdp_cmd('Network.setUserAgentOverride', {
+            'userAgent': ua,
+            'acceptLanguage': 'en-US,en',
+            'platform': 'Linux x86_64',
+            'userAgentMetadata': meta,
+        })
+        print(f'[STEALTH] UA pinned to real Chrome {ver or "?"} (version-consistent)')
+    except Exception as e:
+        print(f'[STEALTH] UA override failed (non-fatal): {e}')
 
 
 def _inject_stealth(driver):
@@ -251,6 +301,35 @@ def save_debug(driver, label='', output_dir=None):
 # LOGIN
 # ============================================================
 
+def detect_block(driver):
+    """Return a short reason string if the current page is a WAF/bot-block
+    (Akamai/Cloudflare/CME edge), else None.
+
+    CME group sits behind Akamai Bot Manager, which serves a tiny "403
+    Forbidden" / "Access Denied" page to flagged (datacenter) IPs. That page
+    is short and explicit, so we read only a slice of the body text + title
+    and guard on length — a normal Vol2Vol page that merely contains a word
+    like "forbidden" somewhere won't be misread as a block.
+    """
+    try:
+        title = (driver.title or '').lower()
+        body = driver.execute_script(
+            "return document.body ? document.body.innerText.slice(0, 800) : '';"
+        ) or ''
+    except Exception:
+        return None
+    low = body.lower()
+    short = len(body) < 2000
+    if short and ('403' in title or 'forbidden' in low or 'forbidden' in title):
+        return 'HTTP 403 Forbidden'
+    if short:
+        for m in ('access denied', 'pardon our interruption',
+                  'request unsuccessful', 'reference #'):
+            if m in low:
+                return m
+    return None
+
+
 def login_cme(driver, quikstrike_url, max_wait=120):
     """Navigate to QuikStrike → handle SSO login → handle disclaimer."""
     print(f'[LOGIN] Opening QuikStrike URL: {quikstrike_url}')
@@ -264,6 +343,16 @@ def login_cme(driver, quikstrike_url, max_wait=120):
 
     while time.time() - start < max_wait:
         url = driver.current_url
+
+        # 🚫 WAF / bot block — check BEFORE the success branches. A 403 served
+        # at the QuikStrikeView URL would otherwise satisfy the "on Vol2Vol
+        # page" condition below and be misread as success. Fast-fail so the
+        # caller can recreate the session + back off instead of polling the
+        # full max_wait window against a page that will never resolve.
+        blk = detect_block(driver)
+        if blk:
+            print(f'[LOGIN] 🚫 Blocked: {blk} (url={url}) — bot/WAF denial, not a UI issue')
+            return False
 
         # ✅ On QuikStrike Vol2Vol page
         if 'quikstrike.net' in url and 'QuikStrikeView' in url and 'Disclaimer' not in url:
@@ -3078,6 +3167,19 @@ def scrape_asset(driver, asset_id, intraday_only=False):
     # Get contracts
     contracts = get_expiration_contracts(driver, profile)
 
+    # The CME edge sometimes serves the page shell without the data grid (a
+    # soft throttle), or the page simply lost the ASP.NET postback race — both
+    # surface as zero contracts on a page that otherwise looks fine. One clean
+    # reload usually populates it, and is cheaper + more reliable than dropping
+    # straight into the degraded "scrape whatever is shown" fallback below.
+    if not contracts:
+        print(f'[WARN] No contracts on first pass for {profile["short"]} — reloading once...')
+        driver.get(url)
+        time.sleep(3)
+        wait_ready(driver)
+        time.sleep(1)
+        contracts = get_expiration_contracts(driver, profile)
+
     if not contracts:
         print(f'[WARN] No contracts found for {profile["short"]}.')
         save_debug(driver, f'no_contracts_{asset_id}', output_dir=output_dir)
@@ -3190,6 +3292,53 @@ def scrape_asset(driver, asset_id, intraday_only=False):
 # MAIN
 # ============================================================
 
+def _login_with_backoff(driver, first_url, attempts=4):
+    """Reach QuikStrike, retrying on transient SSO failures and WAF blocks.
+
+    Returns (driver, success). The returned driver may be a freshly recreated
+    session if a hard block was hit (so the caller's `finally: driver.quit()`
+    always has a live handle).
+
+    CME sits behind Akamai Bot Manager; a 403 to a datacenter IP is
+    reputation-based, so the only levers without a residential proxy are:
+      (a) a fresh browser session — new fingerprint may score better, and
+      (b) an escalating cooldown so a rate-limit has time to clear.
+    We apply both, with jitter. (If 403s persist, the real fix is routing the
+    runner through a residential/mobile proxy — see README/notes.)
+    """
+    backoffs = [30, 75, 150]  # seconds before attempts 2, 3, 4
+    for attempt in range(1, attempts + 1):
+        if login_cme(driver, first_url, max_wait=120):
+            return driver, True
+
+        blocked = detect_block(driver)
+        print(f'[LOGIN] Attempt {attempt}/{attempts} failed '
+              f'({"WAF/403 block" if blocked else "SSO/timeout"}).')
+        save_debug(driver, 'login_fail')
+        if attempt >= attempts:
+            break
+
+        wait_s = backoffs[min(attempt - 1, len(backoffs) - 1)]
+        wait_s += random.uniform(0, 0.4 * wait_s)  # jitter so retries don't sync
+        if blocked:
+            print('[LOGIN] Recreating browser session before retry '
+                  '(fresh fingerprint may clear a soft block)...')
+            try:
+                driver.quit()
+            except Exception:
+                pass
+            driver = create_driver()
+        else:
+            try:
+                driver.delete_all_cookies()
+            except Exception:
+                pass
+        print(f'[LOGIN] Cooling down {wait_s:.0f}s before attempt {attempt + 1}...')
+        time.sleep(wait_s)
+
+    return driver, False
+
+
 def main():
     # Parse CLI args
     import argparse
@@ -3232,19 +3381,15 @@ def main():
 
     try:
         # Login with the first asset's URL (we'll navigate to others later).
-        # SSO is flaky — retry within the run so a transient failure doesn't
-        # cost a whole scrape cycle. If all attempts fail, exit non-zero so the
+        # SSO is flaky and CME's edge (Akamai) intermittently 403s datacenter
+        # IPs — retry within the run so a transient failure / block doesn't cost
+        # a whole scrape cycle. _login_with_backoff recreates the session and
+        # backs off on a hard block; on total failure we exit non-zero so the
         # workflow's Telegram alert fires instead of silently serving stale data.
         first_url = get_quikstrike_url(assets[0])
-        for attempt in range(1, 4):
-            if login_cme(driver, first_url, max_wait=120):
-                break
-            print(f'[LOGIN] Attempt {attempt}/3 failed.')
-            save_debug(driver, 'login_fail')
-            if attempt < 3:
-                time.sleep(20)
-        else:
-            print('[ERROR] Could not reach QuikStrike after 3 login attempts.')
+        driver, login_ok = _login_with_backoff(driver, first_url)
+        if not login_ok:
+            print('[ERROR] Could not reach QuikStrike after all login attempts.')
             sys.exit(1)
 
         wait_ready(driver)
