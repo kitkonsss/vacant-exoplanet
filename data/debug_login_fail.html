@@ -1,1 +1,422 @@
-<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>403</title></head><body>403 Forbidden</body></html>
+<html id="sso" lang="en" dir="ltr" data-theme="dark"><head>
+    <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+    <meta name="viewport" content="initial-scale=1.0, minimum-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <!-- Global Polyfill for ES5 compatibility - MUST be the first script loaded -->
+    <script type="text/javascript" async="" src="https://www.google-analytics.com/analytics.js"></script><script type="text/javascript" async="" src="https://www.googletagmanager.com/gtag/js?id=G-9CVGRV95TZ&amp;cx=c&amp;gtm=4e66a1"></script><script type="text/javascript" async="" src="https://www.googletagmanager.com/gtag/js?id=G-L69G7D7MMN&amp;cx=c&amp;gtm=4e66a1"></script><script async="" src="//www.googletagmanager.com/gtm.js?id=GTM-KWFKW5"></script><script src="/sso/resources/js/third-party/global-polyfills.js?version=4.1.1"></script>
+    <link rel="stylesheet" type="text/css" href="/sso/resources/css/commonUI-1.28.0.6.css?bn=4.1.1">
+    <link rel="stylesheet" type="text/css" href="//fonts.googleapis.com/css?family=Roboto:400,500,700">
+    <link rel="stylesheet" href="//fonts.googleapis.com/css?family=Poppins&amp;display=swap">
+    <link rel="stylesheet" href="https://use.fontawesome.com/releases/v5.5.0/css/all.css">
+    <link rel="stylesheet" href="https://use.fontawesome.com/releases/v5.5.0/css/v4-shims.css">
+    <link rel="stylesheet" type="text/css" href="/sso/unouxres/unoSimpleHeader.css?bn=4.1.1">
+    <link rel="stylesheet" type="text/css" href="/sso/resources/css/uno-login-2021.css?bn=4.1.1">
+    <link rel="stylesheet" type="text/css" href="/sso/resources/css/loginEnhancements.css?bn=4.1.1">
+    <link rel="icon" href="/sso/resources/img/favicon.ico">
+    <title>CME Group</title>
+    
+        <link rel="stylesheet" type="text/css" href="/sso/unouxres/unoCommonStyle.css?version=4.1.1">
+    
+    
+  </head>
+  <body>
+    
+      
+      
+        <div id="unoSimpleHeader" class="uno-simple-header">
+          <div class="cme-logo">
+            <h1>
+              <span><a href="https://www.cmegroup.com">CME Group</a></span>
+            </h1>
+          </div>
+          <div id="language-switcher-container" class="custom-select" style="visibility: hidden">
+            <select id="language" name="language" style="border-width: medium; border-style: none; border-color: currentcolor; border-image: initial; visibility: visible;">
+              <option value="en">English</option>
+              <option value="ko">한국어</option>
+              <option value="zh">繁體中文</option>
+            </select>
+          </div>
+        </div>
+      
+    
+    <div class="sso-body">
+      
+<div class="max-width-xl">
+<div class="ping-messages">
+    <noscript>
+        <div class="alert alert--warning">
+            Javascript is currently disabled in your browser. Please enable javascript to ensure the application will work properly. If you are unsure how to do this, please <a href="http://enable-javascript.com/" target="_blank">click here</a> to learn how to do this for your browser.
+        </div>
+    </noscript>
+</div>
+<div id="authProcessor"></div>
+<div id="sessionExpiredModal" class="modal js-modal modal--is-small">
+    <div class="modal__inner">
+        <header class="modal__header" aria-labelledby="modal__title">
+            <h1 class="modal__title">Session Has Expired</h1>
+            <button class="modal__close btn btn--transparent js-modal-close" aria-label="close">
+                <i class="icon-cme-card-close icon--medium"></i>
+            </button>
+        </header>
+        <div class="modal__contents" role="dialog" aria-hidden="false" aria-labelledby="modal__title" aria-describedby="modal__description">
+            <p class="modal__description">Your session has expired.  Please log in again.</p>
+        </div>
+        <footer class="modal__footer">
+            <button type="button" class="btn js-modal-positive">Login</button>&nbsp;
+        </footer>
+    </div>
+</div>
+</div>
+
+<!-- </div>
+</div>
+</div> -->
+
+      
+    </div>
+
+    <script language="JavaScript">
+      document
+        .getElementsByTagName("html")[0]
+        .setAttribute("data-theme", "dark");
+    </script>
+    
+    <script src="/sso/resources/js/third-party/promise.min.js"></script>
+    <script>
+      if (!window.Promise) {
+        window.Promise = Promise;
+      }
+    </script>
+    <script type="text/javascript">
+
+          // Defines the languages supported by the application.
+          var unoSupportValue =["en","ko", "zh"];
+          // Get the language dropdown element from the DOM.
+          var languageSelect = document.getElementById('language');
+          // Get the current path of the page to determine visibility of the language selector.
+          var currentPath = window.location.pathname;
+          // If the language dropdown is not on the page, exit the script.
+          // This can happen on pages that are fragments of this decorator.
+
+          // Function to retrieve a cookie by name.
+          function getCookie(cname) {
+            var name = cname + "=";
+            var decodedCookie = decodeURIComponent(document.cookie); // Decode for special characters.
+            var ca = decodedCookie.split(';'); // Split into an array of cookies.
+
+            for (var i = 0; i < ca.length; i++) {
+              var c = ca[i];
+              while (c.charAt(0) === ' ') { // Trim leading spaces.
+                c = c.substring(1);
+              }
+              // Check if the cookie name matches and the value is a supported language.
+              if (c.indexOf(name) === 0) {
+                var val = c.substring(name.length, c.length);
+                if (val.indexOf('-') > -1) {
+                  val = val.substring(0, val.indexOf('-'));
+                }
+                if (unoSupportValue.indexOf(val) !== -1) {
+                  return val; // Return the cookie value.
+                }
+              }
+            }
+            return false; // Return false if the cookie is not found.
+          }
+
+          // Function to set the language preference.
+          function setLanguage(newLang, reloadPage) {
+            // Store the new language in the browser's local storage.
+            localStorage.setItem('language', newLang);
+            // Send the language change to the server.
+            fetch('/sso/update_language.jsp?language=' + newLang)
+                    .then(function(response) {
+                      if (response.ok && reloadPage) {
+                        // Reload the page to apply the new language.
+                        location.reload();
+                      } else if(!response.ok){
+                        console.error('Failed to update session language on the server.');
+                      }
+                    })
+                    .catch(function(error) {
+                      console.error('Error updating session language:', error);
+                    });
+          }
+
+          if (languageSelect) {
+            // Show the language dropdown only on specific pages.
+            var isAuth = /\/accountstatus\/showAuth\.action$/.test(currentPath);
+            var isRegister = /\/register\/$/.test(currentPath);
+
+            if (isAuth || isRegister) {
+              languageSelect.style.visibility = 'visible';
+            }
+
+            // Retrieve language from the server-side session.
+            var sessionLanguageAttribute = "null";
+            var sessionLang = (sessionLanguageAttribute && sessionLanguageAttribute !== 'null') ? sessionLanguageAttribute : null;
+
+            //Checking valid language code in session.
+            if (sessionLang && unoSupportValue.indexOf(sessionLang) === -1) {
+              sessionLang = null;
+            }
+
+            // Retrieve language from the browser's local storage.
+            // Required for .js file (i18n.js).
+            var storedLang = localStorage.getItem('language');
+
+            // Retrieve language from the cookie.
+            var cookieLang = getCookie('language');
+
+            // Determine the current language by checking session, then cookie, and defaulting to 'en'.
+            var currentLang =  sessionLang || cookieLang || 'en';
+            console.log("sessionLang: ", sessionLang, "storedLang: ", storedLang, "cookieLang: ", cookieLang, "currentLang: ", currentLang);
+
+            // If storedLang and sessionLang doesn't match with currentLang, update the language.
+            if (currentLang !== storedLang || currentLang !== sessionLang) {
+              setLanguage(currentLang,false);
+            }
+
+            // Set the language dropdown to reflect the current language.
+            languageSelect.value = currentLang;
+
+            // Add an event listener to handle manual language changes by the user.
+            languageSelect.addEventListener('change', function(event) {
+              var newLang = event.target.value;
+              setLanguage(newLang,true);
+            });
+          }
+    </script>
+
+    <script src="/sso/resources/js/third-party/fetch.js?version=4.1.1"></script>
+    <script src="/sso/resources/js/third-party/react.min.js?version=4.1.1"></script>
+    <script src="/sso/resources/js/third-party/react-dom.min.js?version=4.1.1"></script>
+    <script src="/sso/resources/js/third-party/redux.min.js?version=4.1.1"></script>
+    <script src="/sso/resources/js/third-party/react-redux.min.js?version=4.1.1"></script>
+    <script src="/sso/resources/js/third-party/redux-form.min.js?version=4.1.1"></script>
+    <script src="/sso/resources/js/third-party/validator.min.js?version=4.1.1" type="text/javascript"></script>
+    <script src="/sso/resources/js/third-party/underscore-min.js?version=4.1.1"></script>
+    <script src="/sso/resources/js/third-party/uno-security-common.js?version=4.1.1"></script>
+    <script src="/sso/resources/js/commonUI-1.28.0.6.js?version=4.1.1"></script>
+    
+      
+      
+        <script src="/sso/unouxres/unoSimpleHeader.js?version=4.1.1"></script>
+      
+    
+
+    
+    <script type="text/javascript">
+
+        var CmeUno = {
+            messages: {
+                "html.form.login.template.userNameTitle": 'EMAIL / USER ID',
+                "html.form.login.template.passwordTitle": 'PASSWORD',
+                "html.form.login.template.signInButtonTitle": 'LOG IN',
+                "html.form.login.template.activateButtonTitle": 'Start Activation Process',
+                "html.form.login.template.cancelButtonTitle": 'Cancel',
+                "html.form.login.template.forgotUserPassword": 'Forgot Password?',
+                "html.form.login.template.forgotUserId": 'Forgot User ID?',
+                "html.form.login.template.loginFailureMessage": 'Sorry, we are having trouble logging you in. Please see the ["type": "link", "label": "User Guide to resolve", "href": "https://www.cmegroup.com/tools-information/webhelp/cmegroup-login/Content/login.html#resolve", "targetBlank": "new"].',
+                "html.form.login.template.cmeLogin": 'Log in',
+                "html.form.login.template.register": 'Register',
+                "html.form.login.template.title.activation": 'Enter password to finish email verification and activate account',
+                "html.form.login.template.apiAccountNotPermit": 'API accounts are not permitted to access CME Group Customer Center.',
+
+                "inboundfed.idpselection.greeting": 'Your Company Account',
+                "inboundfed.idpselection.fedMessage": 'This user ID is an authorized login for your company account',
+
+                "Error.inboundfed.header": 'Federated User',
+                "Error.inboundfed.content": 'Your CME Group Login ID has been identified as a federated ID. You are no longer allowed to access it directly. You must use your own organization login to access CME Group resources. If you have any questions or concerns, please contact CME Enterprise Application & System Entitlements.',
+                "Error.inboundfed.button": 'Use My Company Login',
+
+                "Error.pwdexp.header": 'Password Expired',
+                "Error.pwdexp.content": 'We cannot log you into your account since your password has expired. Please reset your password. ',
+                "Error.pwdexp.button": 'Reset my password',
+
+                "ResetPassword.title": 'Please reset your password',
+                "ResetPassword.content": 'To enhance your account security, your password has been expired. Please take a minute to set a new password.',
+                "FieldMatch.resetPasswordCommand.confirmPassword": 'The new password does not match with confirm new password',
+
+                "ease.mail.label": "CME Enterprise Application & System Entitlements",
+                "ease.contact.northAmerica": "North America",
+                "ease.contact.europe": "Europe",
+                "ease.contact.asia": "Asia",
+
+                "badconfig.title": 'Developer Error',
+                "badconfig.invalidView": 'The view viewName is not configured in the ViewConstants. Please update the viewMapper constant.',
+
+                "error.auth.accountLocked.title": 'Account Locked',
+                "error.auth.accountLocked.content": 'Too many credential mismatch attempts. Please try again later or reset your password.',
+                "Error.auth.accountLockWarning": 'After a few failed attempts an ID will be locked, please follow the Forgot Password process to avoid locking the account.',
+
+                "TwoFa.title": 'Protect your CME Group Account',
+                "TwoFa.explanation": "We do not recognize your device. In order to maintain the highest level of security, please click 'Re-send Code' for a security code to be delivered to your device. If you are unable to receive the security code, please contact <em>CME Group Enterprise Application &amp; System Entitlements</em> at <em>+1 312 456 1560</em> (US), <em>+44 20 3379 3802</em> (Europe), or <em>+65 6593 5536</em> (Asia).",
+                "TwoFa.explanation.onePass": "We do not recognize your device. In order to maintain the highest level of security, please click 'Re-send Code' for a security code to be delivered to your device. If you are unable to receive the security code, please contact <em>CME Customer Support Group</em> at <em>+1 312-930-3444</em> (US) or <em>+44 20 3377 3444</em> (Europe).",
+                "TwoFa.callForSecurityCode": 'Please call for security code.',
+                "TwoFa.missingData": 'We are unable to send you security code due to incomplete profile. To obtain temporary security code, please contact <em>CME Group Enterprise Application &amp; System Entitlements</em> at <em>+1 312 456 1560</em> (US), <em>+44 20 3379 3802</em> (Europe), or <em>+65 6593 5536</em> (Asia). Please complete your profile after you login.',
+                "TwoFa.missingData.onePass": 'We are unable to send you security code due to incomplete profile. To obtain temporary security code, please contact <em>CME Customer Support Group</em> at <em>+1 312-930-3444</em> (US) or <em>+44 20 3377 3444</em> (Europe).',
+                "TwoFa.explanation.verifiedButPhoneInvalid.smartclick": 'Unable to send security code to your phone. The phone number associated with your device may be invalid. Please contact <em>CME Group Enterprise Application &amp; System Entitlements</em> at <em>+1 312 456 1560</em> (US), <em>+44 20 3379 3802</em> (Europe), or <em>+65 6593 5536</em> (Asia).',
+                "TwoFa.explanation.verifiedButPhoneInvalid.onepass": 'The mobile phone number associated with your device is invalid. Please contact <em>CME Customer Support Group</em> at <em>+1 312-930-3444</em> (US) or <em>+44 20 3377 3444</em> (Europe).',
+                "TwoFa.resendButtonText": 'Re-send Code',
+                "twoFaActivationCode": 'Security Code',
+                "TwoFa.maxReached": 'To obtain security code, please contact <em>CME Group Enterprise Application &amp; System Entitlements</em> at <em>+1 312 456 1560</em> (US), <em>+44 20 3379 3802</em> (Europe), or <em>+65 6593 5536</em> (Asia). Please complete your profile after you login.',
+                "TwoFa.maxReached.onepass": 'To obtain security code, please contact <em>CME Customer Support Group</em> at <em>+1 312-930-3444</em> (US) or <em>+44 20 3377 3444</em> (Europe).',
+                "TwoFa.publicComputer": 'This is a public or shared computer',
+                "TwoFa.publicComputer.desc": 'Select this option if you are connecting from a public computer. If you select this option, be sure to log off and close all browser windows when you end your session.',
+                "TwoFa.privateComputer": 'This is my personal computer',
+                "TwoFa.privateComputer.desc": 'Select this option if you are connecting from a personal computer. If you select this option, cookies will be added to your computer to maintain your session.',
+                "TwoFa.twoFaCommand.twoFaActivationCode": 'The security code you entered does not match with our record',
+                "Max2FaReached.title": 'Maximum Limit Reached',
+                "Max2FaReached.content": 'You have reached the number of trials for two factor authentication code. Please re-login with your user ID and password.',
+                "TwoFa.securityCodeSent": 'The security code is successfully sent',
+                "TwoFa.maxLimit": 'You have reached the maximum number of security code messages. Please contact CME customer service team.',
+                "TwoFa.maxRateLimit": 'You have reached the maximum number of security codes that can be generated in a minute. Please wait a short time before trying again.',
+                "TwoFa.missing2FaData": 'Unable to send security code since your profile is incomplete. Please contact CME customer service team for security code.',
+
+                "OTP": 'One-Time Password',
+                "OTP.title": 'Log In With One-Time Password',
+                "OTP.instruction": 'We sent a one-time password to your email. Please enter it below. You can only use this code once.',
+                "OTP.support.contact": 'If you are unable to receive the code, please contact <em>CME Group Enterprise Application &amp; System Entitlements</em> at <em>+1 312 456 1560</em> (US), <em>+44 20 3379 3802</em> (Europe), or <em>+65 6593 5536</em> (Asia).',
+                "OTP.sendNew" : 'Send Me A New One-Time Password',
+                "OTP.securityCodeSent" : 'A new OTP has been sent to your email.',
+                "OTP.invalidCode": 'Incorrect code, please try again. One-Time password is case-sensitive.',
+                "OTP.expiredCode": 'This code has expired.',
+                "OTP.unknownDevice": 'We do not recognize your device. To maintain the highest level of security, please login from a device you have previously used. For assistance see the ["type": "link", "label": "CME Group Login User Help", "href": "https://www.cmegroup.com/tools-information/webhelp/cmegroup-login/Content/identity_management.html", "targetBlank": "new"].',
+                "OTP.pendingDeviceValidation": 'We sent a one-time password to your email. You should also receive an access code from <em>CME Group Enterprise Application &amp; System Entitlements</em>. Please enter <b><u>both codes</u></b> below.',
+                "OTP.pendingDeviceValidation.example": 'For example, if your one-time password in the email is "ABCXYZ" and your access code is "123456", enter "ABCXYZ123456".',
+                "OTP.maxReached": 'Sorry, you have used all your one-time passwords. For assistance, please contact ["type": "link", "label": "CME Group Enterprise Application & System Entitlements", "href":"https://www.cmegroup.com/tools-information/webhelp/cmegroup-login/Content/create_account_applications.html#Support", "targetBlank": "new"].',
+                "OTP.error.general": 'Sorry, we are unable to process your request. Please try again. If the problem persists, please contact ["type": "link", "label": "CME Group Enterprise Application & System Entitlements", "href":"https://www.cmegroup.com/tools-information/webhelp/cmegroup-login/Content/create_account_applications.html#Support", "targetBlank": "new"].',
+                "OTP.error.validateCode": 'Sorry, we are unable to process your request. Your session may have expired. Please click "Back to Login" and try again. If the problem persists, contact CME Group Enterprise Application & System Entitlements.',
+                "OTP.accessCode": 'Access Code',
+
+                "required": 'Required',
+                "currentPassword": 'Current Password',
+                "newPassword": 'New Password',
+                "confirmNewPassword": 'Confirm New Password',
+                "submit": 'Submit',
+                "backToLogin": 'Back to Login',
+                "back": 'Back',
+                "captchaResponse": 'Type the characters you see below (case sensitive)',
+
+                "processing": 'Processing',
+                "error.generic": 'Error occurred while processing your request. Your session may have expired. Please try logging in again.',
+                "error.processing": 'Error occurred while processing your request. Please try again later.',
+
+                "EmailActivation.title":'Email Activation',
+                "EmailActivation.content":'An email containing instructions to activate your account has been sent to your registered email address (<em>{0}</em>). Please follow the instructions in the email. Once completed, you can click the button below.',
+                "EmailActivation.changeEmailTitle":'Not receiving your email?',
+                "EmailActivation.resendButtonText":'Re-send Activation Email',
+                "EmailActivation.changeEmail":'If <em>{0}</em> is not your correct email address, please enter the corrected email address below.',
+                "EmailActivation.updateEmailButtonText":'Update My Email',
+                "next":'Next',
+                "email":'Email Address',
+                "confirmEmail":'Confirm Email Address',
+                "EmailActivation.notActive":'You have not activated your account. Please follow the instructions in your account activation email.',
+                "EmailActivation.emailUpdated":'Your email has been updated and an email with instructions to activate your account has been sent to your new email address.',
+                "EmailActivation.resent":'The activation email has been resent to your registered email account.',
+                "AccountStatusController.email.sameAsRecord":'The email address you entered is the same as the one in our record. ',
+                "UniqueEmail.emailUpdateCommand.email":'Please choose another email since it is already used.',
+
+                "PrivacyPolicy.title": 'Profile Verification',
+                "PrivacyPolicy.content": 'It has been a while since you review your profile. As a CME Group customer, you are required to periodically review your profile and accept our privacy policy and terms of use.',
+                "PrivacyPolicy.force": 'You will not be able to continue until you do so.',
+                "PrivacyPolicy.updateNow": 'Yes, I will review it now',
+                "PrivacyPolicy.skip": 'No, I will do it next time',
+                "PrivacyPolicy.reviewed": 'I have reviewed my profile',
+
+                "DuoSetup.title": 'Duo Setup',
+                "DuoSetup.skip": 'Skip setup for now',
+                "DuoSetup.needOneDevice": 'You need to register at least one device.',
+                "DuoSetup.done": 'I am done with my setup',
+                "DuoSetup.message": 'Please register your device for Duo.',
+                "DuoSetup.snoozeRemaining": 'You can log in :snoozeRemaining before Duo is required.',
+                "DuoSetup.snoozeRemainingExtra": 'more login:isPlural left',
+                "DuoSetup.manual.part1": 'For help with this setup,',
+                "DuoSetup.manual.part2": 'refer to DUO tutorial',
+                "DuoSetup.help": 'Contact us for help:',
+                "DuoSetup.ease.us": 'US +1 312 456 1560',
+                "DuoSetup.ease.eu": 'Europe +44 20 3379 3802',
+                "DuoSetup.ease.asia": 'Asia +65 6593 5536',
+                "ease.email": 'EASE@cmegroup.com',
+
+                "ProcessAuth.error.title": 'Processing Failed',
+                "ProcessAuth.error.content": 'We are unable to process your request. Your session may have expired. Please try logging in again. If the problem persists, please contact CME Enterprise Application & System Entitlements.',
+                "errorCode": 'Error code',
+                "errorMessage": 'Error message',
+                "trackerCode": 'Tracker code',
+                "continue" : 'Continue',
+                "EmailActivation.changeEmail.new" : '<em>{0}</em> is not your email?',
+                "EmailActivation.resendButtonText.new" : 'Re-send activation email',
+                "EmailActivation.content.new":'An email containing instructions to activate your account has been sent to your registered email address (<em>{0}</em>). Please follow the instructions in the email.',
+
+                "UserActivation.title": 'Email Verification',
+                "UserActivation.success": 'Congratulations! Your email verification is complete.',
+                "UserActivation.duplicate": 'The user name/email that you chose is already picked by another user. Please register with different user name/email address.',
+                "UserActivation.registerNewUser": 'Register a New User',
+
+                "inboundfed.idpselection.redirectingNow": 'Taking you to your sign in page',
+                "inboundfed.idpselection.title": 'Continue to your company login'
+            },
+            selectedIdp: null,
+            email: '',
+            contextPath: "/sso",
+            registrationBaseUrl: "https://login.cmegroup.com/sso",
+            recaptcha: {sitekey: "6Lc1KngqAAAAAEoewrce6PQ_iQdGyis4YP_43Z7h"},
+            readOnlyMode: "false" == true,
+            ui: {
+                switchToWide: function(){
+                    var leftPanel = $(".cmeLoginPanelLeft");
+                    if (leftPanel.hasClass("grid__col-md-6")){
+                        // In narrow mode, switch it to wide
+                        leftPanel.removeClass("grid__col-md-6");
+                        leftPanel.addClass("grid__col-md-12");
+                        var rightPanel = $(".cmeLoginPanelRight");
+                        rightPanel.addClass("hide");
+                    }
+                },
+                switchToNormal: function(){
+                    var leftPanel = $(".cmeLoginPanelLeft");
+                    if (leftPanel.hasClass("grid__col-md-12")){
+                        // In wide mode, switch it to normal
+                        leftPanel.removeClass("grid__col-md-12");
+                        leftPanel.addClass("grid__col-md-6");
+                        var rightPanel = $(".cmeLoginPanelRight");
+                        rightPanel.removeClass("hide");
+                    }
+                }
+            }
+        };
+        var enableUniversalDuo = true;
+    </script>
+
+    <script src="/sso/resources/js/third-party/promise.min.js?version=4.1.1"></script>
+    <script>
+        if (!window.Promise) {
+            window.Promise = Promise;
+        }
+    </script>
+    <script type="text/javascript" src="/sso/resources/js/commonUI-1.25.0.17.js?version=4.1.1"></script>
+    <script type="text/javascript" src="/sso/resources/js/third-party/dateformat.js?version=4.1.1"></script>
+    <script type="text/javascript" src="/sso/resources/js/third-party/Duo-Web-v2.min.js?version=4.1.1"></script>
+    <script type="text/javascript" src="/sso/resources/js/third-party/uno-security-common.js?version=4.1.1"></script>
+    <script type="text/javascript" src="/sso/resources/js/dist/auth.js?version=4.1.1"></script>
+    <!-- Captcha -->
+
+
+    
+
+
+        <script>
+              dataLayer = [{'gtm.whitelist':['google', 'k']}];
+        </script>
+        <!-- Google Tag Manager -->
+        <noscript><iframe src="//www.googletagmanager.com/ns.html?id=GTM-KWFKW5"
+        height="0" width="0" style="display:none;visibility:hidden"></iframe></noscript>
+        <script>
+               (function(w,d,s,l,i){w[l]=w[l]||[];w[l].push({'gtm.start': new Date().getTime(),event:'gtm.js'});
+               var f=d.getElementsByTagName(s)[0],j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';
+               j.async=true;j.src='//www.googletagmanager.com/gtm.js?id='+i+dl;f.parentNode.insertBefore(j,f);})
+               (window,document,'script','dataLayer','GTM-KWFKW5');
+        </script>
+
+  
+</body></html>
