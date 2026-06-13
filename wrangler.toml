@@ -1,0 +1,11 @@
+# Cloudflare Worker (Static Assets) — serves the SvelteKit static build AND a
+# same-origin live-price API at /api/price. Deployed by `npx wrangler deploy`
+# from the repo root (Workers Builds runs the build command first to produce
+# web/dist, then deploys this Worker + the assets).
+name = "vacant-exoplanet"
+main = "worker.js"
+compatibility_date = "2024-11-01"
+
+[assets]
+directory = "./web/dist"
+binding = "ASSETS"

@@ -1,14 +1,11 @@
-// Cloudflare Pages Function — same-origin realtime price proxy.
+// Cloudflare Worker entry — serves the static SvelteKit build via the ASSETS
+// binding and a same-origin live-price API at /api/price. Same origin means the
+// browser fetch is never CORS-blocked (Yahoo's endpoint sends no CORS header, so
+// it can't be called from the browser directly). Implied vol still comes from
+// the 15-min scrape; only the futures PRICE is fetched live here.
 //
-// The dashboard is a static site; browsers can't read Yahoo's quote endpoint
-// directly because Yahoo sends no Access-Control-Allow-Origin header. This
-// function runs server-side (no CORS applies to server->server fetch) and is
-// served from the SAME origin as the app (/api/price), so the browser fetch is
-// same-origin and never blocked. Implied vol still comes from the 15-min
-// scrape; only the futures PRICE is fetched live here.
-//
-// Route: GET /api/price?sym=GC=F  (or NQ=F)  -> { sym, price, time, exch }
-// Free on Cloudflare Pages Functions (Workers free pool, 100k req/day).
+// Free on the Workers plan: static-asset requests are free/unlimited; Worker
+// invocations (only /api/price hits the script) are 100k/day free.
 
 const ALLOWED = new Set(['GC=F', 'NQ=F']);
 
@@ -17,21 +14,19 @@ function json(obj, status = 200) {
         status,
         headers: {
             'content-type': 'application/json',
-            // Let the CF edge + browser coalesce polls so we hit Yahoo at most
-            // ~1x/15s regardless of how many tabs are open (dodges Yahoo 429).
+            // CF edge + browser coalesce polls -> hit Yahoo ~1x/15s (dodges 429).
             'cache-control': 'public, max-age=15',
         },
     });
 }
 
-export async function onRequestGet({ request }) {
+async function price(request) {
     const sym = new URL(request.url).searchParams.get('sym') || 'GC=F';
     if (!ALLOWED.has(sym)) return json({ error: 'bad sym' }, 400);
     try {
         const upstream = await fetch(
             `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(sym)}?interval=1d&range=1d`,
             {
-                // Yahoo 429s requests without a browser-like UA.
                 headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
                 cf: { cacheTtl: 15, cacheEverything: true },
             }
@@ -49,3 +44,12 @@ export async function onRequestGet({ request }) {
         return json({ error: String(e) }, 502);
     }
 }
+
+export default {
+    async fetch(request, env) {
+        const url = new URL(request.url);
+        if (url.pathname === '/api/price') return price(request);
+        // Everything else: serve the static SvelteKit build.
+        return env.ASSETS.fetch(request);
+    },
+};
