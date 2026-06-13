@@ -9,12 +9,13 @@
     import StrategyView from '$lib/components/StrategyView.svelte';
     import Vol2VolView from '$lib/components/Vol2VolView.svelte';
     import SignalsView from '$lib/components/SignalsView.svelte';
+    import TargetView from '$lib/components/TargetView.svelte';
     import { fetchGammaHeatmap, fetchHeatmap, fetchPositionBias, fetchMacro, fetchCot, fetchStrategy, fetchBrief, fetchOIData, fetchSignals } from '$lib/data.js';
     import { ASSET_PROFILES, DEFAULT_CONTRACT_KEY } from '$lib/config.js';
-    import { LineChart, Grid3X3, Activity, Landmark, Compass, Sigma, Radio } from 'lucide-svelte';
+    import { LineChart, Grid3X3, Activity, Landmark, Compass, Sigma, Radio, Target } from 'lucide-svelte';
 
     let asset = $state('gc');
-    let activeTab = $state('strategy');
+    let activeTab = $state('target');
     let payload = $state(null);
     let loading = $state(true);
     let refreshing = $state(false);
@@ -60,6 +61,7 @@
     );
 
     const tabs = [
+        { key: 'target',     label: 'เป้าวันนี้',     tone: 'warn',    icon: Target },
         { key: 'strategy',   label: 'Daily Strategy', tone: 'warn',   icon: Compass },
         { key: 'signals',    label: 'Signals',       tone: 'warn',    icon: Radio },
         { key: 'vol2vol',    label: 'Vol2Vol',       tone: 'mag',     icon: Sigma },
@@ -201,7 +203,7 @@
                 await ensureOIData(nextKey);
             } else if (activeTab === 'macro') {
                 await ensureMacro({ force: true });
-            } else if (activeTab === 'strategy') {
+            } else if (activeTab === 'strategy' || activeTab === 'target') {
                 await ensureStrategy();
             } else if (activeTab === 'signals') {
                 await ensureSignals();
@@ -254,7 +256,7 @@
             void ensureOIData(nextKey);
         } else if (key === 'macro') {
             void ensureMacro();
-        } else if (key === 'strategy') {
+        } else if (key === 'strategy' || key === 'target') {
             void ensureStrategy();
         } else if (key === 'signals') {
             void ensureSignals();
@@ -291,7 +293,7 @@
                     void ensureOIData(nextKey);
                 } else if (activeTab === 'macro') {
                     void ensureMacro();   // refetch COT for the new asset (macro is shared/cached)
-                } else if (activeTab === 'strategy') {
+                } else if (activeTab === 'strategy' || activeTab === 'target') {
                     void ensureStrategy();
                 } else if (activeTab === 'signals') {
                     void ensureSignals();
@@ -315,6 +317,8 @@
                 ? currentOIData?.contract || visibleContract?.contract || ''
             : activeTab === 'macro'
                 ? 'Macro · COT'
+            : activeTab === 'target'
+                ? 'เป้าวันนี้'
             : activeTab === 'strategy'
                 ? 'Daily Strategy'
             : activeTab === 'signals'
@@ -333,7 +337,11 @@
     <main class="flex flex-1 min-h-0 flex-col overflow-hidden px-6 py-5">
         {#key activeTab}
             <div class="flex flex-1 min-h-0 flex-col overflow-hidden animate-fade-in">
-                {#if activeTab === 'strategy'}
+                {#if activeTab === 'target'}
+                    <div class="flex flex-col gap-4 overflow-y-auto">
+                        <TargetView {strategy} assetId={asset} loading={strategyLoading} />
+                    </div>
+                {:else if activeTab === 'strategy'}
                     <div class="flex flex-col gap-4 overflow-y-auto">
                         <StrategyView {strategy} {brief} loading={strategyLoading} />
                     </div>
@@ -401,7 +409,8 @@
             : activeTab === 'vol2vol'
                 ? currentOIData?.contract || visibleContract?.contract || '—'
                 : visibleContract?.contract || '—'}
-        dataType={activeTab === 'analysis' ? 'Position Bias'
+        dataType={activeTab === 'target' ? 'เป้าวันนี้'
+            : activeTab === 'analysis' ? 'Position Bias'
             : activeTab === 'heatmap' ? 'OI Heatmap'
             : activeTab === 'gamma' ? 'Gamma Heatmap'
             : activeTab === 'vol2vol' ? 'Vol2Vol · SD / OI'

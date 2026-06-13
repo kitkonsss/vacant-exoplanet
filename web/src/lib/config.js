@@ -7,14 +7,27 @@ export const ASSET_PROFILES = {
         label: 'Gold (GC)',
         shortLabel: 'GC',
         dataFolder: 'data',
-        visibleStrikeRange: 350
+        visibleStrikeRange: 350,
+        // Target view: GC moves are quoted in $/oz (= 1 point). $100/contract per
+        // point, $10/contract per micro (MGC). fixedTpRef = the habitual flat $100
+        // TP, shown vs today's expected move so the mismatch on quiet days is obvious.
+        unit: '$',
+        pointValueUsd: 100,
+        microPointValueUsd: 10,
+        fixedTpRef: 100
     },
     nq: {
         id: 'nq',
         label: 'Nasdaq (NQ)',
         shortLabel: 'NQ',
         dataFolder: 'data/nq',
-        visibleStrikeRange: 2000
+        visibleStrikeRange: 2000,
+        // NQ moves in index points: $20/contract per point, $2/contract per micro
+        // (MNQ). No habitual fixed-TP reference, so the comparison card is hidden.
+        unit: 'จุด',
+        pointValueUsd: 20,
+        microPointValueUsd: 2,
+        fixedTpRef: null
     }
 };
 
