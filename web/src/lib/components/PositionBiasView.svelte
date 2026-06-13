@@ -52,7 +52,11 @@
         </div>
 
         <div class="grid grid-cols-1 gap-4">
-            {#each contracts as contract (contract.contract_key)}
+            <!-- Key by index, not contract_key: after a contract roll the scraper
+                 can write a duplicate contract_key across slots (e.g. tomorrow +
+                 friday both pointing at the same option), which would crash the
+                 keyed each with `each_key_duplicate` and blank the whole tab. -->
+            {#each contracts as contract, i (i)}
                 <ContractCard {contract} {mode} />
             {/each}
         </div>
