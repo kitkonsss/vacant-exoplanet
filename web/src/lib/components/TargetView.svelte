@@ -2,12 +2,40 @@
     import Card from './ui/Card.svelte';
     import Badge from './ui/Badge.svelte';
     import { buildTarget, touchProb } from '$lib/target.js';
+    import { fetchLivePrice } from '$lib/data.js';
     import { fmtNumber, fmtBangkok } from '$lib/utils.js';
     import { Target, TrendingUp, TrendingDown, Crosshair, Gauge, ShieldAlert } from 'lucide-svelte';
 
     let { strategy = null, assetId = 'gc', loading = false } = $props();
 
-    const t = $derived(strategy ? buildTarget(strategy, assetId) : null);
+    // Live futures price (same-origin /api/price proxy), polled every 20s and used
+    // to re-center the bands. Falls back to the scrape-time price if unavailable.
+    let livePrice = $state(null);
+    let liveAt = $state(null);
+    $effect(() => {
+        const sym = assetId === 'nq' ? 'NQ=F' : 'GC=F';
+        let stopped = false;
+        async function tick() {
+            const d = await fetchLivePrice(sym);
+            if (stopped) return;
+            if (d && Number.isFinite(d.price)) {
+                livePrice = d.price;
+                liveAt = d.time ? new Date(d.time * 1000) : new Date();
+            }
+        }
+        livePrice = null;
+        liveAt = null;
+        tick();
+        const id = setInterval(tick, 20000);
+        return () => { stopped = true; clearInterval(id); };
+    });
+
+    const t = $derived(strategy ? buildTarget(strategy, assetId, livePrice) : null);
+
+    function liveClock(d) {
+        if (!d) return '';
+        return d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
+    }
     const up = $derived(t?.targets.find((x) => x.side === 'above') || null);
     const down = $derived(t?.targets.find((x) => x.side === 'below') || null);
 
@@ -72,6 +100,13 @@
                 </div>
                 <div class="flex flex-wrap items-center gap-1.5">
                     <span class="font-mono text-base font-semibold text-foreground">{fmtNumber(t.price, 0)}</span>
+                    {#if t.isLive}
+                        <span class="inline-flex items-center gap-1 text-[10px] font-semibold text-up" title="ราคา realtime">
+                            <span class="h-1.5 w-1.5 rounded-full bg-up"></span>live{#if liveAt}&nbsp;{liveClock(liveAt)}{/if}
+                        </span>
+                    {:else}
+                        <span class="text-[10px] text-muted-foreground" title="ราคาจาก scrape ล่าสุด — live ดึงไม่ได้">· scrape</span>
+                    {/if}
                     <Badge variant={t.direction === 'long' ? 'up' : t.direction === 'short' ? 'down' : 'muted'}>{dirLabel(t.direction)}</Badge>
                     <Badge variant={t.regime === 'trending' ? 'warn' : t.regime === 'range' ? 'up' : 'muted'}>{regimeLabel(t.regime)}</Badge>
                 </div>

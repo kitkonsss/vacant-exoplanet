@@ -116,3 +116,23 @@ export async function fetchSignals(assetId) {
         roundWalls: strategy?.round_walls ?? null
     };
 }
+
+/**
+ * Live futures price from the same-origin /api/price Cloudflare Pages Function
+ * (proxies Yahoo GC=F / NQ=F). Returns { sym, price, time, exch } or null.
+ *
+ * Deliberately NOT cache-busted: relying on the function's 15s cache-control so
+ * repeated polls (and multiple tabs) coalesce instead of hammering Yahoo. On a
+ * host without the function (e.g. the legacy GitHub Pages URL) this 404s and
+ * returns null, so callers transparently fall back to the scrape-time price.
+ */
+export async function fetchLivePrice(sym) {
+    try {
+        const res = await fetch(`/api/price?sym=${encodeURIComponent(sym)}`);
+        if (!res.ok) return null;
+        const j = await res.json();
+        return j && Number.isFinite(j.price) ? j : null;
+    } catch (e) {
+        return null;
+    }
+}

@@ -17,8 +17,11 @@ const config = {
             strict: true
         }),
         paths: {
-            // Project Pages at https://kitkonsss.github.io/vacant-exoplanet/
-            base: dev ? '' : '/vacant-exoplanet'
+            // base '' for Cloudflare Pages (served at the domain root, where the
+            // same-origin /api/price function lives). The legacy GitHub Pages
+            // deploy sets PAGES_BASE=/vacant-exoplanet so the old project-page URL
+            // keeps working unchanged during the migration.
+            base: dev ? '' : (process.env.PAGES_BASE ?? '')
         },
         alias: {
             $lib: './src/lib'

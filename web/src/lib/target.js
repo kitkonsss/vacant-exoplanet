@@ -71,12 +71,21 @@ function nearestWall(walls, price, side, minDist = 0) {
 /**
  * Build the consolidated target read from a daily_strategy.json payload.
  * Returns null if the expected-move basis isn't available.
+ *
+ * `livePrice` (optional) re-anchors everything on the realtime futures price:
+ * the IV-implied expected move is proportional to price (move = price·IV·√t), so
+ * scaling the scrape-time move by the price ratio is exact. Bands, ladder,
+ * targets and wall distances then all measure from where price actually is now.
  */
-export function buildTarget(strategy, assetId = 'gc') {
+export function buildTarget(strategy, assetId = 'gc', livePrice = null) {
     const er = strategy?.expected_range;
-    const price = strategy?.future_price ?? er?.future_price ?? null;
-    const em = er?.expected_move ?? null; // 1 SD, in price units (the IV-based move)
-    if (!price || !em || em <= 0) return null;
+    const scrapePrice = strategy?.future_price ?? er?.future_price ?? null;
+    const baseEm = er?.expected_move ?? null; // 1 SD at the scrape-time price
+    if (!scrapePrice || !baseEm || baseEm <= 0) return null;
+
+    const isLive = Number.isFinite(livePrice) && livePrice > 0;
+    const price = isLive ? livePrice : scrapePrice;
+    const em = baseEm * (price / scrapePrice);
 
     const profile = ASSET_PROFILES[assetId] || {};
     const regime = strategy?.regime?.regime || 'neutral';
@@ -120,6 +129,8 @@ export function buildTarget(strategy, assetId = 'gc') {
 
     return {
         price,
+        scrapePrice,
+        isLive,
         em,
         unit: profile.unit || '',
         pointValueUsd: profile.pointValueUsd ?? null,
@@ -130,8 +141,9 @@ export function buildTarget(strategy, assetId = 'gc') {
         atmIvPct: er?.atm_iv_pct ?? null,
         atr: er?.atr ?? null,
         termShape: er?.term_structure?.shape ?? null,
-        dayHigh: er?.day_high_est ?? price + em,
-        dayLow: er?.day_low_est ?? price - em,
+        // Anchored on the live price (recomputed), not the stale scrape-time est.
+        dayHigh: price + em,
+        dayLow: price - em,
         wallUp,
         wallDown,
         targets,

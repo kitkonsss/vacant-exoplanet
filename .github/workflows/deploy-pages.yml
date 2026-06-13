@@ -50,6 +50,9 @@ jobs:
         working-directory: web
         env:
           NODE_ENV: production
+          # Legacy GitHub Pages serves at the /vacant-exoplanet/ subpath. The
+          # default build (Cloudflare Pages) uses base '' for the domain root.
+          PAGES_BASE: /vacant-exoplanet
         run: npm run build
 
       - name: Sync exported site to repo root
