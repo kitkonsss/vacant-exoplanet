@@ -80,6 +80,13 @@ export function macroUrl() {
     return `${DATA_BASE}/data/macro.json`;
 }
 
+// Scheduled US high-impact macro events (FOMC / CPI / NFP) — the days you must
+// NOT fade. Shared across assets, lives at the root data/ folder. Static curated
+// schedule (refreshed yearly), so it's the same for GC and NQ.
+export function econCalendarUrl() {
+    return `${DATA_BASE}/data/econ_calendar.json`;
+}
+
 // CFTC COT positioning per asset — data/cot.json (GC) or data/nq/cot.json (NQ).
 export function cotUrl(assetId) {
     return dataUrl(assetId, 'cot.json');

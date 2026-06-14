@@ -3,9 +3,9 @@
     import Badge from './ui/Badge.svelte';
     import { buildTarget, touchProb } from '$lib/target.js';
     import { buildMood } from '$lib/mood.js';
-    import { fetchLivePrice, fetchIvBaseline } from '$lib/data.js';
+    import { fetchLivePrice, fetchIvBaseline, fetchEconCalendar } from '$lib/data.js';
     import { fmtNumber, fmtBangkok } from '$lib/utils.js';
-    import { Target, TrendingUp, TrendingDown, Crosshair, Gauge, ShieldAlert, Flame, Activity } from 'lucide-svelte';
+    import { Target, TrendingUp, TrendingDown, Crosshair, Gauge, ShieldAlert, Flame, Activity, CalendarClock } from 'lucide-svelte';
 
     let { strategy = null, assetId = 'gc', loading = false } = $props();
 
@@ -45,8 +45,26 @@
         return () => { stopped = true; };
     });
 
+    // Scheduled high-impact macro calendar (FOMC/CPI/NFP) — shared, load once.
+    let calendar = $state(null);
+    $effect(() => {
+        let stopped = false;
+        (async () => {
+            const c = await fetchEconCalendar();
+            if (!stopped) calendar = c;
+        })();
+        return () => { stopped = true; };
+    });
+
+    // Wall-clock tick so the event countdown stays fresh (every 30s).
+    let nowMs = $state(Date.now());
+    $effect(() => {
+        const id = setInterval(() => { nowMs = Date.now(); }, 30000);
+        return () => clearInterval(id);
+    });
+
     const t = $derived(strategy ? buildTarget(strategy, assetId, livePrice) : null);
-    const mood = $derived(strategy ? buildMood(strategy, ivHistory) : null);
+    const mood = $derived(strategy ? buildMood(strategy, { ivHistory, events: calendar, nowMs, price: t?.price }) : null);
 
     function moodEmoji(v) {
         return v === 'red' ? '🔴' : v === 'yellow' ? '🟡' : '🟢';
@@ -60,6 +78,13 @@
     function fmtSkew(n) {
         if (n == null || !Number.isFinite(n)) return '—';
         return (n >= 0 ? '+' : '') + fmtNumber(n, 1);
+    }
+    function fmtCountdown(h) {
+        if (h == null || !Number.isFinite(h)) return '';
+        if (h < 0) return 'เพิ่งออก';
+        if (h < 1) return 'อีกไม่ถึง 1 ชม.';
+        if (h < 24) return `อีก ${Math.round(h)} ชม.`;
+        return `อีก ${Math.round(h / 24)} วัน`;
     }
 
     function liveClock(d) {
@@ -135,10 +160,29 @@
                 </div>
                 <p class="mt-1 text-[12px] leading-relaxed text-muted-foreground">{mood.sub}</p>
 
+                <!-- ข่าวสำคัญที่กำลังจะมา (วันนี้/พรุ่งนี้) -->
+                {#if mood.event && (mood.event.status === 'today' || mood.event.status === 'tomorrow')}
+                    <div class="mt-2 flex flex-wrap items-center gap-x-2 gap-y-0.5 rounded-md border px-2.5 py-1.5 text-[12px] {mood.event.status === 'today' ? 'border-down/40 bg-down/10 text-down' : 'border-warn/40 bg-warn/10 text-warn'}">
+                        <CalendarClock class="h-4 w-4 shrink-0" />
+                        <span class="font-semibold">{mood.event.status === 'today' ? 'วันนี้มีข่าว' : 'พรุ่งนี้มีข่าว'}:</span>
+                        <span class="font-semibold">{mood.event.name}</span>
+                        <span class="text-muted-foreground">· {fmtBangkok(mood.event.at)} · {fmtCountdown(mood.event.hoursUntil)}</span>
+                    </div>
+                {/if}
+
                 {#if mood.reasons.length}
                     <ul class="mt-2 flex flex-col gap-0.5 text-[11px] text-foreground/80">
                         {#each mood.reasons as r, i (i)}<li>• {r}</li>{/each}
                     </ul>
+                {/if}
+
+                <!-- gamma pin/escape (proxy จาก gamma magnet ที่ใกล้สุด) -->
+                {#if mood.gammaPin && mood.gammaPin.state !== 'neutral'}
+                    <p class="mt-2 text-[11px] {mood.gammaPin.state === 'pinned' ? 'text-up' : 'text-warn'}">
+                        🧲 {mood.gammaPin.state === 'pinned'
+                            ? `ราคาถูกตรึงใกล้ gamma ${fmtNumber(mood.gammaPin.strike, 0)} → มักเด้งในกรอบ (fade ง่ายขึ้น)`
+                            : `หลุด gamma magnet ${fmtNumber(mood.gammaPin.strike, 0)} แล้ว → มูฟมีโอกาสเร่ง (อย่า fade)`}
+                    </p>
                 {/if}
 
                 <!-- 3 ตัวเลขสรุป: IV · ตลาดกลัวทางไหน · โหมดตลาด -->
@@ -181,9 +225,15 @@
                     </div>
                 </div>
 
+                {#if mood.event && mood.event.status === 'far'}
+                    <p class="mt-3 flex items-center gap-1.5 text-[10px] text-muted-foreground">
+                        <CalendarClock class="h-3 w-3" /> ข่าวใหญ่ถัดไป: {mood.event.name} · {fmtBangkok(mood.event.at)} ({fmtCountdown(mood.event.hoursUntil)})
+                    </p>
+                {/if}
+
                 <p class="mt-3 text-[10px] leading-relaxed text-muted-foreground">
                     🟢 = ออกข้าง/นิ่ง สวนกรอบได้ · 🟡 = เริ่มผันผวน สวนแบบลดไม้ · 🔴 = เทรนด์/วันข่าว อย่าสวน ·
-                    อิง IV + skew + term structure + regime ที่ระบบมีอยู่ · เพื่อการศึกษา
+                    อิง ปฏิทินข่าว (FOMC/CPI/NFP) + IV + skew + term structure + regime · เพื่อการศึกษา
                 </p>
             </Card>
         {/if}

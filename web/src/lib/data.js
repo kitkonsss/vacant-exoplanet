@@ -1,4 +1,4 @@
-import { CONTRACT_OPTIONS, briefUrl, cotUrl, expectedRangeUrl, gammaHeatmapUrl, heatmapUrl, ivBaselineUrl, macroUrl, oiDataUrl, optionFlowUrl, positionBiasUrl, signalLogUrl, signalScorecardUrl, strategyUrl, wallBacktestUrl } from './config.js';
+import { CONTRACT_OPTIONS, briefUrl, cotUrl, econCalendarUrl, expectedRangeUrl, gammaHeatmapUrl, heatmapUrl, ivBaselineUrl, macroUrl, oiDataUrl, optionFlowUrl, positionBiasUrl, signalLogUrl, signalScorecardUrl, strategyUrl, wallBacktestUrl } from './config.js';
 import { parseOIData } from './vol2vol.js';
 
 async function fetchJsonSoft(url) {
@@ -115,6 +115,16 @@ export async function fetchSignals(assetId) {
         wallBacktest,
         roundWalls: strategy?.round_walls ?? null
     };
+}
+
+/**
+ * Fetches the scheduled high-impact macro calendar (FOMC / CPI / NFP). Returns
+ * the events array (sorted as authored), or [] if unavailable. Shared across
+ * assets, so assetId is ignored.
+ */
+export async function fetchEconCalendar() {
+    const j = await fetchJsonSoft(econCalendarUrl());
+    return Array.isArray(j?.events) ? j.events : [];
 }
 
 /**
