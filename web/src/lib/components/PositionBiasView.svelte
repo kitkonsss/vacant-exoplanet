@@ -7,11 +7,14 @@
     let { payload = null, loading = false, livePrice = null, assetId = 'gc' } = $props();
 
     const contracts = $derived(payload?.contracts || []);
+    const expectedRange = $derived(payload?.expectedRange || null);
 
     // One selector for the whole view: flip every contract's wall chart between
     // split (Call/Put side-by-side) and total (combined Put+Call) at once.
     let mode = $state('split'); // 'split' | 'total'
-    let showIv = $state(true);  // overlay the per-strike IV smile on every chart
+    let showIv = $state(true);     // overlay the per-strike IV smile on every chart
+    let showDaySd = $state(true);  // overlay 1-day expected-move bands per tenor
+    let showExpSd = $state(true);  // overlay to-expiry expected-move bands per tenor
 
     // Per-strike IV smile per contract — pulled from the raw OIData "Vol Settle"
     // column (the only place the full smile lives) and aligned to `contracts` by
@@ -37,6 +40,56 @@
         })();
         return () => { stopped = true; };
     });
+
+    function tenorFor(contract) {
+        const tenors = expectedRange?.tenors || [];
+        return tenors.find((t) => t.contract_key === contract?.contract_key)
+            || tenors.find((t) => t.symbol === contract?.contract)
+            || null;
+    }
+
+    function pushBands(out, bands, group, color, labelPrefix) {
+        if (!bands) return;
+        for (const k of [1, 2, 3]) {
+            for (const side of ['minus', 'plus']) {
+                const level = Number(bands[`${side}${k}`]);
+                if (Number.isFinite(level)) {
+                    out.push({
+                        k,
+                        side,
+                        group,
+                        color,
+                        level,
+                        label: `${side === 'plus' ? '+' : '-'}${k}${labelPrefix}`
+                    });
+                }
+            }
+        }
+    }
+
+    function dayBandsFor(tenor) {
+        const f = Number(tenor?.future_price);
+        const iv = Number(tenor?.atm_iv);
+        const dte = Number(tenor?.dte);
+        if (!Number.isFinite(f) || !Number.isFinite(iv) || !Number.isFinite(dte) || dte <= 0) return null;
+
+        const horizonDays = Math.min(1, dte);
+        const move = f * iv * Math.sqrt(horizonDays / 365);
+        const bands = {};
+        for (const k of [1, 2, 3]) {
+            bands[`plus${k}`] = f + k * move;
+            bands[`minus${k}`] = f - k * move;
+        }
+        return bands;
+    }
+
+    function sdBandsFor(contract) {
+        const tenor = tenorFor(contract);
+        const out = [];
+        if (showDaySd) pushBands(out, dayBandsFor(tenor), 'day', '#38bdf8', 'D');
+        if (showExpSd) pushBands(out, tenor?.bands_to_expiry, 'expiry', '#f59e0b', 'E');
+        return out;
+    }
 </script>
 
 {#if loading}
@@ -74,6 +127,28 @@
                 >
                     <span class="inline-block h-[2px] w-3 rounded-sm bg-[#c084fc]"></span> IV smile
                 </button>
+                <button
+                    type="button"
+                    onclick={() => (showDaySd = !showDaySd)}
+                    title="Overlay 1-day standard-deviation bands for each contract tenor"
+                    class={cn(
+                        'flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider transition-colors',
+                        showDaySd ? 'border-[#38bdf8] text-[#38bdf8]' : 'border-border text-muted-foreground hover:text-foreground'
+                    )}
+                >
+                    <span class="inline-block h-3 w-[2px] rounded-sm bg-[#38bdf8]"></span> 1D SD
+                </button>
+                <button
+                    type="button"
+                    onclick={() => (showExpSd = !showExpSd)}
+                    title="Overlay to-expiry standard-deviation bands for each contract tenor"
+                    class={cn(
+                        'flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider transition-colors',
+                        showExpSd ? 'border-[#f59e0b] text-[#f59e0b]' : 'border-border text-muted-foreground hover:text-foreground'
+                    )}
+                >
+                    <span class="inline-block h-3 w-[2px] rounded-sm bg-[#f59e0b]"></span> Exp SD
+                </button>
                 <div class="flex items-center gap-1 rounded-md border border-border bg-surface p-0.5">
                     {#each [['split', 'Call / Put'], ['total', 'Total']] as [key, label]}
                         <button
@@ -97,7 +172,14 @@
                  friday both pointing at the same option), which would crash the
                  keyed each with `each_key_duplicate` and blank the whole tab. -->
             {#each contracts as contract, i (i)}
-                <ContractCard {contract} {mode} {livePrice} ivByStrike={ivMaps[i] || null} {showIv} />
+                <ContractCard
+                    {contract}
+                    {mode}
+                    {livePrice}
+                    ivByStrike={ivMaps[i] || null}
+                    {showIv}
+                    sdBands={sdBandsFor(contract)}
+                />
             {/each}
         </div>
     </div>

@@ -29,11 +29,13 @@ async function fetchTextSoft(url) {
  */
 export async function fetchPositionBias(assetId) {
     const keys = CONTRACT_OPTIONS.map(({ key }) => key);
-    const contractResults = await Promise.all(
-        keys.map((key) => fetchJsonSoft(positionBiasUrl(assetId, `${key}_PositionBias.json`)))
-    );
+    const [contractResults, expectedRange] = await Promise.all([
+        Promise.all(keys.map((key) => fetchJsonSoft(positionBiasUrl(assetId, `${key}_PositionBias.json`)))),
+        fetchJsonSoft(expectedRangeUrl(assetId))
+    ]);
     return {
-        contracts: contractResults.filter(Boolean)
+        contracts: contractResults.filter(Boolean),
+        expectedRange
     };
 }
 
