@@ -9,7 +9,15 @@
     // Each bar is split into two shades: solid base = today's intraday volume
     // (flow), faded top = open interest (the resting "wall") — so you can read
     // both the wall height and how much of it is fresh flow.
-    let { positionMap = [], futurePrice = null, compact = false, mode = 'split', ivByStrike = null, showIv = false } = $props();
+    let {
+        positionMap = [],
+        futurePrice = null,
+        compact = false,
+        mode = 'split',
+        ivByStrike = null,
+        showIv = false,
+        sdBands = []
+    } = $props();
 
     // ascending strike → left-to-right on the X axis
     const sorted = $derived([...(positionMap || [])].sort((a, b) => a.strike - b.strike));
@@ -42,12 +50,15 @@
 
     // future-price marker as a % across the evenly-spaced strike columns
     // (interpolated between the centres of the two bracketing strikes)
-    const pricePos = $derived.by(() => {
+    function strikePos(level, clamp = false) {
         const n = sorted.length;
-        if (!n || futurePrice == null) return null;
-        const p = futurePrice;
-        if (p <= sorted[0].strike) return (0.5 / n) * 100;
-        if (p >= sorted[n - 1].strike) return ((n - 0.5) / n) * 100;
+        if (!n || level == null || !Number.isFinite(level)) return null;
+        if (n === 1) return 50;
+        const p = level;
+        if (p < sorted[0].strike) return clamp ? (0.5 / n) * 100 : null;
+        if (p > sorted[n - 1].strike) return clamp ? ((n - 0.5) / n) * 100 : null;
+        if (p === sorted[0].strike) return (0.5 / n) * 100;
+        if (p === sorted[n - 1].strike) return ((n - 0.5) / n) * 100;
         for (let i = 0; i < n - 1; i++) {
             const a = sorted[i].strike;
             const b = sorted[i + 1].strike;
@@ -57,7 +68,40 @@
             }
         }
         return null;
+    }
+
+    const pricePos = $derived.by(() => {
+        return strikePos(futurePrice, true);
     });
+
+    const sdMarkers = $derived.by(() => {
+        const markers = [];
+        for (const raw of sdBands || []) {
+            const level = Number(raw?.level);
+            const x = strikePos(level, false);
+            if (x == null) continue;
+            const side = raw.side === 'minus' ? 'minus' : 'plus';
+            const group = raw.group || 'expiry';
+            markers.push({
+                ...raw,
+                level,
+                x,
+                side,
+                group,
+                color: raw.color || (group === 'day' ? '#38bdf8' : '#f59e0b'),
+                label: raw.label || `${side === 'plus' ? '+' : '-'}${raw.k || ''}${group === 'day' ? 'D' : 'E'}`
+            });
+        }
+        return markers;
+    });
+    const sdShown = $derived(sdMarkers.length > 0);
+    const daySdShown = $derived(sdMarkers.some((m) => m.group === 'day'));
+    const expSdShown = $derived(sdMarkers.some((m) => m.group === 'expiry'));
+
+    function sdLabelTop(sd) {
+        if (sd.group === 'day') return sd.side === 'minus' ? '26px' : '2px';
+        return sd.side === 'minus' ? '38px' : '14px';
+    }
 
     // --- per-strike IV smile overlay (from OIData Vol Settle), aligned to the
     // same strike columns as the bars; only strikes that actually have a vol are
@@ -144,8 +188,8 @@
 {:else}
     <div class={`rounded-md border border-border bg-background ${compact ? 'p-2.5' : 'p-3'}`}>
         <!-- Legend + live readout (Split/Total selector lives on the Position Bias view) -->
-        <div class={`mb-2 flex items-center justify-between gap-2 ${compact ? 'text-[9px]' : 'text-[10px]'}`}>
-            <div class="flex min-w-0 items-center gap-2.5">
+        <div class={`mb-2 flex flex-wrap items-center justify-between gap-x-2 gap-y-1 ${compact ? 'text-[9px]' : 'text-[10px]'}`}>
+            <div class="flex min-w-0 flex-wrap items-center gap-x-2.5 gap-y-1">
                 {#if mode === 'total'}
                     <span class="flex items-center gap-1">
                         <span class="inline-block h-2 w-2 rounded-sm bg-up"></span>
@@ -177,17 +221,31 @@
                         <span class="text-muted-foreground">IV</span>
                     </span>
                 {/if}
+                {#if daySdShown}
+                    <span class="mx-0.5 h-2.5 w-px bg-border"></span>
+                    <span class="flex items-center gap-1" title="1-day standard-deviation bands">
+                        <span class="inline-block h-3 w-[2px] rounded-sm bg-[#38bdf8]"></span>
+                        <span class="text-muted-foreground">1D SD</span>
+                    </span>
+                {/if}
+                {#if expSdShown}
+                    <span class="mx-0.5 h-2.5 w-px bg-border"></span>
+                    <span class="flex items-center gap-1" title="To-expiry standard-deviation bands">
+                        <span class="inline-block h-3 w-[2px] rounded-sm bg-[#f59e0b]"></span>
+                        <span class="text-muted-foreground">Exp SD</span>
+                    </span>
+                {/if}
             </div>
             {#if hovered != null && sorted[hovered]}
                 {@const lv = sorted[hovered]}
                 {#if mode === 'total'}
-                    <div class="truncate font-mono tabular-nums">
+                    <div class="hidden truncate font-mono tabular-nums sm:block">
                         <span class="font-semibold text-foreground">{fmtStrike(lv.strike)}</span>
                         <span class="text-up">· OI {fmtK((lv.put_oi || 0) + (lv.call_oi || 0)) || 0}+Vol {fmtK((lv.put_volume || 0) + (lv.call_volume || 0)) || 0}</span>
                         {#if ivByStrike?.[lv.strike]}<span style={`color:${IV_COLOR}`}>· IV {fmtNumber(ivByStrike[lv.strike], 1)}%</span>{/if}
                     </div>
                 {:else}
-                    <div class="truncate font-mono tabular-nums">
+                    <div class="hidden truncate font-mono tabular-nums sm:block">
                         <span class="font-semibold text-foreground">{fmtStrike(lv.strike)}</span>
                         <span class="text-put">· P {fmtK(lv.put_oi) || 0}+{fmtK(lv.put_volume) || 0}</span>
                         <span class="text-call">· C {fmtK(lv.call_oi) || 0}+{fmtK(lv.call_volume) || 0}</span>
@@ -195,7 +253,7 @@
                     </div>
                 {/if}
             {:else}
-                <div class="truncate font-mono tabular-nums text-muted-foreground">
+                <div class="hidden truncate font-mono tabular-nums text-muted-foreground sm:block">
                     Future <span class="font-semibold text-primary">{fmtStrike(futurePrice)}</span>
                 </div>
             {/if}
@@ -216,6 +274,19 @@
                     <span class={`absolute -top-px -translate-x-1/2 leading-none text-primary ${compact ? 'text-[7px]' : 'text-[8px]'}`}>▾</span>
                 </div>
             {/if}
+
+            <!-- SD bands, aligned to the same strike scale -->
+            {#each sdMarkers as sd (sd.label + '-' + sd.level)}
+                <div
+                    class="pointer-events-none absolute top-0 bottom-0 z-10 border-l border-dashed"
+                    style={`left:${sd.x}%;border-color:${sd.color}99`}
+                >
+                    <span
+                        class={`absolute -translate-x-1/2 rounded-sm bg-background/90 px-0.5 font-mono font-semibold leading-none ${sd.k > 1 ? 'hidden sm:inline' : ''} ${compact ? 'text-[7px]' : 'text-[8px]'}`}
+                        style={`top:${sdLabelTop(sd)};color:${sd.color}`}
+                    >{sd.label}</span>
+                </div>
+            {/each}
 
             <!-- IV smile overlay (per-strike vol), drawn over the bars -->
             {#if ivShown}
