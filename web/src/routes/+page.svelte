@@ -6,7 +6,7 @@
     import PositionBiasView from '$lib/components/PositionBiasView.svelte';
     import HeatmapView from '$lib/components/HeatmapView.svelte';
     import TargetView from '$lib/components/TargetView.svelte';
-    import { fetchGammaHeatmap, fetchHeatmap, fetchPositionBias, fetchStrategy } from '$lib/data.js';
+    import { fetchGammaHeatmap, fetchHeatmap, fetchLivePrice, fetchPositionBias, fetchStrategy } from '$lib/data.js';
     import { ASSET_PROFILES, DEFAULT_CONTRACT_KEY } from '$lib/config.js';
     import { LineChart, Grid3X3, Activity, Target } from 'lucide-svelte';
 
@@ -36,6 +36,31 @@
     // the fetch stays because TargetView synthesizes its read from this file.
     let strategy = $state(null);
     let strategyLoading = $state(false);
+
+    // Live futures price (same-origin /api/price proxy) — ONE source of truth
+    // shared by the Header and the Target card so they never disagree. Polled
+    // every 20s; falls back to the scrape-time contract price if the proxy is down.
+    let livePrice = $state(null);
+    /** @type {Date | null} */
+    let liveAt = $state(null);
+    const isLive = $derived(Number.isFinite(livePrice) && livePrice > 0);
+    $effect(() => {
+        const sym = asset === 'nq' ? 'NQ=F' : 'GC=F';
+        let stopped = false;
+        async function tick() {
+            const d = await fetchLivePrice(sym);
+            if (stopped) return;
+            if (d && Number.isFinite(d.price)) {
+                livePrice = d.price;
+                liveAt = d.time ? new Date(d.time * 1000) : new Date();
+            }
+        }
+        livePrice = null;
+        liveAt = null;
+        tick();
+        const id = setInterval(tick, 20000);
+        return () => { stopped = true; clearInterval(id); };
+    });
 
     const profile = $derived(ASSET_PROFILES[asset]);
     const availableContractKeys = $derived(
@@ -223,7 +248,8 @@
             : activeTab === 'target'
                 ? 'เป้าวันนี้'
                 : visibleContract?.contract || ''}
-        price={visibleContract?.future_price}
+        price={isLive ? livePrice : visibleContract?.future_price}
+        live={isLive}
         dte={visibleContract?.dte}
         {lastUpdate}
         {lastUpdateAt}
@@ -238,7 +264,7 @@
             <div class="flex flex-1 min-h-0 flex-col overflow-hidden animate-fade-in">
                 {#if activeTab === 'target'}
                     <div class="flex flex-col gap-4 overflow-y-auto">
-                        <TargetView {strategy} assetId={asset} loading={strategyLoading} />
+                        <TargetView {strategy} assetId={asset} loading={strategyLoading} {livePrice} {liveAt} />
                     </div>
                 {:else if activeTab === 'analysis'}
                     <div class="flex flex-col gap-4 overflow-y-auto">

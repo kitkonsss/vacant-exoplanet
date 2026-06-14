@@ -3,33 +3,13 @@
     import Badge from './ui/Badge.svelte';
     import { buildTarget, touchProb } from '$lib/target.js';
     import { buildMood } from '$lib/mood.js';
-    import { fetchLivePrice, fetchIvBaseline, fetchEconCalendar } from '$lib/data.js';
+    import { fetchIvBaseline, fetchEconCalendar } from '$lib/data.js';
     import { fmtNumber, fmtBangkok } from '$lib/utils.js';
     import { Target, TrendingUp, TrendingDown, Crosshair, Gauge, ShieldAlert, Flame, Activity, CalendarClock } from 'lucide-svelte';
 
-    let { strategy = null, assetId = 'gc', loading = false } = $props();
-
-    // Live futures price (same-origin /api/price proxy), polled every 20s and used
-    // to re-center the bands. Falls back to the scrape-time price if unavailable.
-    let livePrice = $state(null);
-    let liveAt = $state(null);
-    $effect(() => {
-        const sym = assetId === 'nq' ? 'NQ=F' : 'GC=F';
-        let stopped = false;
-        async function tick() {
-            const d = await fetchLivePrice(sym);
-            if (stopped) return;
-            if (d && Number.isFinite(d.price)) {
-                livePrice = d.price;
-                liveAt = d.time ? new Date(d.time * 1000) : new Date();
-            }
-        }
-        livePrice = null;
-        liveAt = null;
-        tick();
-        const id = setInterval(tick, 20000);
-        return () => { stopped = true; clearInterval(id); };
-    });
+    // Live price + its timestamp are passed in by the parent (+page) so the Header
+    // and this card share ONE source of truth and never show two different prices.
+    let { strategy = null, assetId = 'gc', loading = false, livePrice = null, liveAt = null } = $props();
 
     // Rolling IV history (iv_baseline.json) — loaded once per asset to judge
     // whether today's IV is high/low vs its own recent norm. Null-safe: the mood
