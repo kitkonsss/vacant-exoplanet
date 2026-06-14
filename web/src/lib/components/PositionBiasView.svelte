@@ -3,7 +3,7 @@
     import ContractCard from './ContractCard.svelte';
     import { cn } from '$lib/utils.js';
 
-    let { payload = null, loading = false } = $props();
+    let { payload = null, loading = false, livePrice = null } = $props();
 
     const contracts = $derived(payload?.contracts || []);
 
@@ -57,7 +57,7 @@
                  friday both pointing at the same option), which would crash the
                  keyed each with `each_key_duplicate` and blank the whole tab. -->
             {#each contracts as contract, i (i)}
-                <ContractCard {contract} {mode} />
+                <ContractCard {contract} {mode} {livePrice} />
             {/each}
         </div>
     </div>

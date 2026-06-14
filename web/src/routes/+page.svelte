@@ -268,7 +268,7 @@
                     </div>
                 {:else if activeTab === 'analysis'}
                     <div class="flex flex-col gap-4 overflow-y-auto">
-                        <PositionBiasView {payload} {loading} />
+                        <PositionBiasView {payload} {loading} {livePrice} />
                     </div>
                 {:else if activeTab === 'heatmap'}
                     <HeatmapView

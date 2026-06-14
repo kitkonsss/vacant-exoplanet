@@ -4,13 +4,38 @@
     import OILadder from './OILadder.svelte';
     import { fmtNumber, fmtStrike, toneClasses } from '$lib/utils.js';
 
-    let { contract = null, compact = false, mode = 'split' } = $props();
+    let { contract = null, compact = false, mode = 'split', livePrice = null } = $props();
+
+    // Live price (from /api/price, threaded down from the page) re-positions the
+    // chart's price line + the wall-distance metrics; the OI/volume bars stay
+    // scrape-sourced. Falls back to the scrape future price when live is down.
+    const isLive = $derived(Number.isFinite(livePrice) && livePrice > 0);
+    const displayPrice = $derived(isLive ? livePrice : contract?.future_price);
 
     const totals = $derived(contract?.totals || {});
-    const walls = $derived(contract?.walls || {});
     const pcr = $derived(totals.oi_put_call_ratio);
-    const nearCall = $derived(walls.nearest_call_above?.distance?.points);
-    const nearPut = $derived(walls.nearest_put_below?.distance?.points);
+
+    // Nearest call/put wall measured from the (live) display price so the metrics
+    // agree with the chart's price line — not the scrape-time distances baked into
+    // `walls`. Wall definition matches the chart (call_wall above / put_wall below).
+    const nearCall = $derived.by(() => {
+        const px = displayPrice;
+        if (px == null) return null;
+        const s = (contract?.position_map || [])
+            .filter((l) => l.side === 'call_wall' && l.strike > px)
+            .map((l) => l.strike)
+            .sort((a, b) => a - b)[0];
+        return s != null ? s - px : null;
+    });
+    const nearPut = $derived.by(() => {
+        const px = displayPrice;
+        if (px == null) return null;
+        const s = (contract?.position_map || [])
+            .filter((l) => l.side === 'put_wall' && l.strike < px)
+            .map((l) => l.strike)
+            .sort((a, b) => b - a)[0];
+        return s != null ? px - s : null;
+    });
 
     function pcrTone(v) {
         if (v == null) return 'muted';
@@ -42,14 +67,15 @@
                 <span class={`font-mono tabular-nums text-muted-foreground ${compact ? 'text-[9px]' : 'text-[10px]'}`}>
                     {fmtNumber(contract?.dte, 1)} DTE
                 </span>
-                <span class={`font-mono font-medium tabular-nums text-primary ${compact ? 'text-sm' : 'text-base'}`}>
-                    {fmtStrike(contract?.future_price)}
+                <span class={`flex items-center gap-1 font-mono font-medium tabular-nums text-primary ${compact ? 'text-sm' : 'text-base'}`}>
+                    {fmtStrike(displayPrice)}
+                    {#if isLive}<span class="h-1 w-1 rounded-full bg-up" title="ราคา realtime"></span>{/if}
                 </span>
             </div>
         </header>
 
         <!-- OI Ladder -->
-        <OILadder positionMap={contract?.position_map} futurePrice={contract?.future_price} {compact} {mode} />
+        <OILadder positionMap={contract?.position_map} futurePrice={displayPrice} {compact} {mode} />
 
         <!-- Metrics row -->
         <div class={`grid grid-cols-4 ${compact ? 'gap-1.5' : 'gap-2'}`}>
