@@ -1,11 +1,11 @@
 {
   "version": 2,
   "asset": "NQ",
-  "generated_at": "2026-06-13T08:41:04+00:00",
+  "generated_at": "2026-06-14T23:48:58+00:00",
   "future_price": 29437.5,
   "directional_bias": {
-    "label": "lean_bearish",
-    "score": -12.7,
+    "label": "neutral",
+    "score": 3.6,
     "confidence": "medium"
   },
   "components": {
@@ -15,12 +15,12 @@
       "weight": 0.45
     },
     "macro": {
-      "score": -32.0,
-      "label": "headwind",
+      "score": 17.0,
+      "label": "neutral",
       "weight": 0.35,
       "drivers": [
-        "10Y +6bp/5d \u2192 headwind",
-        "VIX 19.4, rising \u2192 risk-off"
+        "10Y -2bp/5d \u2192 tailwind",
+        "VIX 17.7, falling \u2192 risk-on"
       ]
     },
     "cot": {
@@ -34,54 +34,26 @@
     }
   },
   "agreement": {
-    "bullish_layers": 1,
-    "bearish_layers": 3,
-    "aligned": 3,
-    "total": 4
+    "bullish_layers": 2,
+    "bearish_layers": 1,
+    "aligned": 2,
+    "total": 3
   },
   "regime": {
     "regime": "mixed",
     "score": 0,
     "reasons": [
-      "VIX 19.4"
+      "VIX 17.7"
     ],
     "lead_playbook": "both"
   },
   "expected_range": {
-    "method": "ATM IV from Vol2Vol smile (1-day move); ATR(14) kept as cross-check",
+    "method": "ATR(14) daily true-range proxy",
     "atr": 751.36,
-    "expected_move": 496.4,
-    "day_high_est": 29933.9,
-    "day_low_est": 28941.1,
-    "note": "IV-based 1SD daily move (forward-looking). bands_1d are \u00b11/2/3 SD anchored at the scrape-time future price; ATR retained for regime detection.",
-    "atm_iv_pct": 32.85,
-    "iv_basis_tenor": {
-      "contract_key": "current",
-      "symbol": "Q3AM6",
-      "dte": 4.44
-    },
-    "bands_1d": {
-      "plus1": 29367.6,
-      "minus1": 28374.8,
-      "plus2": 29864.1,
-      "minus2": 27878.3,
-      "plus3": 30360.5,
-      "minus3": 27381.9
-    },
-    "term_structure": {
-      "slope_volpts_short_minus_monthly": 3.63,
-      "shape": "inverted (event/stress premium in front)",
-      "short_tenor": "Q3AM6",
-      "long_tenor": "NEM6"
-    },
-    "skew": {
-      "measured_at_pct": 2.0,
-      "put_skew_volpts": 2.61,
-      "call_skew_volpts": -2.79,
-      "read": "baseline_building (3/20 sessions) \u2014 structural put skew; absolute read suppressed",
-      "skew_spread_volpts": 5.4,
-      "baseline_n": 3
-    }
+    "expected_move": 751.36,
+    "day_high_est": 30188.86,
+    "day_low_est": 28686.14,
+    "note": "Typical 1-day travel; a wall beyond \u00b1ATR from price is unlikely to be reached intraday."
   },
   "option_flow": {
     "generated_at": "2026-06-13T08:41:04+00:00",
@@ -144,15 +116,16 @@
   "vwap": null,
   "contrarian_flag": "none",
   "momentum": {
-    "direction": "down",
-    "bias": "lean_bearish",
+    "direction": "up",
+    "bias": "neutral",
     "aligned_with_regime": false,
-    "trigger": "break below 29000 (confluence \u00d73)",
+    "trigger": "break above 29500 (confluence \u00d72)",
     "targets": [
-      "28500"
+      "29000",
+      "29700"
     ],
-    "invalidation": "29500",
-    "rationale": "macro headwind; upside magnet"
+    "invalidation": "29000",
+    "rationale": "macro neutral; upside magnet"
   },
   "mean_reversion": {
     "vwap": null,
@@ -169,9 +142,9 @@
     "setups": [
       {
         "setup": "momentum",
-        "entry": 29000.0,
-        "stop": 29500.0,
-        "target": 28500.0,
+        "entry": 29500.0,
+        "stop": 29000.0,
+        "target": 29000.0,
         "risk_points": 500.0,
         "rr": 1.0,
         "mgc_contracts": 0,
@@ -182,12 +155,12 @@
       "max_losses_per_day": 2,
       "note": "2 stop-outs = -$1000; stop trading for the day. Size from the stop distance, never from conviction."
     },
-    "expected_move_context": 496.4
+    "expected_move_context": 751.36
   },
   "data_freshness": {
-    "strategy": "2026-06-13T08:41:04+00:00",
+    "strategy": "2026-06-14T23:48:58+00:00",
     "positioning": "2026-06-12T16:47:15Z",
-    "macro": "2026-06-12T00:09:15+00:00",
+    "macro": "2026-06-14T23:48:58+00:00",
     "cot_report_date": "2026-06-02",
     "vwap": null
   },
@@ -1853,7 +1826,7 @@
     "note": "Use side + activity_vs_oi to distinguish static wall from active wall."
   },
   "execution_read": {
-    "primary_path": "trade_between_nearest_vol2vol_walls",
+    "primary_path": "upside_momentum_to_first_gamma_wall",
     "contract_build_up": "largest fresh OI build at 26000 (monthly, +446 contracts, below, put \u2192 support)",
     "oi_magnet": "26000 (put, 2596 OI, below)",
     "gamma_magnet": "29000 (\u03b3263)",
@@ -1866,7 +1839,7 @@
     },
     "how_to_use": "Heatmap build/magnet = likely destination; gamma 1pct first wall = speed bump, major wall = real cap; confluence levels (\u22652 sources) are the highest-conviction strikes."
   },
-  "macro_context": "Macro headwind (-32): 10Y +6bp/5d \u2192 headwind; VIX 19.4, rising \u2192 risk-off",
+  "macro_context": "Macro neutral (+17): 10Y -2bp/5d \u2192 tailwind; VIX 17.7, falling \u2192 risk-on",
   "cot_context": "Leveraged funds net -53,650 (falling); Asset managers net +79,091 (falling).",
   "scenarios": [
     {
@@ -1882,6 +1855,6 @@
       "invalidation": "reclaim 29500"
     }
   ],
-  "what_would_change_my_mind": "a clean break of the key levels above with the macro backdrop confirming.",
+  "what_would_change_my_mind": "funds cut longs (COT rolls over).",
   "disclaimer": "Educational/hypothetical synthesis of options positioning + macro + COT. Not financial advice; produces a directional read and levels, not live entry/stop/target orders."
 }
