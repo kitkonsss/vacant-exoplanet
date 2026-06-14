@@ -101,6 +101,13 @@ export function expectedRangeUrl(assetId) {
     return dataUrl(assetId, 'expected_range.json');
 }
 
+// Rolling per-session IV / skew / term-slope history — iv_baseline.json. Used to
+// judge whether today's ATM IV is high or low vs its own recent norm (so we can
+// say "vol is bid up = big move priced" instead of showing a bare percentage).
+export function ivBaselineUrl(assetId) {
+    return dataUrl(assetId, 'iv_baseline.json');
+}
+
 // Entry signals fired by the price watcher + their win/loss self-eval.
 export function signalLogUrl(assetId) {
     return dataUrl(assetId, 'signal_log.json');

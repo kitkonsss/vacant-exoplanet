@@ -2,9 +2,10 @@
     import Card from './ui/Card.svelte';
     import Badge from './ui/Badge.svelte';
     import { buildTarget, touchProb } from '$lib/target.js';
-    import { fetchLivePrice } from '$lib/data.js';
+    import { buildMood } from '$lib/mood.js';
+    import { fetchLivePrice, fetchIvBaseline } from '$lib/data.js';
     import { fmtNumber, fmtBangkok } from '$lib/utils.js';
-    import { Target, TrendingUp, TrendingDown, Crosshair, Gauge, ShieldAlert } from 'lucide-svelte';
+    import { Target, TrendingUp, TrendingDown, Crosshair, Gauge, ShieldAlert, Flame, Activity } from 'lucide-svelte';
 
     let { strategy = null, assetId = 'gc', loading = false } = $props();
 
@@ -30,7 +31,36 @@
         return () => { stopped = true; clearInterval(id); };
     });
 
+    // Rolling IV history (iv_baseline.json) — loaded once per asset to judge
+    // whether today's IV is high/low vs its own recent norm. Null-safe: the mood
+    // verdict still works (regime + term structure) if this never arrives.
+    let ivHistory = $state(null);
+    $effect(() => {
+        const id = assetId;
+        let stopped = false;
+        (async () => {
+            const h = await fetchIvBaseline(id);
+            if (!stopped) ivHistory = h;
+        })();
+        return () => { stopped = true; };
+    });
+
     const t = $derived(strategy ? buildTarget(strategy, assetId, livePrice) : null);
+    const mood = $derived(strategy ? buildMood(strategy, ivHistory) : null);
+
+    function moodEmoji(v) {
+        return v === 'red' ? '🔴' : v === 'yellow' ? '🟡' : '🟢';
+    }
+    function moodText(v) {
+        return v === 'red' ? 'text-down' : v === 'yellow' ? 'text-warn' : 'text-up';
+    }
+    function moodBox(v) {
+        return v === 'red' ? 'border-down/40 bg-down/5' : v === 'yellow' ? 'border-warn/40 bg-warn/5' : 'border-up/40 bg-up/5';
+    }
+    function fmtSkew(n) {
+        if (n == null || !Number.isFinite(n)) return '—';
+        return (n >= 0 ? '+' : '') + fmtNumber(n, 1);
+    }
 
     function liveClock(d) {
         if (!d) return '';
@@ -92,6 +122,72 @@
     </Card>
 {:else}
     <div class="flex flex-col gap-4">
+        <!-- ============ CARD 0 · วันนี้ fade ได้ไหม (traffic light) ============ -->
+        {#if mood}
+            <Card class="p-5 {moodBox(mood.verdict)}">
+                <div class="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.14em] {moodText(mood.verdict)}">
+                    🚦 วันนี้ fade ได้ไหม
+                </div>
+
+                <div class="mt-2 flex flex-wrap items-baseline gap-x-3 gap-y-1">
+                    <span class="text-2xl leading-none">{moodEmoji(mood.verdict)}</span>
+                    <span class="text-xl font-bold {moodText(mood.verdict)}">{mood.headline}</span>
+                </div>
+                <p class="mt-1 text-[12px] leading-relaxed text-muted-foreground">{mood.sub}</p>
+
+                {#if mood.reasons.length}
+                    <ul class="mt-2 flex flex-col gap-0.5 text-[11px] text-foreground/80">
+                        {#each mood.reasons as r, i (i)}<li>• {r}</li>{/each}
+                    </ul>
+                {/if}
+
+                <!-- 3 ตัวเลขสรุป: IV · ตลาดกลัวทางไหน · โหมดตลาด -->
+                <div class="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-3">
+                    <!-- ความผันผวน (IV) -->
+                    <div class="rounded-md border border-border/60 p-2.5">
+                        <div class="flex items-center gap-1 text-[10px] uppercase tracking-wider text-muted-foreground">
+                            <Flame class="h-3 w-3" /> ความผันผวน (IV)
+                        </div>
+                        <div class="mt-0.5 font-mono text-base font-semibold text-foreground">
+                            {mood.atmIvPct != null ? `${fmtNumber(mood.atmIvPct, 1)}%` : '—'}
+                        </div>
+                        <div class="text-[10px] {mood.ivLevel === 'high' || mood.ivLevel === 'elevated' ? 'text-warn' : mood.ivLevel === 'calm' ? 'text-up' : 'text-muted-foreground'}">
+                            {mood.ivLabel}{#if mood.ivBaseline}<span class="text-muted-foreground"> · ปกติ ~{fmtNumber(mood.ivBaseline, 0)}%{#if mood.ivSampleThin} (ฐาน {mood.ivCount} วัน){/if}</span>{/if}
+                        </div>
+                    </div>
+
+                    <!-- ตลาดกลัวทางไหน (skew) -->
+                    <div class="rounded-md border border-border/60 p-2.5">
+                        <div class="flex items-center gap-1 text-[10px] uppercase tracking-wider text-muted-foreground">
+                            <Activity class="h-3 w-3" /> ตลาดกลัวทางไหน
+                        </div>
+                        <div class="mt-0.5 text-sm font-semibold {mood.fearDir === 'down' ? 'text-down' : mood.fearDir === 'up' ? 'text-up' : 'text-foreground'}">
+                            {mood.fearLabel}
+                        </div>
+                        <div class="text-[10px] text-muted-foreground">
+                            put {fmtSkew(mood.putSkew)} / call {fmtSkew(mood.callSkew)} volpts
+                        </div>
+                    </div>
+
+                    <!-- โหมดตลาด (regime + term) -->
+                    <div class="rounded-md border border-border/60 p-2.5">
+                        <div class="flex items-center gap-1 text-[10px] uppercase tracking-wider text-muted-foreground">
+                            <Gauge class="h-3 w-3" /> โหมดตลาด
+                        </div>
+                        <div class="mt-0.5 text-sm font-semibold {mood.regimeTrending ? 'text-warn' : mood.regimeRange ? 'text-up' : 'text-foreground'}">
+                            {mood.regimeTrending ? 'เทรนด์ (ตามทาง)' : mood.regimeRange ? 'ออกข้าง (สวนได้)' : 'กลางๆ'}
+                        </div>
+                        <div class="text-[10px] text-muted-foreground">{mood.termLabel}</div>
+                    </div>
+                </div>
+
+                <p class="mt-3 text-[10px] leading-relaxed text-muted-foreground">
+                    🟢 = ออกข้าง/นิ่ง สวนกรอบได้ · 🟡 = เริ่มผันผวน สวนแบบลดไม้ · 🔴 = เทรนด์/วันข่าว อย่าสวน ·
+                    อิง IV + skew + term structure + regime ที่ระบบมีอยู่ · เพื่อการศึกษา
+                </p>
+            </Card>
+        {/if}
+
         <!-- ============ CARD A · เป้าวันนี้ (the big answer) ============ -->
         <Card class="border-warn/30 bg-warn/5 p-5">
             <div class="flex flex-wrap items-center justify-between gap-2">

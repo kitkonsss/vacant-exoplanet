@@ -1,4 +1,4 @@
-import { CONTRACT_OPTIONS, briefUrl, cotUrl, expectedRangeUrl, gammaHeatmapUrl, heatmapUrl, macroUrl, oiDataUrl, optionFlowUrl, positionBiasUrl, signalLogUrl, signalScorecardUrl, strategyUrl, wallBacktestUrl } from './config.js';
+import { CONTRACT_OPTIONS, briefUrl, cotUrl, expectedRangeUrl, gammaHeatmapUrl, heatmapUrl, ivBaselineUrl, macroUrl, oiDataUrl, optionFlowUrl, positionBiasUrl, signalLogUrl, signalScorecardUrl, strategyUrl, wallBacktestUrl } from './config.js';
 import { parseOIData } from './vol2vol.js';
 
 async function fetchJsonSoft(url) {
@@ -115,6 +115,16 @@ export async function fetchSignals(assetId) {
         wallBacktest,
         roundWalls: strategy?.round_walls ?? null
     };
+}
+
+/**
+ * Fetches the rolling IV baseline history (per-session ATM IV / put-call skew /
+ * term slope) used to gauge whether today's volatility is elevated vs its own
+ * recent norm. Always returns an array (possibly empty), never null.
+ */
+export async function fetchIvBaseline(assetId) {
+    const arr = await fetchJsonSoft(ivBaselineUrl(assetId));
+    return Array.isArray(arr) ? arr : [];
 }
 
 /**
