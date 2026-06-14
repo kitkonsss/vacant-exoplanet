@@ -22,6 +22,61 @@
     // ascending strike → left-to-right on the X axis
     const sorted = $derived([...(positionMap || [])].sort((a, b) => a.strike - b.strike));
 
+    function finiteNumber(value) {
+        const n = Number(value);
+        return Number.isFinite(n) ? n : null;
+    }
+
+    function clamp(value, low, high) {
+        return Math.max(low, Math.min(high, value));
+    }
+
+    const xDomain = $derived.by(() => {
+        const strikes = sorted.map((l) => finiteNumber(l.strike)).filter((v) => v != null);
+        if (!strikes.length) return null;
+        let lo = Math.min(...strikes);
+        let hi = Math.max(...strikes);
+        if (hi === lo) {
+            lo -= 1;
+            hi += 1;
+        }
+        return { lo, hi, span: hi - lo };
+    });
+
+    function levelPosition(level, clampToDomain = false) {
+        const n = finiteNumber(level);
+        if (n == null || !xDomain) return null;
+        const raw = ((n - xDomain.lo) / xDomain.span) * 100;
+        if (!clampToDomain && (raw < 0 || raw > 100)) return null;
+        return {
+            x: clamp(raw, 0, 100),
+            outOfRange: raw < 0 ? 'left' : raw > 100 ? 'right' : null
+        };
+    }
+
+    const strikePositions = $derived(sorted.map((lv) => levelPosition(lv.strike, true)?.x ?? 50));
+
+    const minStrikeGapPct = $derived.by(() => {
+        if (strikePositions.length < 2) return 100;
+        const diffs = [];
+        for (let i = 1; i < strikePositions.length; i++) {
+            const d = Math.abs(strikePositions[i] - strikePositions[i - 1]);
+            if (d > 0) diffs.push(d);
+        }
+        return diffs.length ? Math.min(...diffs) : 100;
+    });
+
+    const barWidthPct = $derived(Math.max(Math.min(minStrikeGapPct * 0.7, compact ? 5 : 4.5), compact ? 0.9 : 0.75));
+
+    const axisLabelStep = $derived.by(() => {
+        if (sorted.length <= 12 || minStrikeGapPct >= 7) return 1;
+        if (minStrikeGapPct >= 5) return 2;
+        if (minStrikeGapPct >= 3.5) return 3;
+        if (minStrikeGapPct >= 2) return 5;
+        if (minStrikeGapPct >= 1) return 8;
+        return 10;
+    });
+
     function callTotal(l) {
         return (l.call_oi || 0) + (l.call_volume || 0);
     }
@@ -48,44 +103,23 @@
         return isCallWall || isPutWall;
     }
 
-    // future-price marker as a % across the evenly-spaced strike columns
-    // (interpolated between the centres of the two bracketing strikes)
-    function strikePos(level, clamp = false) {
-        const n = sorted.length;
-        if (!n || level == null || !Number.isFinite(level)) return null;
-        if (n === 1) return 50;
-        const p = level;
-        if (p < sorted[0].strike) return clamp ? (0.5 / n) * 100 : null;
-        if (p > sorted[n - 1].strike) return clamp ? ((n - 0.5) / n) * 100 : null;
-        if (p === sorted[0].strike) return (0.5 / n) * 100;
-        if (p === sorted[n - 1].strike) return ((n - 0.5) / n) * 100;
-        for (let i = 0; i < n - 1; i++) {
-            const a = sorted[i].strike;
-            const b = sorted[i + 1].strike;
-            if (p >= a && p <= b) {
-                const frac = b === a ? 0 : (p - a) / (b - a);
-                return ((i + 0.5 + frac) / n) * 100;
-            }
-        }
-        return null;
-    }
-
-    const pricePos = $derived.by(() => {
-        return strikePos(futurePrice, true);
-    });
+    // Future-price marker as a % across the numeric strike range.
+    const priceMarker = $derived.by(() => levelPosition(futurePrice, true));
+    const pricePos = $derived(priceMarker?.x ?? null);
 
     const sdMarkers = $derived.by(() => {
         const markers = [];
         for (const raw of sdBands || []) {
             const level = Number(raw?.level);
-            const x = strikePos(level, false);
-            if (x == null) continue;
+            const pos = levelPosition(level, true);
+            if (!pos) continue;
             const side = raw.side === 'minus' ? 'minus' : 'plus';
             const group = raw.group || 'expiry';
             markers.push({
                 ...raw,
                 level,
-                x,
+                x: pos.x,
+                outOfRange: pos.outOfRange,
                 side,
                 group,
                 color: raw.color || (group === 'day' ? '#38bdf8' : '#f59e0b'),
@@ -103,17 +137,41 @@
         return sd.side === 'minus' ? '38px' : '14px';
     }
 
+    function sdLabelText(sd) {
+        if (sd.outOfRange === 'left') return `< ${sd.label}`;
+        if (sd.outOfRange === 'right') return `${sd.label} >`;
+        return sd.label;
+    }
+
+    function markerLabelTransform(marker) {
+        if (marker?.outOfRange === 'left') return 'translateX(0)';
+        if (marker?.outOfRange === 'right') return 'translateX(-100%)';
+        return 'translateX(-50%)';
+    }
+
+    function axisLabelTransform(i) {
+        if (i === 0) return 'translateX(0)';
+        if (i === sorted.length - 1) return 'translateX(-100%)';
+        return 'translateX(-50%)';
+    }
+
+    function showAxisLabel(lv, i) {
+        if (i === 0 || i === sorted.length - 1 || hovered === i) return true;
+        const x = strikePositions[i] ?? 50;
+        return x >= 12 && x <= 84 && i % axisLabelStep === 0;
+    }
+
     // --- per-strike IV smile overlay (from OIData Vol Settle), aligned to the
     // same strike columns as the bars; only strikes that actually have a vol are
     // plotted, so the line shows the smile/skew shape right over the OI walls.
     const IV_COLOR = '#c084fc';
     const ivPoints = $derived.by(() => {
         if (!showIv || !ivByStrike) return [];
-        const n = sorted.length;
         const pts = [];
-        for (let i = 0; i < n; i++) {
+        for (let i = 0; i < sorted.length; i++) {
             const iv = ivByStrike[sorted[i].strike];
-            if (Number.isFinite(iv) && iv > 0) pts.push({ iv, x: ((i + 0.5) / n) * 100 });
+            const pos = levelPosition(sorted[i].strike, false);
+            if (Number.isFinite(iv) && iv > 0 && pos) pts.push({ iv, x: pos.x });
         }
         return pts;
     });
@@ -159,7 +217,7 @@
         {#if total > 0}
             <!-- contract count for this bar (OI + intraday volume), vertical so it fits the thin column -->
             <span
-                class={`mb-0.5 font-mono font-semibold leading-none tabular-nums text-foreground/75 [writing-mode:vertical-rl] rotate-180 ${compact ? 'text-[8px]' : 'text-[10px]'}`}
+                class={`mb-0.5 hidden font-mono font-semibold leading-none tabular-nums text-foreground/75 [writing-mode:vertical-rl] rotate-180 sm:inline ${compact ? 'text-[8px]' : 'text-[10px]'}`}
             >{fmtK(total)}</span>
         {/if}
         <div class="flex w-full flex-col overflow-hidden rounded-t-sm" style={`height:${hPct(total)}%`}>
@@ -275,16 +333,17 @@
                 </div>
             {/if}
 
-            <!-- SD bands, aligned to the same strike scale -->
+            <!-- SD bands, aligned to the price-linear strike scale. Out-of-range bands clamp to the edge. -->
             {#each sdMarkers as sd (sd.label + '-' + sd.level)}
                 <div
                     class="pointer-events-none absolute top-0 bottom-0 z-10 border-l border-dashed"
                     style={`left:${sd.x}%;border-color:${sd.color}99`}
                 >
                     <span
-                        class={`absolute -translate-x-1/2 rounded-sm bg-background/90 px-0.5 font-mono font-semibold leading-none ${sd.k > 1 ? 'hidden sm:inline' : ''} ${compact ? 'text-[7px]' : 'text-[8px]'}`}
-                        style={`top:${sdLabelTop(sd)};color:${sd.color}`}
-                    >{sd.label}</span>
+                        class={`absolute whitespace-nowrap rounded-sm bg-background/90 px-0.5 font-mono font-semibold leading-none ${sd.k > 1 ? 'hidden sm:inline' : ''} ${compact ? 'text-[7px]' : 'text-[8px]'}`}
+                        style={`top:${sdLabelTop(sd)};color:${sd.color};transform:${markerLabelTransform(sd)}`}
+                        title={`${sd.label} ${fmtStrike(sd.level)}${sd.outOfRange ? ' outside visible strikes' : ''}`}
+                    >{sdLabelText(sd)}</span>
                 </div>
             {/each}
 
@@ -306,11 +365,12 @@
             {/if}
 
             <!-- grouped bars -->
-            <div class="absolute inset-0 flex items-end">
+            <div class="absolute inset-0">
                 {#each sorted as lv, i (lv.strike + '-' + i)}
                     <button
                         type="button"
-                        class={`group flex h-full flex-1 items-end justify-center gap-px p-0 ${hovered === i ? 'bg-surface-elevated/60' : ''}`}
+                        class={`group absolute bottom-0 top-0 flex items-end justify-center gap-px p-0 ${hovered === i ? 'bg-surface-elevated/60' : ''}`}
+                        style={`left:${strikePositions[i]}%;width:${barWidthPct}%;min-width:${compact ? 14 : 18}px;max-width:${compact ? 30 : 42}px;transform:translateX(-50%)`}
                         onmouseenter={() => (hovered = i)}
                         onmouseleave={() => (hovered = null)}
                         onfocus={() => (hovered = i)}
@@ -329,15 +389,18 @@
         </div>
 
         <!-- X-axis strike labels -->
-        <div class="mt-1 flex">
+        <div class="relative mt-1 h-4">
             {#each sorted as lv, i (lv.strike + '-' + i)}
-                <div
-                    class={`flex-1 text-center font-mono tabular-nums leading-none ${labelSize} ${
-                        isKey(lv) ? 'font-semibold text-foreground' : 'text-muted-foreground'
-                    } ${hovered === i ? 'text-foreground' : ''}`}
-                >
-                    {fmtStrike(lv.strike)}
-                </div>
+                {#if showAxisLabel(lv, i)}
+                    <div
+                        class={`absolute top-0 whitespace-nowrap text-center font-mono tabular-nums leading-none ${labelSize} ${
+                            isKey(lv) ? 'font-semibold text-foreground' : 'text-muted-foreground'
+                        } ${hovered === i ? 'text-foreground' : ''}`}
+                        style={`left:${strikePositions[i]}%;transform:${axisLabelTransform(i)}`}
+                    >
+                        {fmtStrike(lv.strike)}
+                    </div>
+                {/if}
             {/each}
         </div>
     </div>

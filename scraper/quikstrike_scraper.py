@@ -22,6 +22,7 @@ import shutil
 import subprocess
 import csv
 import io
+from collections import Counter, defaultdict
 from datetime import datetime, timezone
 try:
     from zoneinfo import ZoneInfo
@@ -1159,6 +1160,21 @@ _SLOT_SUFFIXES = (
 )
 
 
+def _restamp_position_bias_slot(path, dst_slot):
+    """Make copied PositionBias JSON metadata match its destination slot."""
+    try:
+        with open(path, 'r', encoding='utf-8') as fh:
+            payload = json.load(fh)
+        if isinstance(payload, dict) and payload.get('contract_key') != dst_slot:
+            payload['contract_key'] = dst_slot
+            with open(path, 'w', encoding='utf-8') as fh:
+                json.dump(payload, fh, indent=2, ensure_ascii=False)
+                fh.write('\n')
+            print(f'[PROMOTE] restamped {os.path.basename(path)} contract_key={dst_slot}')
+    except Exception as e:
+        print(f'[PROMOTE] WARN Could not restamp {os.path.basename(path)}: {e}')
+
+
 def _promote_slots(output_dir):
     """Shift saved slot files forward: tomorrow → current, friday → tomorrow.
 
@@ -1215,9 +1231,11 @@ def _promote_slots(output_dir):
             if os.path.exists(src):
                 try:
                     shutil.copy2(src, dst)
-                    print(f'[PROMOTE] {src_slot}{suffix} → {dst_slot}{suffix}')
+                    print(f'[PROMOTE] {src_slot}{suffix} -> {dst_slot}{suffix}')
+                    if suffix == '_PositionBias.json':
+                        _restamp_position_bias_slot(dst, dst_slot)
                 except Exception as e:
-                    print(f'[PROMOTE] ⚠ Failed {src_slot}→{dst_slot}{suffix}: {e}')
+                    print(f'[PROMOTE] WARN Failed {src_slot}->{dst_slot}{suffix}: {e}')
             else:
                 print(f'[PROMOTE] skip {src_slot}{suffix} (not found)')
 
@@ -1733,6 +1751,11 @@ def parse_vol2vol_file(path):
     if symbol_match:
         option_symbol = symbol_match.group(1)
 
+    underlying_symbol = None
+    underlying_match = re.search(r'Underlying Symbol:\s*([A-Z0-9=]+)', header, re.I)
+    if underlying_match:
+        underlying_symbol = underlying_match.group(1)
+
     dte = None
     dte_match = re.search(r'\(([\d.]+)\s*DTE\)', header, re.I)
     if dte_match:
@@ -1747,8 +1770,10 @@ def parse_vol2vol_file(path):
         'header': header,
         'data_type': data_type,
         'contract': option_symbol,
+        'underlying_symbol': underlying_symbol,
         'dte': dte,
         'future_price': _extract_header_number(header, 'FutPrc'),
+        'raw_future_price': _extract_header_number(header, 'FutPrc'),
         'future_change': _extract_header_number(header, 'Future Chg'),
         'vol': _extract_header_number(header, 'Vol'),
         'vol_change': _extract_header_number(header, 'Vol Chg'),
@@ -1756,6 +1781,63 @@ def parse_vol2vol_file(path):
         'total_call': _to_int(total_call, sum(s['call'] for s in strikes)),
         'strikes': strikes,
     }
+
+
+def _median(values):
+    vals = sorted(values)
+    n = len(vals)
+    if n == 0:
+        return None
+    mid = n // 2
+    if n % 2:
+        return vals[mid]
+    return (vals[mid - 1] + vals[mid]) / 2
+
+
+def _canonical_future_price(items):
+    prices = [item.get('future_price') for item in items
+              if item and item.get('future_price') and item.get('future_price') > 0]
+    if len(prices) < 2:
+        return None
+    rounded = [round(float(p), 1) for p in prices]
+    counts = Counter(rounded)
+    most_common = counts.most_common()
+    top_count = most_common[0][1]
+    top_prices = [price for price, count in most_common if count == top_count]
+    if top_count > 1 and len(top_prices) == 1:
+        return top_prices[0]
+    return round(_median(rounded), 1)
+
+
+def normalize_parsed_future_prices(data_by_key, asset_id):
+    """Use one FutPrc per underlying across per-slot Vol2Vol files."""
+    groups = defaultdict(list)
+    for key, pair in data_by_key.items():
+        for kind in ('oi', 'intraday'):
+            parsed = pair.get(kind)
+            if not parsed:
+                continue
+            group_key = parsed.get('underlying_symbol') or f'{asset_id}:unknown'
+            groups[group_key].append((key, kind, parsed))
+
+    notes = []
+    for group_key, entries in groups.items():
+        parsed_items = [p for _, _, p in entries]
+        canonical = _canonical_future_price(parsed_items)
+        if canonical is None:
+            continue
+        raw_prices = [round(float(p['future_price']), 1) for p in parsed_items if p.get('future_price')]
+        if not raw_prices or max(raw_prices) == min(raw_prices):
+            continue
+        for _, _, parsed in entries:
+            parsed['raw_future_price'] = parsed.get('future_price')
+            parsed['future_price'] = canonical
+        notes.append({
+            'underlying_symbol': group_key,
+            'canonical_future_price': canonical,
+            'raw_future_prices': sorted(set(raw_prices)),
+        })
+    return notes
 
 
 def _distance_payload(strike, price):
@@ -1857,6 +1939,7 @@ def analyze_contract_position(asset_id, contract_key, oi_data, intraday_data=Non
         return None
 
     price = oi_data.get('future_price') or (intraday_data or {}).get('future_price')
+    raw_price = oi_data.get('raw_future_price') or (intraday_data or {}).get('raw_future_price')
     oi_rows = sorted(oi_data['strikes'], key=lambda r: r['strike'])
     intraday_by_strike = {
         r['strike']: r
@@ -1982,9 +2065,11 @@ def analyze_contract_position(asset_id, contract_key, oi_data, intraday_data=Non
         'asset': ASSET_PROFILES[asset_id]['short'],
         'contract_key': contract_key,
         'contract': oi_data.get('contract') or (intraday_data or {}).get('contract'),
+        'underlying_symbol': oi_data.get('underlying_symbol') or (intraday_data or {}).get('underlying_symbol'),
         'dte': oi_data.get('dte') if oi_data.get('dte') is not None else (intraday_data or {}).get('dte'),
         'generated_at': datetime.now(timezone.utc).isoformat(timespec='seconds').replace('+00:00', 'Z'),
         'future_price': _round_or_none(price, 2),
+        'raw_future_price': _round_or_none(raw_price, 2),
         'position_bias': {
             'score': score,
             'label': _bias_label(score),
@@ -2029,12 +2114,23 @@ def build_asset_position_bias(asset_id):
     out_dir = get_output_dir(asset_id)
     os.makedirs(out_dir, exist_ok=True)
 
+    parsed_by_key = {}
+    for key in CONTRACT_KEYS:
+        parsed_by_key[key] = {
+            'oi': parse_vol2vol_file(os.path.join(out_dir, f'{key}_OIData.txt')),
+            'intraday': parse_vol2vol_file(os.path.join(out_dir, f'{key}_IntradayData.txt')),
+        }
+
+    price_normalization = normalize_parsed_future_prices(parsed_by_key, asset_id)
+    for note in price_normalization:
+        print(f'[BIAS] {ASSET_PROFILES[asset_id]["short"]}: normalized FutPrc for '
+              f'{note["underlying_symbol"]}: {note["raw_future_prices"]} -> '
+              f'{note["canonical_future_price"]}')
+
     contract_analyses = []
     for key in CONTRACT_KEYS:
-        oi_path = os.path.join(out_dir, f'{key}_OIData.txt')
-        intraday_path = os.path.join(out_dir, f'{key}_IntradayData.txt')
-        oi_data = parse_vol2vol_file(oi_path)
-        intraday_data = parse_vol2vol_file(intraday_path)
+        oi_data = parsed_by_key.get(key, {}).get('oi')
+        intraday_data = parsed_by_key.get(key, {}).get('intraday')
         analysis = analyze_contract_position(asset_id, key, oi_data, intraday_data)
         if not analysis:
             print(f'[BIAS] {ASSET_PROFILES[asset_id]["short"]}/{key}: no OI data, skipped')
@@ -2066,6 +2162,7 @@ def build_asset_position_bias(asset_id):
         'asset': ASSET_PROFILES[asset_id]['short'],
         'asset_name': ASSET_PROFILES[asset_id]['name'],
         'generated_at': datetime.now(timezone.utc).isoformat(timespec='seconds').replace('+00:00', 'Z'),
+        'price_normalization': price_normalization,
         'position_bias': {
             'score': aggregate_score,
             'label': _bias_label(aggregate_score),
@@ -2075,8 +2172,10 @@ def build_asset_position_bias(asset_id):
             {
                 'contract_key': item['contract_key'],
                 'contract': item.get('contract'),
+                'underlying_symbol': item.get('underlying_symbol'),
                 'dte': item.get('dte'),
                 'future_price': item.get('future_price'),
+                'raw_future_price': item.get('raw_future_price'),
                 'score': item['position_bias']['score'],
                 'label': item['position_bias']['label'],
                 'confidence': item.get('confidence'),
@@ -3218,6 +3317,7 @@ def scrape_asset(driver, asset_id, intraday_only=False):
         if old_exp is not None and old_exp < today:
             print(f'[PROMOTE] Saved current expired ({old_exp} < {today}) — promoting slots')
             _promote_slots(output_dir)
+            build_asset_position_bias(asset_id)
 
         save_ohlc(asset_id, output_dir)
         return True

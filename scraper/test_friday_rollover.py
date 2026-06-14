@@ -8,6 +8,7 @@
 import os
 import sys
 import tempfile
+import json
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from quikstrike_scraper import _saved_slot_symbol, _promote_slots
@@ -28,10 +29,20 @@ def check(name, cond, detail=''):
     if not cond:
         failures.append(name)
 
+def write_position_bias(path, slot, symbol):
+    with open(os.path.join(path, f'{slot}_PositionBias.json'), 'w', encoding='utf-8') as fh:
+        json.dump({'contract_key': slot, 'contract': symbol}, fh)
+        fh.write('\n')
+
+def read_position_bias_slot(path, slot):
+    with open(os.path.join(path, f'{slot}_PositionBias.json'), encoding='utf-8') as fh:
+        return json.load(fh).get('contract_key')
+
 with tempfile.TemporaryDirectory() as d:
     for slot, hdr in HEADERS.items():
         with open(os.path.join(d, f'{slot}_OIData.txt'), 'w', encoding='utf-8') as fh:
             fh.write(hdr + '\nStrike,Call,Put,Vol Settle\n3865,0,0,0.73\n')
+        write_position_bias(d, slot, _saved_slot_symbol(d, slot))
 
     # 1. header symbol parsing
     check('parse current symbol', _saved_slot_symbol(d, 'current') == 'G2RM6',
@@ -44,8 +55,14 @@ with tempfile.TemporaryDirectory() as d:
     _promote_slots(d)
     promoted = _saved_slot_symbol(d, 'current')
     check('promote picks friday slot', promoted == 'OG2M6', f'-> current now {promoted}')
+    check('promote restamps current PositionBias key',
+          read_position_bias_slot(d, 'current') == 'current',
+          f'-> {read_position_bias_slot(d, "current")}')
     tom_after = _saved_slot_symbol(d, 'tomorrow')
     check('tomorrow slot untouched', tom_after == 'G3MM6', f'-> {tom_after}')
+    check('tomorrow PositionBias key stays tomorrow',
+          read_position_bias_slot(d, 'tomorrow') == 'tomorrow',
+          f'-> {read_position_bias_slot(d, "tomorrow")}')
 
     # idempotency: second promote is a no-op
     _promote_slots(d)
@@ -74,11 +91,18 @@ with tempfile.TemporaryDirectory() as d:
     for slot, hdr in weekday.items():
         with open(os.path.join(d, f'{slot}_OIData.txt'), 'w', encoding='utf-8') as fh:
             fh.write(hdr + '\n')
+        write_position_bias(d, slot, _saved_slot_symbol(d, slot))
     _promote_slots(d)
     check('weekday promote: tomorrow->current', _saved_slot_symbol(d, 'current') == 'G2WM6',
           f'-> {_saved_slot_symbol(d, "current")}')
+    check('weekday restamps current PositionBias key',
+          read_position_bias_slot(d, 'current') == 'current',
+          f'-> {read_position_bias_slot(d, "current")}')
     check('weekday promote: friday->tomorrow', _saved_slot_symbol(d, 'tomorrow') == 'OG2M6',
           f'-> {_saved_slot_symbol(d, "tomorrow")}')
+    check('weekday restamps tomorrow PositionBias key',
+          read_position_bias_slot(d, 'tomorrow') == 'tomorrow',
+          f'-> {read_position_bias_slot(d, "tomorrow")}')
 
 print()
 if failures:

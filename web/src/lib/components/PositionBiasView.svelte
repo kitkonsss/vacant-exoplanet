@@ -43,9 +43,39 @@
 
     function tenorFor(contract) {
         const tenors = expectedRange?.tenors || [];
-        return tenors.find((t) => t.contract_key === contract?.contract_key)
-            || tenors.find((t) => t.symbol === contract?.contract)
-            || null;
+        const byKey = tenors.find((t) => t.contract_key === contract?.contract_key);
+        if (byKey) return byKey;
+
+        const symbolMatches = tenors.filter((t) => t.symbol === contract?.contract);
+        if (symbolMatches.length === 1) return symbolMatches[0];
+
+        const dte = Number(contract?.dte);
+        const dteMatches = symbolMatches.filter((t) => Number.isFinite(dte) && Math.abs(Number(t.dte) - dte) <= 0.05);
+        if (dteMatches.length === 1) return dteMatches[0];
+
+        if (symbolMatches.length > 1 && symbolMatches.every((t) => equivalentTenor(t, symbolMatches[0]))) {
+            return symbolMatches[0];
+        }
+
+        return null;
+    }
+
+    function equivalentTenor(a, b) {
+        if (!a || !b) return false;
+        return a.symbol === b.symbol
+            && a.expiration === b.expiration
+            && Number(a.dte) === Number(b.dte)
+            && Number(a.future_price) === Number(b.future_price)
+            && Number(a.atm_iv) === Number(b.atm_iv);
+    }
+
+    function displayPriceFor(contract, tenor) {
+        const live = Number(livePrice);
+        if (Number.isFinite(live) && live > 0) return live;
+        const contractPrice = Number(contract?.future_price);
+        if (Number.isFinite(contractPrice) && contractPrice > 0) return contractPrice;
+        const tenorPrice = Number(tenor?.future_price);
+        return Number.isFinite(tenorPrice) && tenorPrice > 0 ? tenorPrice : null;
     }
 
     function pushBands(out, bands, group, color, labelPrefix) {
@@ -67,13 +97,11 @@
         }
     }
 
-    function dayBandsFor(tenor) {
-        const f = Number(tenor?.future_price);
+    function sdBandsFromTenor(tenor, center, horizonDays) {
         const iv = Number(tenor?.atm_iv);
-        const dte = Number(tenor?.dte);
-        if (!Number.isFinite(f) || !Number.isFinite(iv) || !Number.isFinite(dte) || dte <= 0) return null;
+        const f = Number(center);
+        if (!Number.isFinite(f) || f <= 0 || !Number.isFinite(iv) || !Number.isFinite(horizonDays) || horizonDays <= 0) return null;
 
-        const horizonDays = Math.min(1, dte);
         const move = f * iv * Math.sqrt(horizonDays / 365);
         const bands = {};
         for (const k of [1, 2, 3]) {
@@ -83,11 +111,24 @@
         return bands;
     }
 
+    function dayBandsFor(tenor, center) {
+        const dte = Number(tenor?.dte);
+        if (!Number.isFinite(dte) || dte <= 0) return null;
+        return sdBandsFromTenor(tenor, center, Math.min(1, dte));
+    }
+
+    function expiryBandsFor(tenor, center) {
+        const dte = Number(tenor?.dte);
+        if (!Number.isFinite(dte) || dte <= 0) return null;
+        return sdBandsFromTenor(tenor, center, dte);
+    }
+
     function sdBandsFor(contract) {
         const tenor = tenorFor(contract);
+        const center = displayPriceFor(contract, tenor);
         const out = [];
-        if (showDaySd) pushBands(out, dayBandsFor(tenor), 'day', '#38bdf8', 'D');
-        if (showExpSd) pushBands(out, tenor?.bands_to_expiry, 'expiry', '#f59e0b', 'E');
+        if (showDaySd) pushBands(out, dayBandsFor(tenor, center), 'day', '#38bdf8', 'D');
+        if (showExpSd) pushBands(out, expiryBandsFor(tenor, center), 'expiry', '#f59e0b', 'E');
         return out;
     }
 </script>

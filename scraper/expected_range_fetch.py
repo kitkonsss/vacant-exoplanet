@@ -29,6 +29,7 @@ import math
 import os
 import re
 import sys
+from collections import Counter, defaultdict
 from datetime import datetime, timezone
 
 if sys.stdout.encoding and sys.stdout.encoding.lower() not in ('utf-8', 'utf8'):
@@ -69,6 +70,7 @@ def parse_oidata(path):
     vol = _num((re.search(r'\bVol:\s*([\d.]+)', header) or [None, None])[1])
     sym = (re.search(r'Option Symbol:\s*(\S+)', header) or [None, None])[1]
     exp = (re.search(r'Option Expiration:\s*([\d/]+)', header) or [None, None])[1]
+    underlying = (re.search(r'Underlying Symbol:\s*([A-Z0-9=]+)', header) or [None, None])[1]
 
     smile = []
     for ln in lines[1:]:
@@ -83,7 +85,75 @@ def parse_oidata(path):
     if not fut or not smile:
         return None
     return {'symbol': sym, 'expiration': exp, 'dte': dte,
-            'future_price': fut, 'header_vol': vol, 'smile': smile}
+            'underlying_symbol': underlying,
+            'future_price': fut, 'raw_future_price': fut,
+            'header_vol': vol, 'smile': smile}
+
+
+def _median(values):
+    vals = sorted(values)
+    n = len(vals)
+    if n == 0:
+        return None
+    mid = n // 2
+    if n % 2:
+        return vals[mid]
+    return (vals[mid - 1] + vals[mid]) / 2
+
+
+def _canonical_future_price(items):
+    """Pick one futures anchor for option tenors sharing the same underlying."""
+    prices = [p.get('future_price') for p in items if p.get('future_price') and p.get('future_price') > 0]
+    if len(prices) < 2:
+        return None
+
+    rounded = [round(p, 1) for p in prices]
+    counts = Counter(rounded)
+    most_common = counts.most_common()
+    top_count = most_common[0][1]
+    top_prices = [price for price, count in most_common if count == top_count]
+    if top_count > 1 and len(top_prices) == 1:
+        return top_prices[0]
+    return round(_median(rounded), 1)
+
+
+def normalize_future_prices(parsed_by_key, asset_id, reference_by_key=None):
+    """Normalize stale per-file FutPrc values for tenors on the same underlying.
+
+    QuikStrike files for multiple option expiries can be written at different
+    times, but the tenors often point to the same underlying future. The expected
+    range overlay must use one futures anchor per underlying; otherwise the
+    bands are centered on stale file-local prices while the chart price line is
+    live/recent.
+    """
+    groups = defaultdict(list)
+    for key, parsed in parsed_by_key.items():
+        group_key = parsed.get('underlying_symbol') or f'{asset_id}:unknown'
+        groups[group_key].append((key, parsed, True))
+    for key, parsed in (reference_by_key or {}).items():
+        group_key = parsed.get('underlying_symbol') or f'{asset_id}:unknown'
+        groups[group_key].append((key, parsed, False))
+
+    notes = []
+    for group_key, pairs in groups.items():
+        items = [p for _, p, _ in pairs]
+        canonical = _canonical_future_price(items)
+        if canonical is None:
+            continue
+        raw_prices = [round(p['future_price'], 1) for p in items if p.get('future_price')]
+        if not raw_prices or max(raw_prices) == min(raw_prices):
+            continue
+        for _, parsed, mutable in pairs:
+            if not mutable:
+                continue
+            parsed['raw_future_price'] = parsed.get('future_price')
+            parsed['future_price'] = canonical
+        notes.append({
+            'underlying_symbol': group_key,
+            'canonical_future_price': canonical,
+            'raw_future_prices': sorted(set(raw_prices)),
+        })
+    return notes
 
 
 def interp_iv(smile, strike):
@@ -127,8 +197,10 @@ def build_tenor(key, parsed):
         'contract_key': key,
         'symbol': parsed['symbol'],
         'expiration': parsed['expiration'],
+        'underlying_symbol': parsed.get('underlying_symbol'),
         'dte': dte,
         'future_price': f,
+        'raw_future_price': parsed.get('raw_future_price'),
         'atm_iv': round(atm_iv, 4),
         'atm_iv_pct': round(atm_iv * 100, 2),
         'header_vol': parsed['header_vol'],
@@ -202,9 +274,24 @@ def relative_skew_read(skew, hist):
 
 def run_asset(asset_id, cfg):
     dir_ = os.path.join(BASE_DIR, cfg['subdir']) if cfg['subdir'] else BASE_DIR
-    tenors = []
+    parsed_by_key = {}
+    reference_by_key = {}
     for key in CONTRACT_KEYS:
         parsed = parse_oidata(os.path.join(dir_, f'{key}_OIData.txt'))
+        if parsed:
+            parsed_by_key[key] = parsed
+        ref = parse_oidata(os.path.join(dir_, f'{key}_IntradayData.txt'))
+        if ref:
+            reference_by_key[key] = ref
+
+    price_normalization = normalize_future_prices(parsed_by_key, asset_id, reference_by_key)
+    for note in price_normalization:
+        print(f"[ER:{asset_id}] normalized FutPrc for {note['underlying_symbol']}: "
+              f"{note['raw_future_prices']} -> {note['canonical_future_price']}")
+
+    tenors = []
+    for key in CONTRACT_KEYS:
+        parsed = parsed_by_key.get(key)
         if not parsed:
             continue
         t = build_tenor(key, parsed)
@@ -270,6 +357,7 @@ def run_asset(asset_id, cfg):
         'method': 'ATM IV interpolated from Vol2Vol per-strike Vol Settle smile; '
                   'move = F x IV x sqrt(DTE/365)',
         'skew_mode': cfg['skew_mode'],
+        'price_normalization': price_normalization,
         'future_price': f,
         'atm_iv_pct_1d_basis': short['atm_iv_pct'],
         'basis_tenor': {'contract_key': short['contract_key'], 'symbol': short['symbol'],
