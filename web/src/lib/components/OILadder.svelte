@@ -1,5 +1,5 @@
 <script>
-    import { fmtK, fmtStrike } from '$lib/utils.js';
+    import { fmtK, fmtNumber, fmtStrike } from '$lib/utils.js';
 
     // Vertical grouped-bar "wall profile": strikes along the X axis (low → high),
     // wall strength (OI + volume) as bar height. Two view modes (driven by the
@@ -9,7 +9,7 @@
     // Each bar is split into two shades: solid base = today's intraday volume
     // (flow), faded top = open interest (the resting "wall") — so you can read
     // both the wall height and how much of it is fresh flow.
-    let { positionMap = [], futurePrice = null, compact = false, mode = 'split' } = $props();
+    let { positionMap = [], futurePrice = null, compact = false, mode = 'split', ivByStrike = null, showIv = false } = $props();
 
     // ascending strike → left-to-right on the X axis
     const sorted = $derived([...(positionMap || [])].sort((a, b) => a.strike - b.strike));
@@ -58,6 +58,37 @@
         }
         return null;
     });
+
+    // --- per-strike IV smile overlay (from OIData Vol Settle), aligned to the
+    // same strike columns as the bars; only strikes that actually have a vol are
+    // plotted, so the line shows the smile/skew shape right over the OI walls.
+    const IV_COLOR = '#c084fc';
+    const ivPoints = $derived.by(() => {
+        if (!showIv || !ivByStrike) return [];
+        const n = sorted.length;
+        const pts = [];
+        for (let i = 0; i < n; i++) {
+            const iv = ivByStrike[sorted[i].strike];
+            if (Number.isFinite(iv) && iv > 0) pts.push({ iv, x: ((i + 0.5) / n) * 100 });
+        }
+        return pts;
+    });
+    const ivRange = $derived.by(() => {
+        if (ivPoints.length < 2) return null;
+        const vs = ivPoints.map((p) => p.iv);
+        let lo = Math.min(...vs);
+        let hi = Math.max(...vs);
+        if (hi - lo < 1) { hi += 0.5; lo -= 0.5; } // avoid a flat divide-by-zero
+        return { lo, hi };
+    });
+    // viewBox y (0 top .. 100 bottom): highest IV near the top (8), lowest at 78.
+    function ivY(iv) {
+        if (!ivRange) return 50;
+        const f = (iv - ivRange.lo) / (ivRange.hi - ivRange.lo);
+        return 8 + (1 - f) * 70;
+    }
+    const ivPolyline = $derived(ivPoints.map((p) => `${p.x.toFixed(2)},${ivY(p.iv).toFixed(2)}`).join(' '));
+    const ivShown = $derived(showIv && ivPoints.length >= 2 && ivRange != null);
 
     let hovered = $state(null);
 
@@ -139,6 +170,13 @@
                     <span class="inline-block h-2 w-2 rounded-sm bg-foreground/90"></span>
                     <span class="text-muted-foreground">Vol</span>
                 </span>
+                {#if ivShown}
+                    <span class="mx-0.5 h-2.5 w-px bg-border"></span>
+                    <span class="flex items-center gap-1" title="IV smile — วอล (ความผันผวน) ของแต่ละ strike">
+                        <span class="inline-block h-[2px] w-3 rounded-sm" style={`background:${IV_COLOR}`}></span>
+                        <span class="text-muted-foreground">IV</span>
+                    </span>
+                {/if}
             </div>
             {#if hovered != null && sorted[hovered]}
                 {@const lv = sorted[hovered]}
@@ -146,12 +184,14 @@
                     <div class="truncate font-mono tabular-nums">
                         <span class="font-semibold text-foreground">{fmtStrike(lv.strike)}</span>
                         <span class="text-up">· OI {fmtK((lv.put_oi || 0) + (lv.call_oi || 0)) || 0}+Vol {fmtK((lv.put_volume || 0) + (lv.call_volume || 0)) || 0}</span>
+                        {#if ivByStrike?.[lv.strike]}<span style={`color:${IV_COLOR}`}>· IV {fmtNumber(ivByStrike[lv.strike], 1)}%</span>{/if}
                     </div>
                 {:else}
                     <div class="truncate font-mono tabular-nums">
                         <span class="font-semibold text-foreground">{fmtStrike(lv.strike)}</span>
                         <span class="text-put">· P {fmtK(lv.put_oi) || 0}+{fmtK(lv.put_volume) || 0}</span>
                         <span class="text-call">· C {fmtK(lv.call_oi) || 0}+{fmtK(lv.call_volume) || 0}</span>
+                        {#if ivByStrike?.[lv.strike]}<span style={`color:${IV_COLOR}`}>· IV {fmtNumber(ivByStrike[lv.strike], 1)}%</span>{/if}
                     </div>
                 {/if}
             {:else}
@@ -175,6 +215,23 @@
                 <div class="absolute top-0 bottom-0 z-10 border-l border-dashed border-primary/70" style={`left:${pricePos}%`}>
                     <span class={`absolute -top-px -translate-x-1/2 leading-none text-primary ${compact ? 'text-[7px]' : 'text-[8px]'}`}>▾</span>
                 </div>
+            {/if}
+
+            <!-- IV smile overlay (per-strike vol), drawn over the bars -->
+            {#if ivShown}
+                <svg class="pointer-events-none absolute inset-0 z-20 h-full w-full" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
+                    <polyline
+                        points={ivPolyline}
+                        fill="none"
+                        stroke={IV_COLOR}
+                        stroke-width="1.5"
+                        vector-effect="non-scaling-stroke"
+                        stroke-linejoin="round"
+                        stroke-linecap="round"
+                    />
+                </svg>
+                <span class="pointer-events-none absolute right-0.5 z-20 -translate-y-1/2 font-mono text-[8px]" style={`top:${ivY(ivRange.hi)}%;color:${IV_COLOR}`}>{fmtNumber(ivRange.hi, 0)}%</span>
+                <span class="pointer-events-none absolute right-0.5 z-20 -translate-y-1/2 font-mono text-[8px]" style={`top:${ivY(ivRange.lo)}%;color:${IV_COLOR}`}>{fmtNumber(ivRange.lo, 0)}%</span>
             {/if}
 
             <!-- grouped bars -->

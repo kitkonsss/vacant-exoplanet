@@ -4,7 +4,7 @@
     import OILadder from './OILadder.svelte';
     import { fmtNumber, fmtStrike, toneClasses } from '$lib/utils.js';
 
-    let { contract = null, compact = false, mode = 'split', livePrice = null } = $props();
+    let { contract = null, compact = false, mode = 'split', livePrice = null, ivByStrike = null, showIv = false } = $props();
 
     // Live price (from /api/price, threaded down from the page) re-positions the
     // chart's price line + the wall-distance metrics; the OI/volume bars stay
@@ -75,7 +75,7 @@
         </header>
 
         <!-- OI Ladder -->
-        <OILadder positionMap={contract?.position_map} futurePrice={displayPrice} {compact} {mode} />
+        <OILadder positionMap={contract?.position_map} futurePrice={displayPrice} {compact} {mode} {ivByStrike} {showIv} />
 
         <!-- Metrics row -->
         <div class={`grid grid-cols-4 ${compact ? 'gap-1.5' : 'gap-2'}`}>

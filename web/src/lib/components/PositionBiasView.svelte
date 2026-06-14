@@ -1,15 +1,42 @@
 <script>
     import Card from './ui/Card.svelte';
     import ContractCard from './ContractCard.svelte';
+    import { fetchOIData } from '$lib/data.js';
     import { cn } from '$lib/utils.js';
 
-    let { payload = null, loading = false, livePrice = null } = $props();
+    let { payload = null, loading = false, livePrice = null, assetId = 'gc' } = $props();
 
     const contracts = $derived(payload?.contracts || []);
 
     // One selector for the whole view: flip every contract's wall chart between
     // split (Call/Put side-by-side) and total (combined Put+Call) at once.
     let mode = $state('split'); // 'split' | 'total'
+    let showIv = $state(true);  // overlay the per-strike IV smile on every chart
+
+    // Per-strike IV smile per contract — pulled from the raw OIData "Vol Settle"
+    // column (the only place the full smile lives) and aligned to `contracts` by
+    // index as {strike: ivPct} maps (null where a contract has no vol data).
+    let ivMaps = $state([]);
+    $effect(() => {
+        const cs = contracts;
+        const a = assetId;
+        let stopped = false;
+        (async () => {
+            const maps = await Promise.all(
+                cs.map(async (c) => {
+                    const oi = await fetchOIData(a, c.contract_key);
+                    if (!oi?.strikes) return null;
+                    const m = {};
+                    for (const s of oi.strikes) {
+                        if (Number.isFinite(s.strike) && s.volSettle > 0) m[s.strike] = s.volSettle * 100;
+                    }
+                    return Object.keys(m).length ? m : null;
+                })
+            );
+            if (!stopped) ivMaps = maps;
+        })();
+        return () => { stopped = true; };
+    });
 </script>
 
 {#if loading}
@@ -35,19 +62,32 @@
                 <span class="text-[11px] font-semibold uppercase tracking-[0.16em] text-foreground">OI Walls</span>
                 <span class="text-[10px] text-muted-foreground">{contracts.length} contract{contracts.length === 1 ? '' : 's'}</span>
             </div>
-            <div class="flex items-center gap-1 rounded-md border border-border bg-surface p-0.5">
-                {#each [['split', 'Call / Put'], ['total', 'Total']] as [key, label]}
-                    <button
-                        type="button"
-                        onclick={() => (mode = key)}
-                        class={cn(
-                            'rounded px-3 py-1 text-[10px] font-semibold uppercase tracking-wider transition-colors',
-                            mode === key ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'
-                        )}
-                    >
-                        {label}
-                    </button>
-                {/each}
+            <div class="flex items-center gap-2">
+                <button
+                    type="button"
+                    onclick={() => (showIv = !showIv)}
+                    title="ทาบเส้น IV smile (วอลแต่ละ strike) ลงบนแท่ง OI"
+                    class={cn(
+                        'flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider transition-colors',
+                        showIv ? 'border-[#c084fc] text-[#c084fc]' : 'border-border text-muted-foreground hover:text-foreground'
+                    )}
+                >
+                    <span class="inline-block h-[2px] w-3 rounded-sm bg-[#c084fc]"></span> IV smile
+                </button>
+                <div class="flex items-center gap-1 rounded-md border border-border bg-surface p-0.5">
+                    {#each [['split', 'Call / Put'], ['total', 'Total']] as [key, label]}
+                        <button
+                            type="button"
+                            onclick={() => (mode = key)}
+                            class={cn(
+                                'rounded px-3 py-1 text-[10px] font-semibold uppercase tracking-wider transition-colors',
+                                mode === key ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'
+                            )}
+                        >
+                            {label}
+                        </button>
+                    {/each}
+                </div>
             </div>
         </div>
 
@@ -57,7 +97,7 @@
                  friday both pointing at the same option), which would crash the
                  keyed each with `each_key_duplicate` and blank the whole tab. -->
             {#each contracts as contract, i (i)}
-                <ContractCard {contract} {mode} {livePrice} />
+                <ContractCard {contract} {mode} {livePrice} ivByStrike={ivMaps[i] || null} {showIv} />
             {/each}
         </div>
     </div>
