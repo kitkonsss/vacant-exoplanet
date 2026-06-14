@@ -96,20 +96,37 @@ export function buildMood(strategy, opts = {}) {
     const regimeRange = regime === 'range' || regime === 'ranging';
     const leadPlaybook = strategy?.regime?.lead_playbook || null;
 
-    // --- gamma magnet = pin (mean-revert, fade ok) vs escaped (trend, don't fade) ---
-    // NOTE: this is a PIN-PROXIMITY proxy from the COMBINED gamma magnet, not a
-    // signed dealer long/short-gamma (that needs call/put-split gamma the scrape
-    // doesn't capture yet). Honest heuristic: price hugging the biggest gamma pile
-    // tends to pin; once it breaks away, moves run.
-    const magnet = strategy?.gamma_1pct?.gamma_magnet || null;
+    // --- gamma: is price sitting ON a big gamma wall (pin -> mean-revert) or is
+    // there none nearby (loose -> moves run)? Uses the NEAREST significant gamma
+    // wall to the *current* price — NOT the single biggest pile on the board, which
+    // can sit 200+ pts away and is irrelevant (that bug once read "หลุด magnet 4000"
+    // while price was 4239 and actually hugging the 4250 wall). Pin-proximity proxy
+    // only, not a signed dealer gamma (needs call/put-split gamma the scrape lacks).
+    const g = strategy?.gamma_1pct || null;
     const gammaPrice = Number.isFinite(price) ? price : strategy?.future_price ?? er?.future_price ?? null;
     const emScale = Number.isFinite(er.expected_move) && er.expected_move > 0 ? er.expected_move : null;
     let gammaPin = null;
-    if (magnet?.strike != null && gammaPrice != null && emScale) {
-        const dist = Math.abs(gammaPrice - magnet.strike);
-        const ratio = dist / emScale;
-        const state = ratio <= 0.5 ? 'pinned' : ratio >= 1.1 || regimeTrending ? 'escaped' : 'neutral';
-        gammaPin = { strike: magnet.strike, dist, ratio, state };
+    if (g && gammaPrice != null && emScale) {
+        const floor = Number.isFinite(g.significant_floor) ? g.significant_floor : 0;
+        const wallSrc = Array.isArray(g.significant_walls) && g.significant_walls.length
+            ? g.significant_walls
+            : Array.isArray(g.top_walls) ? g.top_walls : [];
+        const walls = wallSrc.filter((w) => Number.isFinite(w?.strike) && (w.gamma_1pct ?? 0) >= floor);
+        if (walls.length) {
+            let nearest = null;
+            let best = Infinity;
+            for (const w of walls) {
+                const d = Math.abs(w.strike - gammaPrice);
+                if (d < best) { best = d; nearest = w; }
+            }
+            const ratio = best / emScale;
+            let state = ratio <= 0.4 ? 'pinned' : ratio >= 1.0 ? 'loose' : 'neutral';
+            // Gold strikes sit every 50 pts so a wall is almost always within 0.4
+            // EM — "pinned" is only worth surfacing when the market isn't already
+            // trending away from it (else it contradicts a 🔴 trending verdict).
+            if (state === 'pinned' && regimeTrending) state = 'neutral';
+            gammaPin = { strike: nearest.strike, dist: best, ratio, state };
+        }
     }
 
     // --- scheduled high-impact event proximity (proactive layer) ---
@@ -137,8 +154,8 @@ export function buildMood(strategy, opts = {}) {
     else if (termInverted || ivLevel === 'elevated' || regime === 'mixed') verdict = 'yellow';
     else verdict = 'green';
 
-    // gamma nudge: a clean breakaway argues for trend
-    if (gammaPin?.state === 'escaped' && verdict === 'green') verdict = 'yellow';
+    // gamma nudge: no pinning wall nearby = room to run = lean away from fading
+    if (gammaPin?.state === 'loose' && verdict === 'green') verdict = 'yellow';
 
     // scheduled-event override (strongest, proactive)
     if (event?.status === 'today') verdict = 'red';
@@ -156,7 +173,7 @@ export function buildMood(strategy, opts = {}) {
     else if (termInverted) reasons.push('เริ่มมีความกังวลระยะสั้น');
     if (ivLevel === 'high') reasons.push('IV สูงกว่าปกติมาก = ตลาดรอมูฟใหญ่');
     else if (ivLevel === 'elevated') reasons.push('IV สูงกว่าปกติ');
-    if (gammaPin?.state === 'escaped') reasons.push('หลุด gamma magnet → มูฟมีโอกาสเร่ง');
+    if (gammaPin?.state === 'loose') reasons.push('ไม่มี gamma ก้อนใหญ่ตรึงใกล้ → ราคามีที่ให้วิ่ง');
     if (fearDir !== 'balanced' && (regimeTrending || ivLevel === 'high' || ivLevel === 'elevated' || event?.status === 'today')) {
         reasons.push(fearDir === 'down' ? 'skew เอียงกลัวลง — ระวังไหลลง' : 'skew เอียงกลัวขึ้น — ระวังพุ่งขึ้น');
     }

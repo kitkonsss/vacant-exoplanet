@@ -180,8 +180,8 @@
                 {#if mood.gammaPin && mood.gammaPin.state !== 'neutral'}
                     <p class="mt-2 text-[11px] {mood.gammaPin.state === 'pinned' ? 'text-up' : 'text-warn'}">
                         🧲 {mood.gammaPin.state === 'pinned'
-                            ? `ราคาถูกตรึงใกล้ gamma ${fmtNumber(mood.gammaPin.strike, 0)} → มักเด้งในกรอบ (fade ง่ายขึ้น)`
-                            : `หลุด gamma magnet ${fmtNumber(mood.gammaPin.strike, 0)} แล้ว → มูฟมีโอกาสเร่ง (อย่า fade)`}
+                            ? `ราคาเกาะ gamma ก้อนใหญ่ ${fmtNumber(mood.gammaPin.strike, 0)} → มักเด้งในกรอบ (หนุนการ fade)`
+                            : `ไม่มี gamma ก้อนใหญ่ตรึงใกล้ราคา — มีที่ให้วิ่ง`}
                     </p>
                 {/if}
 
