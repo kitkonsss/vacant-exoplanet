@@ -54,7 +54,7 @@ export function buildMood(strategy, opts = {}) {
         ivLevel = ivRatio > 1.35 ? 'high' : ivRatio > 1.12 ? 'elevated' : ivRatio < 0.85 ? 'calm' : 'normal';
     }
     const ivLabel =
-        ivLevel === 'high' ? 'สูงมาก (ตลาดอัดเบี้ยรอมูฟใหญ่)'
+        ivLevel === 'high' ? 'สูงมาก = ตลาดคาดมูฟใหญ่วันนี้'
         : ivLevel === 'elevated' ? 'สูงกว่าปกติ'
         : ivLevel === 'calm' ? 'ต่ำ/นิ่งกว่าปกติ'
         : ivLevel === 'normal' ? 'ปกติ'
@@ -69,8 +69,8 @@ export function buildMood(strategy, opts = {}) {
     if (read.includes('put_skew_dominant') || (spread != null && spread > 1.5)) fearDir = 'down';
     else if (read.includes('call_skew_dominant') || (spread != null && spread < -1.5)) fearDir = 'up';
     const fearLabel =
-        fearDir === 'down' ? '🔻 ตลาดกลัวฝั่งลง (แห่ซื้อประกันขาลง)'
-        : fearDir === 'up' ? '🔺 ตลาดกลัว/ไล่ฝั่งขึ้น (แห่ซื้อ call)'
+        fearDir === 'down' ? '🔻 กลัวลง — คนแห่ซื้อ put กันความเสี่ยงขาลง'
+        : fearDir === 'up' ? '🔺 ไล่ขึ้น — คนแห่ซื้อ call ฝั่งขึ้น'
         : '⚖️ สองฝั่งพอๆ กัน';
 
     // --- term structure = scheduled-event premium in the front contract ---
@@ -80,11 +80,14 @@ export function buildMood(strategy, opts = {}) {
     const termShape = er?.term_structure?.shape || '';
     const termInverted = termShape.includes('inverted') || (termSlope != null && termSlope > 3);
     const termStrong = termSlope != null && termSlope > 10;
+    // Term structure inverted = front (short-dated) IV richer than back (long-
+    // dated) = market pricing near-term risk. Worded as "IV ตัวสั้น vs ตัวยาว"
+    // because the literal "เบี้ยข่าวฝั่งสั้น" read as gibberish to the user.
     const termLabel = termInverted
         ? termStrong
-            ? '⚠️ เบี้ยข่าวแรงในสัญญาสั้น (กลัวข่าวมาก)'
-            : 'มีเบี้ยข่าวฝั่งสั้นเล็กน้อย'
-        : 'ปกติ (ไม่มีเบี้ยข่าวพิเศษ)';
+            ? '⚠️ IV ตัวสั้น ≫ ตัวยาว = กลัวมูฟแรงเร็วๆนี้'
+            : 'IV ตัวสั้น > ตัวยาวนิดหน่อย = เริ่มเสี่ยงระยะสั้น'
+        : 'IV ตัวสั้น ≈ ตัวยาว (ปกติ)';
 
     // --- regime = the proven circuit-breaker ---
     const regime = strategy?.regime?.regime || 'neutral';
@@ -148,8 +151,8 @@ export function buildMood(strategy, opts = {}) {
         reasons.push(`📅 พรุ่งนี้มีข่าว ${CODE_LABEL[event.code] || event.code} — ระวังก่อนข่าว`);
     }
     if (regimeTrending) reasons.push('regime = เทรนด์ → ห้ามสวนทาง');
-    if (termStrong) reasons.push(`term inverted แรง (slope ${termSlope.toFixed(1)}) = ตลาดกลัวข่าว`);
-    else if (termInverted) reasons.push('term inverted เล็กน้อย = มีเบี้ยข่าวฝั่งสั้น');
+    if (termStrong) reasons.push('IV ตัวสั้นแพงกว่าตัวยาวมาก = ตลาดกลัวจะมีมูฟแรงเร็วๆนี้');
+    else if (termInverted) reasons.push('IV ตัวสั้นแพงกว่าตัวยาวเล็กน้อย = เริ่มมีความเสี่ยงระยะสั้น');
     if (ivLevel === 'high') reasons.push('IV สูงกว่าปกติมาก = ตลาดรอมูฟใหญ่');
     else if (ivLevel === 'elevated') reasons.push('IV สูงกว่าปกติ');
     if (gammaPin?.state === 'escaped') reasons.push('หลุด gamma magnet → มูฟมีโอกาสเร่ง');
