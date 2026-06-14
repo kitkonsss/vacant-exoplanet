@@ -81,13 +81,14 @@ export function buildMood(strategy, opts = {}) {
     const termInverted = termShape.includes('inverted') || (termSlope != null && termSlope > 3);
     const termStrong = termSlope != null && termSlope > 10;
     // Term structure inverted = front (short-dated) IV richer than back (long-
-    // dated) = market pricing near-term risk. Worded as "IV ตัวสั้น vs ตัวยาว"
-    // because the literal "เบี้ยข่าวฝั่งสั้น" read as gibberish to the user.
+    // dated) = market pricing near-term risk. Surfaced as the plain MEANING only
+    // (no IV-short-vs-long mechanism) — the user found every mechanism wording
+    // ("เบี้ยข่าวฝั่งสั้น", then "IV ตัวสั้น > ตัวยาว") needed translating in-head.
     const termLabel = termInverted
         ? termStrong
-            ? '⚠️ IV ตัวสั้น ≫ ตัวยาว = กลัวมูฟแรงเร็วๆนี้'
-            : 'IV ตัวสั้น > ตัวยาวนิดหน่อย = เริ่มเสี่ยงระยะสั้น'
-        : 'IV ตัวสั้น ≈ ตัวยาว (ปกติ)';
+            ? '⚠️ ตลาดกลัวความเสี่ยงระยะสั้น (อาจมีมูฟแรงเร็วๆ นี้)'
+            : 'เริ่มกังวลระยะสั้น'
+        : 'ปกติ — ไม่มีความเสี่ยงระยะสั้นพิเศษ';
 
     // --- regime = the proven circuit-breaker ---
     const regime = strategy?.regime?.regime || 'neutral';
@@ -151,8 +152,8 @@ export function buildMood(strategy, opts = {}) {
         reasons.push(`📅 พรุ่งนี้มีข่าว ${CODE_LABEL[event.code] || event.code} — ระวังก่อนข่าว`);
     }
     if (regimeTrending) reasons.push('regime = เทรนด์ → ห้ามสวนทาง');
-    if (termStrong) reasons.push('IV ตัวสั้นแพงกว่าตัวยาวมาก = ตลาดกลัวจะมีมูฟแรงเร็วๆนี้');
-    else if (termInverted) reasons.push('IV ตัวสั้นแพงกว่าตัวยาวเล็กน้อย = เริ่มมีความเสี่ยงระยะสั้น');
+    if (termStrong) reasons.push('ตลาดกลัวความเสี่ยงระยะสั้น = อาจมีมูฟแรงเร็วๆ นี้');
+    else if (termInverted) reasons.push('เริ่มมีความกังวลระยะสั้น');
     if (ivLevel === 'high') reasons.push('IV สูงกว่าปกติมาก = ตลาดรอมูฟใหญ่');
     else if (ivLevel === 'elevated') reasons.push('IV สูงกว่าปกติ');
     if (gammaPin?.state === 'escaped') reasons.push('หลุด gamma magnet → มูฟมีโอกาสเร่ง');
