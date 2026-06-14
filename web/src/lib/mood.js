@@ -63,14 +63,24 @@ export function buildMood(strategy, opts = {}) {
     // --- skew = which side the market is paying to hedge (= direction of fear) ---
     const putSkew = Number.isFinite(er?.skew?.put_skew_volpts) ? er.skew.put_skew_volpts : null;
     const callSkew = Number.isFinite(er?.skew?.call_skew_volpts) ? er.skew.call_skew_volpts : null;
-    const read = er?.skew?.read || '';
+    const read = (er?.skew?.read || '').toLowerCase();
     const spread = putSkew != null && callSkew != null ? putSkew - callSkew : null;
-    let fearDir = 'balanced'; // 'down' | 'up' | 'balanced'
-    if (read.includes('put_skew_dominant') || (spread != null && spread > 1.5)) fearDir = 'down';
-    else if (read.includes('call_skew_dominant') || (spread != null && spread < -1.5)) fearDir = 'up';
+    // Direction of fear. TRUST the pipeline's `read` first: index options (NQ)
+    // carry a PERMANENT structural put skew, so the pipeline suppresses the
+    // absolute read until it has a relative (z-score) baseline. In that case we
+    // must NOT assert a direction from the raw put−call spread — it would scream
+    // "กลัวลง" every single day. Only fall back to the raw spread when the read
+    // gives no guidance at all.
+    let fearDir = 'balanced'; // 'down' | 'up' | 'balanced' | 'unknown'
+    if (read.includes('put_skew_dominant') || read.includes('put_skew_stretched')) fearDir = 'down';
+    else if (read.includes('call_skew_dominant') || read.includes('call_skew_stretched')) fearDir = 'up';
+    else if (read.includes('suppress') || read.includes('baseline_building') || read.includes('building')) fearDir = 'unknown';
+    else if (spread != null && spread > 1.5) fearDir = 'down';
+    else if (spread != null && spread < -1.5) fearDir = 'up';
     const fearLabel =
         fearDir === 'down' ? '🔻 กลัวลง — คนแห่ซื้อ put กันความเสี่ยงขาลง'
         : fearDir === 'up' ? '🔺 ไล่ขึ้น — คนแห่ซื้อ call ฝั่งขึ้น'
+        : fearDir === 'unknown' ? '⚖️ ยังเทียบ skew ไม่ได้ (กำลังเก็บสถิติ)'
         : '⚖️ สองฝั่งพอๆ กัน';
 
     // --- term structure = scheduled-event premium in the front contract ---
@@ -163,8 +173,8 @@ export function buildMood(strategy, opts = {}) {
 
     // reasons, most important first
     if (event?.status === 'today') {
-        const hrs = Math.max(0, Math.round(event.hoursUntil));
-        reasons.push(`📅 วันนี้มีข่าว ${CODE_LABEL[event.code] || event.code} (อีก ${hrs} ชม.) — ห้าม fade`);
+        const when = event.hoursUntil < 0 ? 'เพิ่งออก ตลาดยังผันผวน' : `อีก ${Math.max(0, Math.round(event.hoursUntil))} ชม.`;
+        reasons.push(`📅 วันนี้มีข่าว ${CODE_LABEL[event.code] || event.code} (${when}) — ห้าม fade`);
     } else if (event?.status === 'tomorrow') {
         reasons.push(`📅 พรุ่งนี้มีข่าว ${CODE_LABEL[event.code] || event.code} — ระวังก่อนข่าว`);
     }
@@ -174,7 +184,7 @@ export function buildMood(strategy, opts = {}) {
     if (ivLevel === 'high') reasons.push('IV สูงกว่าปกติมาก = ตลาดรอมูฟใหญ่');
     else if (ivLevel === 'elevated') reasons.push('IV สูงกว่าปกติ');
     if (gammaPin?.state === 'loose') reasons.push('ไม่มี gamma ก้อนใหญ่ตรึงใกล้ → ราคามีที่ให้วิ่ง');
-    if (fearDir !== 'balanced' && (regimeTrending || ivLevel === 'high' || ivLevel === 'elevated' || event?.status === 'today')) {
+    if ((fearDir === 'down' || fearDir === 'up') && (regimeTrending || ivLevel === 'high' || ivLevel === 'elevated' || event?.status === 'today')) {
         reasons.push(fearDir === 'down' ? 'skew เอียงกลัวลง — ระวังไหลลง' : 'skew เอียงกลัวขึ้น — ระวังพุ่งขึ้น');
     }
 
