@@ -329,6 +329,36 @@ def detect_block(driver):
                   'request unsuccessful', 'reference #'):
             if m in low:
                 return m
+
+    # reCAPTCHA bot-gate — the SLOW killer. When CME's edge flags the IP it
+    # serves the full marketing homepage (title "... CME Group", >2000 chars so
+    # the short-page checks above all miss it) with reCAPTCHA embedded, INSTEAD
+    # of the SSO login form. The #user/#pwd fields we type into are absent, so
+    # login can never proceed — yet the URL is neither QuikStrike nor a tiny
+    # error page, so login_cme would otherwise poll the FULL max_wait (and
+    # _login_with_backoff would repeat that for every attempt: ~12 min wasted).
+    # Discriminator that won't trip on the REAL login form: a cmegroup.com page
+    # (not quikstrike, not the disclaimer) that pulls in reCAPTCHA but has NO
+    # login form. The genuine login.cmegroup.com page has #user, so it passes.
+    try:
+        url = (driver.current_url or '').lower()
+    except Exception:
+        url = ''
+    if 'cmegroup.com' in url and 'quikstrike' not in url and 'disclaimer' not in url:
+        try:
+            gated = driver.execute_script("""
+                var hasForm = !!(document.getElementById('user') ||
+                                 document.getElementById('pwd') ||
+                                 document.querySelector('input[type="password"]'));
+                var hasCaptcha = !!(document.querySelector(
+                    'script[src*="recaptcha"], .g-recaptcha, iframe[src*="recaptcha"]')
+                    || (typeof grecaptcha !== 'undefined'));
+                return !hasForm && hasCaptcha;
+            """)
+        except Exception:
+            gated = False
+        if gated:
+            return 'reCAPTCHA bot-gate (CME homepage, no login form)'
     return None
 
 
@@ -3323,7 +3353,7 @@ def scrape_asset(driver, asset_id, intraday_only=False):
 # MAIN
 # ============================================================
 
-def _login_with_backoff(driver, first_url, attempts=4):
+def _login_with_backoff(driver, first_url, attempts=3):
     """Reach QuikStrike, retrying on transient SSO failures and WAF blocks.
 
     Returns (driver, success). The returned driver may be a freshly recreated
@@ -3337,9 +3367,9 @@ def _login_with_backoff(driver, first_url, attempts=4):
     We apply both, with jitter. (If 403s persist, the real fix is routing the
     runner through a residential/mobile proxy — see README/notes.)
     """
-    backoffs = [30, 75, 150]  # seconds before attempts 2, 3, 4
+    backoffs = [20, 45]  # seconds before attempts 2, 3
     for attempt in range(1, attempts + 1):
-        if login_cme(driver, first_url, max_wait=120):
+        if login_cme(driver, first_url, max_wait=60):
             return driver, True
 
         blocked = detect_block(driver)
