@@ -60,18 +60,29 @@ jobs:
       continue-on-error: true
       run: |
         set -x
-        curl -fsSL https://pkg.cloudflarewarp.com/cloudflare-warp-ascii.gpg \
-          | sudo gpg --dearmor -o /usr/share/keyrings/cloudflare-warp-archive-keyring.gpg
-        echo "deb [signed-by=/usr/share/keyrings/cloudflare-warp-archive-keyring.gpg] https://pkg.cloudflarewarp.com/ $(lsb_release -cs) main" \
+        keyring=/usr/share/keyrings/cloudflare-warp-archive-keyring.gpg
+        repo_codename="$(lsb_release -cs)"
+
+        if ! curl -fsSL https://pkg.cloudflareclient.com/pubkey.gpg -o /tmp/cloudflare-warp-pubkey.gpg; then
+          echo "::warning::Could not download Cloudflare WARP package key; scraper runs on the direct datacenter IP"
+          exit 0
+        fi
+        if ! sudo gpg --yes --dearmor -o "$keyring" /tmp/cloudflare-warp-pubkey.gpg; then
+          echo "::warning::Could not install Cloudflare WARP package key; scraper runs on the direct datacenter IP"
+          exit 0
+        fi
+        echo "deb [signed-by=$keyring] https://pkg.cloudflareclient.com/ $repo_codename main" \
           | sudo tee /etc/apt/sources.list.d/cloudflare-client.list
-        sudo apt-get update -qq
-        sudo apt-get install -y cloudflare-warp
+        if ! sudo apt-get update -qq || ! sudo apt-get install -y cloudflare-warp; then
+          echo "::warning::Could not install Cloudflare WARP package; scraper runs on the direct datacenter IP"
+          exit 0
+        fi
         sudo systemctl enable --now warp-svc || sudo nohup warp-svc >/tmp/warp-svc.log 2>&1 &
         sleep 5
         # Register on the free tier (command name varies by warp-cli version)
         sudo warp-cli --accept-tos registration new 2>/dev/null \
           || sudo warp-cli --accept-tos register 2>/dev/null || true
-        sudo warp-cli --accept-tos mode proxy
+        sudo warp-cli --accept-tos mode proxy || true
         sudo warp-cli --accept-tos connect || true
         # Wait until the SOCKS proxy reports warp=on (remote DNS via --socks5-hostname)
         ok=""
