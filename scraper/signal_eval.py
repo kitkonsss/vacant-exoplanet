@@ -24,6 +24,8 @@ import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+from contract_roll import lead_yahoo_symbol
+
 if sys.stdout.encoding and sys.stdout.encoding.lower() not in ('utf-8', 'utf8'):
     sys.stdout.reconfigure(encoding='utf-8', errors='replace')
 
@@ -217,7 +219,10 @@ def run_asset(asset_id, cfg):
                  and (utcnow() - datetime.fromisoformat(s['ts'])).total_seconds() / 60 >= MIN_AGE_MIN]
     if open_sigs:
         oldest = min(datetime.fromisoformat(s['ts']) for s in open_sigs)
-        candles = fetch_candles(cfg['yahoo'], oldest)
+        # Score on the LEAD contract (the one price_watcher fired against), not
+        # Yahoo's pinned front month, so target/invalidation hits aren't judged
+        # against a series ~300 pts away post-roll.
+        candles = fetch_candles(lead_yahoo_symbol(asset_id), oldest)
         print(f'[EVAL:{asset_id}] {len(open_sigs)} open signal(s), {len(candles)} candles '
               f'since {oldest:%Y-%m-%d %H:%M}')
         if candles:

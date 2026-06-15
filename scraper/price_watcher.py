@@ -31,6 +31,8 @@ import urllib.request
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+from contract_roll import lead_yahoo_symbol
+
 # Windows consoles default to a legacy codepage that can't print emoji/Thai.
 if sys.stdout.encoding and sys.stdout.encoding.lower() not in ('utf-8', 'utf8'):
     sys.stdout.reconfigure(encoding='utf-8', errors='replace')
@@ -40,10 +42,14 @@ STATE_PATH = REPO_ROOT / 'data' / 'watcher_state.json'
 
 # Multi-asset: each asset watches its own strategy/signal-log files; the
 # dedupe state file is shared with asset-prefixed keys.
+# `yahoo` is the front-month reference symbol; the live price actually fetched
+# is the LEAD contract (lead_yahoo_symbol(id)), which rolls off the expiring
+# front month near quarterly expiry so alerts compare against the contract the
+# market is trading. `id` keys that roll lookup.
 ASSETS = {
-    'gc': {'subdir': '', 'label': 'GC', 'yahoo': 'GC=F', 'stooq': 'gc.f',
+    'gc': {'id': 'gc', 'subdir': '', 'label': 'GC', 'yahoo': 'GC=F', 'stooq': 'gc.f',
            'micro': 'MGC', 'micro_point': 10.0, 'full': 'GC', 'micro_per_full': 10},
-    'nq': {'subdir': 'nq', 'label': 'NQ', 'yahoo': 'NQ=F', 'stooq': 'nq.f',
+    'nq': {'id': 'nq', 'subdir': 'nq', 'label': 'NQ', 'yahoo': 'NQ=F', 'stooq': 'nq.f',
            'micro': 'MNQ', 'micro_point': 2.0, 'full': 'NQ', 'micro_per_full': 10},
 }
 # Back-compat for morning_brief.py imports (GC paths).
@@ -83,7 +89,7 @@ def fetch_price(cfg=None):
     """Live front-month price from yfinance (same source as quikstrike_scraper)."""
     import yfinance as yf
     cfg = cfg or ASSETS['gc']
-    ticker = yf.Ticker(cfg['yahoo'])
+    ticker = yf.Ticker(lead_yahoo_symbol(cfg['id']))
     price = None
     try:
         info = ticker.fast_info
@@ -455,7 +461,7 @@ def run_asset(asset_id, cfg, state, args):
         return 0
     # Confirm breakouts on the last completed 15m close (price override in
     # tests doubles as the close so simulations behave like before).
-    candle_close = args.price or fetch_last_closed_15m(cfg['yahoo'])
+    candle_close = args.price or fetch_last_closed_15m(lead_yahoo_symbol(cfg['id']))
     print(f"[WATCH:{asset_id}] price {price} | 15m close {candle_close} "
           f"| strategy age {round(age_h, 1)}h")
 

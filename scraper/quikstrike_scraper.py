@@ -36,6 +36,8 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException, NoSuchElementException, ElementClickInterceptedException
 from webdriver_manager.chrome import ChromeDriverManager
 
+from contract_roll import lead_yahoo_symbol, underlying_yahoo_symbol
+
 try:
     import yfinance as yf
     HAS_YFINANCE = True
@@ -1443,29 +1445,48 @@ def extract_header(driver):
     return ' '.join(raw.split())
 
 
-_price_cache = {}  # {asset_id: {'price': ..., 'ts': ...}}
+_price_cache = {}  # {yahoo_symbol: {'price': ..., 'ts': ...}}
 
-def get_futures_price(asset_id):
-    """Fetch futures price from yfinance for any asset (cached 60s)."""
+def _yf_last_price(symbol, min_price):
+    """Live last price for an explicit Yahoo symbol (cached 60s by symbol)."""
     global _price_cache
-    if not HAS_YFINANCE:
+    if not HAS_YFINANCE or not symbol:
         return None
-    profile = ASSET_PROFILES[asset_id]
     now = time.time()
-    cached = _price_cache.get(asset_id)
+    cached = _price_cache.get(symbol)
     if cached and (now - cached['ts']) < 60:
         return cached['price']
     try:
-        ticker = yf.Ticker(profile['yahoo_symbol'])
+        ticker = yf.Ticker(symbol)
         price = ticker.fast_info.get('lastPrice') or ticker.fast_info.get('last_price')
-        if price and price > profile['min_price']:
+        if price and price > min_price:
             price = round(float(price), 1)
-            _price_cache[asset_id] = {'price': price, 'ts': now}
-            print(f'[PRICE] {profile["short"]} futures from yfinance: ${price}')
+            _price_cache[symbol] = {'price': price, 'ts': now}
             return price
     except Exception as e:
-        print(f'[PRICE] yfinance error ({profile["short"]}): {e}')
+        print(f'[PRICE] yfinance error ({symbol}): {e}')
     return None
+
+
+def get_futures_price(asset_id):
+    """Live price of the asset's LEAD (most-active) contract — rolls off the
+    expiring front month on the standard calendar (see contract_roll), so it
+    tracks the contract the market is actually trading rather than Yahoo's
+    pinned `=F` front month."""
+    profile = ASSET_PROFILES[asset_id]
+    sym = lead_yahoo_symbol(asset_id)
+    price = _yf_last_price(sym, profile['min_price'])
+    if price:
+        print(f'[PRICE] {profile["short"]} futures from yfinance ({sym}): ${price}')
+    return price
+
+
+def ladder_underlying_price(header_line, asset_id):
+    """Live price of the future a specific option ladder is written on
+    (QuikStrike states it as 'Underlying Future: <Mon> <YYYY>'), so deferred
+    ladders on the next quarterly aren't anchored to the front-month price."""
+    return _yf_last_price(underlying_yahoo_symbol(header_line, asset_id),
+                          ASSET_PROFILES[asset_id]['min_price'])
 
 
 def _backadjust_rollovers(candles, threshold_pct):
@@ -1552,7 +1573,11 @@ def save_ohlc(asset_id, output_dir):
         print(f'[OHLC] yfinance not installed — skipping {asset_id}')
         return False
     profile = ASSET_PROFILES[asset_id]
-    symbol = profile['yahoo_symbol']
+    # Chart the LEAD contract (rolls off the expiring front month) so the
+    # candles sit at the same price level as the live marker and the strategy
+    # levels. Each lead contract is one clean series (no intra-contract roll
+    # gaps), so back-adjustment is a no-op but kept as a safety net.
+    symbol = lead_yahoo_symbol(asset_id)
     success = False
 
     # (interval, yfinance period, rollover threshold, output filename)
@@ -1606,10 +1631,16 @@ def chart_to_text(chart_data, header_line, asset_id='gc'):
     if not target:
         return None
 
-    # Append futures price to header (yfinance primary, plotLine fallback)
-    future_price = get_futures_price(asset_id)
+    # Append futures price to header. Prefer the price of THIS ladder's own
+    # underlying contract (parsed from the QuikStrike header) so deferred-expiry
+    # ladders written on the next quarterly future aren't mis-anchored to the
+    # front-month price. Fall back to QuikStrike's plotLine, then the lead
+    # contract's live price.
+    future_price = ladder_underlying_price(header_line, asset_id)
     if not future_price or future_price <= 0:
         future_price = target.get('futurePrice')
+    if not future_price or future_price <= 0:
+        future_price = get_futures_price(asset_id)
     if future_price and future_price > 0:
         header_line = f"{header_line} FutPrc: {future_price}"
 
