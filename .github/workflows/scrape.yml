@@ -8,8 +8,14 @@ on:
   #   full     — everything: Intraday + OI views, heatmap/gamma phase. Run a
   #              few times a day (OI/heatmaps only change once per CME day).
   #   intraday — light: only the Intraday Volume view per contract (the one
-  #              dataset that moves all day). Safe to run every 10 min.
+  #              dataset that moves all day).
   #              cron-job.org body: {"ref":"main","inputs":{"mode":"intraday"}}
+  #
+  # ⚠ FREQUENCY: while CME's Akamai is flagging the runner IP, hammering it
+  # every 10 min worsens the IP reputation. Until the egress fix (WARP below /
+  # residential proxy) is confirmed stable, set the cron-job.org interval to
+  # ~30-60 min for intraday and a few times/day for full. (Interval lives in
+  # cron-job.org, not here — this repo only exposes the manual dispatch.)
   workflow_dispatch:
     inputs:
       mode:
@@ -44,10 +50,54 @@ jobs:
         python -m pip install --upgrade pip
         pip install -r scraper/requirements.txt
 
+    - name: Set up Cloudflare WARP (free egress IP via SOCKS proxy)
+      # CME's Akamai edge flags the runner's Azure datacenter IP and serves a
+      # reCAPTCHA bot-gate instead of the SSO login form. WARP (free, no account)
+      # in proxy mode exposes a SOCKS5 proxy on 127.0.0.1:40000 that egresses via
+      # Cloudflare. We point ONLY Chrome at it (QS_PROXY) — git/pip/GitHub API
+      # stay on the normal network. If WARP fails to come up the scraper still
+      # runs direct (and fast-fails on the gate) rather than erroring here.
+      continue-on-error: true
+      run: |
+        set -x
+        curl -fsSL https://pkg.cloudflarewarp.com/cloudflare-warp-ascii.gpg \
+          | sudo gpg --dearmor -o /usr/share/keyrings/cloudflare-warp-archive-keyring.gpg
+        echo "deb [signed-by=/usr/share/keyrings/cloudflare-warp-archive-keyring.gpg] https://pkg.cloudflarewarp.com/ $(lsb_release -cs) main" \
+          | sudo tee /etc/apt/sources.list.d/cloudflare-client.list
+        sudo apt-get update -qq
+        sudo apt-get install -y cloudflare-warp
+        sudo systemctl enable --now warp-svc || sudo nohup warp-svc >/tmp/warp-svc.log 2>&1 &
+        sleep 5
+        # Register on the free tier (command name varies by warp-cli version)
+        sudo warp-cli --accept-tos registration new 2>/dev/null \
+          || sudo warp-cli --accept-tos register 2>/dev/null || true
+        sudo warp-cli --accept-tos mode proxy
+        sudo warp-cli --accept-tos connect || true
+        # Wait until the SOCKS proxy reports warp=on (remote DNS via --socks5-hostname)
+        ok=""
+        for i in $(seq 1 20); do
+          if curl -s --max-time 5 --socks5-hostname 127.0.0.1:40000 \
+               https://www.cloudflare.com/cdn-cgi/trace/ | grep -q "warp=on"; then
+            ok=1; break
+          fi
+          sleep 3
+        done
+        echo "--- egress check ---"
+        echo "direct:  $(curl -s --max-time 5 https://www.cloudflare.com/cdn-cgi/trace/ | grep -E '^ip=')"
+        echo "viaWARP: $(curl -s --max-time 5 --socks5-hostname 127.0.0.1:40000 https://www.cloudflare.com/cdn-cgi/trace/ | grep -E '^(ip|warp)=' | tr '\n' ' ')"
+        if [ -n "$ok" ]; then
+          echo "QS_PROXY=socks5://127.0.0.1:40000" >> "$GITHUB_ENV"
+          echo "WARP proxy ready — Chrome will egress through Cloudflare"
+        else
+          echo "::warning::WARP did not come up; scraper runs on the direct datacenter IP"
+        fi
+
     - name: Run Scraper
       env:
         CME_EMAIL: ${{ secrets.CME_EMAIL }}
         CME_PASSWORD: ${{ secrets.CME_PASSWORD }}
+        # QS_PROXY is exported into the environment by the WARP step above (via
+        # $GITHUB_ENV) only when the proxy verified healthy; unset = direct.
       run: |
         # Run from the scraper directory so relative paths work
         cd scraper

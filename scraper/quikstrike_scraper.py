@@ -134,6 +134,18 @@ def create_driver():
     options.add_argument('--headless=new')
     options.add_argument('--window-size=1920,1080')
 
+    # ── Optional outbound proxy ──
+    # CME's Akamai edge flags GitHub Actions' datacenter IPs and serves a
+    # reCAPTCHA bot-gate instead of the login form. Routing the BROWSER through
+    # a different egress (e.g. Cloudflare WARP's SOCKS proxy on 127.0.0.1:40000)
+    # can dodge that gate without a paid residential proxy. Set via QS_PROXY
+    # (socks5://host:port or http://host:port) so the workflow wires it in with
+    # no code change; empty = direct connection (local runs, etc.).
+    _proxy = os.environ.get('QS_PROXY', '').strip()
+    if _proxy:
+        options.add_argument(f'--proxy-server={_proxy}')
+        print(f'[PROXY] Browser egress via {_proxy}')
+
     # ── Stealth: reduce reCAPTCHA v3 bot-score ──
     # 1) Hide the biggest signal: navigator.webdriver = true
     options.add_argument('--disable-blink-features=AutomationControlled')
