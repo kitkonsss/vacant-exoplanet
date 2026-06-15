@@ -16,23 +16,33 @@ function thirdFriday(year, month) {
     return new Date(Date.UTC(year, month - 1, 1 + offset + 14));
 }
 
-// Map a front-month symbol to the LEAD (most-active) contract. Yahoo's `NQ=F`
-// stays pinned to the expiring front month until last trade, reading ~300 pts
-// below the contract liquidity has rolled to. NQ rolls quarterly (Mar/Jun/Sep/
-// Dec), liquidity rolls 8 days before the 3rd-Friday expiry. GC keeps `GC=F`
-// (Yahoo already tracks its liquid contract; inter-contract spread is tiny).
+// Map a front-month symbol to the LEAD (most-active) contract. Yahoo's `=F`
+// symbols stay pinned to the expiring front month until last trade — near a
+// quarterly expiry `NQ=F` can read ~300 pts below the contract liquidity has
+// rolled to. Two roll calendars (mirror of scraper/contract_roll.py):
+//   index (NQ): quarterly Mar/Jun/Sep/Dec, roll 8d before the 3rd-Friday expiry.
+//   gold (GC):  even months, roll ~6d before the 1st of the delivery month
+//               (≈ First Notice Day). Inter-contract spread is tiny so the
+//               approximation is harmless.
+const ROLL_CFG = {
+    'NQ=F': { root: 'NQ', suffix: '.CME', kind: 'index', months: [3, 6, 9, 12], buf: 8 },
+    'GC=F': { root: 'GC', suffix: '.CMX', kind: 'gold', months: [2, 4, 6, 8, 10, 12], buf: 6 },
+};
+
 function leadSymbol(front) {
-    if (front !== 'NQ=F') return front;
+    const cfg = ROLL_CFG[front];
+    if (!cfg) return front;
     const now = Date.now();
-    const ROLL_MS = 8 * 86400000;
     const y = new Date(now).getUTCFullYear();
-    const months = [3, 6, 9, 12];
-    const candidates = [...months.map((m) => [y, m]), ...months.map((m) => [y + 1, m])];
+    const candidates = [...cfg.months.map((m) => [y, m]), ...cfg.months.map((m) => [y + 1, m])];
     for (const [cy, cm] of candidates) {
-        if (now < thirdFriday(cy, cm).getTime() - ROLL_MS) {
+        const anchor = cfg.kind === 'gold'
+            ? Date.UTC(cy, cm - 1, 1) - cfg.buf * 86400000        // 1st of delivery month - buf
+            : thirdFriday(cy, cm).getTime() - cfg.buf * 86400000; // 3rd-Friday expiry - buf
+        if (now < anchor) {
             const letter = 'FGHJKMNQUVXZ'[cm - 1];
             const yy = String(cy % 100).padStart(2, '0');
-            return `NQ${letter}${yy}.CME`;
+            return `${cfg.root}${letter}${yy}${cfg.suffix}`;
         }
     }
     return front;

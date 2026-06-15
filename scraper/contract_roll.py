@@ -8,14 +8,16 @@ the price a trader actually watches) has already rolled to the next contract, so
 an asset to the Yahoo symbol of the contract liquidity has rolled to, on the
 standard calendar.
 
-NQ (CME equity-index futures) roll quarterly — Mar(H) Jun(M) Sep(U) Dec(Z),
-expiry = 3rd Friday of the contract month, liquidity rolls ~8 days before expiry.
+Two roll calendars, selected per asset by `kind`:
 
-GC (COMEX gold) has a messier bimonthly delivery calendar AND a tiny
-inter-contract spread (~0.1%), and Yahoo's `GC=F` already tracks the liquid
-contract — so for GC we keep `GC=F` and rely on the per-ladder underlying fix
-(underlying_yahoo_symbol) for internal consistency rather than a hand-rolled
-gold calendar that could pick the wrong month.
+  index (NQ) — quarterly Mar(H) Jun(M) Sep(U) Dec(Z); expiry = 3rd Friday of
+    the contract month; liquidity rolls ~8 days before expiry.
+
+  gold (GC)  — even months Feb(G) Apr(J) Jun(M) Aug(Q) Oct(V) Dec(Z); liquidity
+    rolls a few days before First Notice Day (≈ the last business day of the
+    month *preceding* the delivery month, since holding past FND risks
+    delivery). Approximated as the 1st of the delivery month minus a buffer —
+    precise enough given gold's ~0.1% inter-contract spread.
 """
 
 import re
@@ -28,14 +30,16 @@ MONTH_NUM = {'Jan': 1, 'Feb': 2, 'Mar': 3, 'Apr': 4, 'May': 5, 'Jun': 6,
              'Jul': 7, 'Aug': 8, 'Sep': 9, 'Oct': 10, 'Nov': 11, 'Dec': 12}
 
 # Per-asset roll config.
-#   months  : active contract months for explicit calendar rolling
-#             (None -> use Yahoo's front-month `=F` symbol as-is)
-#   suffix  : Yahoo exchange suffix for the explicit contract symbol
+#   kind             : 'index' (3rd-Friday expiry) or 'gold' (First Notice Day)
+#   months           : active contract months for the roll cycle
+#   suffix           : Yahoo exchange suffix for the explicit contract symbol
+#   roll_days_before : days before the roll anchor that liquidity moves on
+#   front            : Yahoo continuous symbol, used only as a last-resort fallback
 ROLL = {
-    'nq': {'front': 'NQ=F', 'root': 'NQ', 'suffix': '.CME',
+    'nq': {'front': 'NQ=F', 'root': 'NQ', 'suffix': '.CME', 'kind': 'index',
            'months': [3, 6, 9, 12], 'roll_days_before': 8},
-    'gc': {'front': 'GC=F', 'root': 'GC', 'suffix': '.CMX',
-           'months': None, 'roll_days_before': 8},
+    'gc': {'front': 'GC=F', 'root': 'GC', 'suffix': '.CMX', 'kind': 'gold',
+           'months': [2, 4, 6, 8, 10, 12], 'roll_days_before': 6},
 }
 
 
@@ -47,29 +51,33 @@ def third_friday(year, month):
     return first + timedelta(days=offset + 14)  # + two weeks -> third Friday
 
 
-def lead_contract(asset_id, today=None):
-    """(yahoo_symbol, month_letter, year, expiry_date) for the lead contract.
+def _roll_anchor(cfg, year, month):
+    """Date liquidity rolls OUT of the (year, month) contract."""
+    buffer = timedelta(days=cfg['roll_days_before'])
+    if cfg['kind'] == 'gold':
+        # A few days before First Notice Day (≈ last business day of the prior
+        # month); approximated as the 1st of the delivery month minus buffer.
+        return date(year, month, 1) - buffer
+    # index: a week-plus before the 3rd-Friday expiry.
+    return third_friday(year, month) - buffer
 
-    For non-rolled assets (GC) returns the front `=F` symbol with None metadata.
-    """
+
+def lead_contract(asset_id, today=None):
+    """(yahoo_symbol, month_letter, year, roll_anchor) for the lead contract."""
     cfg = ROLL.get(asset_id)
     today = today or date.today()
-    if not cfg:
-        return (f'{asset_id.upper()}=F', None, None, None)
-    if not cfg.get('months'):
-        return (cfg['front'], None, None, None)
+    if not cfg or not cfg.get('months'):
+        return (cfg['front'] if cfg else f'{asset_id.upper()}=F', None, None, None)
 
-    buffer = timedelta(days=cfg['roll_days_before'])
     # Candidate contracts in chronological order: this year's active months,
-    # then next year's. Pick the first whose (expiry - roll buffer) is still
-    # in the future — i.e. the one liquidity has not yet rolled out of.
+    # then next year's. Pick the first liquidity has not yet rolled out of.
     candidates = ([(today.year, m) for m in cfg['months']]
                   + [(today.year + 1, m) for m in cfg['months']])
     for cy, cm in candidates:
-        exp = third_friday(cy, cm)
-        if today < exp - buffer:
+        anchor = _roll_anchor(cfg, cy, cm)
+        if today < anchor:
             return (f"{cfg['root']}{MONTH_CODE[cm]}{cy % 100:02d}{cfg['suffix']}",
-                    MONTH_CODE[cm], cy, exp)
+                    MONTH_CODE[cm], cy, anchor)
     return (cfg['front'], None, None, None)
 
 
