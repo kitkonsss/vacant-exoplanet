@@ -1,12 +1,12 @@
 {
   "version": 2,
   "asset": "GC",
-  "generated_at": "2026-06-15T01:58:29+00:00",
+  "generated_at": "2026-06-16T00:16:33+00:00",
   "future_price": 4338.5,
   "directional_bias": {
     "label": "neutral",
-    "score": 3.2,
-    "confidence": "low"
+    "score": 9.4,
+    "confidence": "medium"
   },
   "components": {
     "positioning": {
@@ -15,12 +15,12 @@
       "weight": 0.45
     },
     "macro": {
-      "score": 1.0,
+      "score": 18.0,
       "label": "neutral",
       "weight": 0.35,
       "drivers": [
-        "real yield +5bp/5d \u2192 headwind",
-        "DXY -0.54%/5d \u2192 tailwind"
+        "real yield -2bp/5d \u2192 tailwind",
+        "DXY -0.39%/5d \u2192 tailwind"
       ]
     },
     "cot": {
@@ -34,52 +34,52 @@
     }
   },
   "agreement": {
-    "bullish_layers": 1,
-    "bearish_layers": 1,
-    "aligned": 1,
+    "bullish_layers": 2,
+    "bearish_layers": 0,
+    "aligned": 2,
     "total": 2
   },
   "regime": {
     "regime": "trending",
     "score": 2,
     "reasons": [
-      "price 8.8 SD from session VWAP",
-      "ATR/SD-band 4.0x",
-      "VIX 17.7"
+      "price 2.1 SD from session VWAP",
+      "ATR/SD-band 4.2x",
+      "VIX 16.2"
     ],
     "lead_playbook": "momentum"
   },
   "expected_range": {
     "method": "ATM IV from Vol2Vol smile (1-day move); ATR(14) kept as cross-check",
     "atr": 103.49,
-    "expected_move": 43.6,
-    "day_high_est": 4382.1,
-    "day_low_est": 4294.9,
+    "expected_move": 57.7,
+    "day_high_est": 4396.2,
+    "day_low_est": 4280.8,
     "note": "IV-based 1SD daily move (forward-looking). bands_1d are \u00b11/2/3 SD anchored at the scrape-time future price; ATR retained for regime detection.",
-    "atm_iv_pct": 23.82,
+    "atm_iv_pct": 25.42,
     "iv_basis_tenor": {
-      "contract_key": "current",
-      "symbol": "G3MM6",
-      "dte": 0.65
+      "contract_key": "tomorrow",
+      "symbol": "G3TM6",
+      "dte": 1.65
     },
     "bands_1d": {
-      "plus1": 4382.1,
-      "minus1": 4294.9,
-      "plus2": 4425.7,
-      "minus2": 4251.3,
-      "plus3": 4469.3,
-      "minus3": 4207.7
+      "plus1": 4396.2,
+      "minus1": 4280.8,
+      "plus2": 4454.0,
+      "minus2": 4223.0,
+      "plus3": 4511.7,
+      "minus3": 4165.3
     },
     "term_structure": {
-      "slope_volpts_short_minus_monthly": 0.85,
-      "shape": "flat",
-      "short_tenor": "G3MM6",
+      "slope_volpts_short_minus_monthly": 2.45,
+      "shape": "inverted (event/stress premium in front)",
+      "short_tenor": "G3TM6",
       "long_tenor": "OGQ6"
     },
     "skew": {
       "measured_at_pct": 2.0,
-      "put_skew_volpts": -0.68,
-      "call_skew_volpts": 2.65,
+      "put_skew_volpts": -0.12,
+      "call_skew_volpts": 1.69,
       "read": "call_skew_dominant (upside chase priced in)"
     }
   },
@@ -141,29 +141,29 @@
   },
   "vwap": {
     "daily": {
-      "vwap": 4225.35,
-      "sd": 12.79,
-      "n_candles": 21,
+      "vwap": 4312.55,
+      "sd": 12.45,
+      "n_candles": 24,
       "bands": {
-        "plus1": 4238.14,
-        "minus1": 4212.56,
-        "plus2": 4250.93,
-        "minus2": 4199.78,
-        "plus3": 4263.71,
-        "minus3": 4186.99
+        "plus1": 4325.0,
+        "minus1": 4300.11,
+        "plus2": 4337.44,
+        "minus2": 4287.66,
+        "plus3": 4349.89,
+        "minus3": 4275.22
       },
       "price_vs_band": "between +1sd and +2sd"
     },
-    "weekly_vwap": 4225.77,
+    "weekly_vwap": 4314.23,
     "price_vs_band": "between +1sd and +2sd",
-    "generated_at": "2026-06-14T23:48:58+00:00"
+    "generated_at": "2026-06-16T00:16:32+00:00"
   },
   "contrarian_flag": "none",
   "momentum": {
     "direction": "up",
     "bias": "neutral",
     "aligned_with_regime": true,
-    "trigger": "break above 4350 (confluence \u00d73)",
+    "trigger": "break above 4350 (confluence \u00d74)",
     "targets": [
       "4400"
     ],
@@ -171,33 +171,25 @@
     "rationale": "macro neutral; upside magnet"
   },
   "mean_reversion": {
-    "vwap": 4225.35,
+    "vwap": 4312.55,
     "aligned_with_regime": false,
     "zones": [
       {
-        "at": 4250.93,
+        "at": 4337.44,
         "band": "vwap_+2sd",
         "action": "fade short",
-        "target": 4225.35,
-        "invalidation": 4263.71,
-        "confluence_with": [
-          "gamma_wall",
-          "round_50",
-          "vwap_band"
-        ],
+        "target": 4312.55,
+        "invalidation": 4349.89,
+        "confluence_with": [],
         "confirm": null
       },
       {
-        "at": 4199.78,
+        "at": 4287.66,
         "band": "vwap_-2sd",
         "action": "fade long",
-        "target": 4225.35,
-        "invalidation": 4186.99,
-        "confluence_with": [
-          "gamma_wall",
-          "round_100",
-          "vwap_band"
-        ],
+        "target": 4312.55,
+        "invalidation": 4275.22,
+        "confluence_with": [],
         "confirm": null
       }
     ],
@@ -222,22 +214,22 @@
       },
       {
         "setup": "mr_fade_short",
-        "entry": 4250.93,
-        "stop": 4263.71,
-        "target": 4225.35,
-        "risk_points": 12.8,
+        "entry": 4337.44,
+        "stop": 4349.89,
+        "target": 4312.55,
+        "risk_points": 12.5,
         "rr": 2.0,
-        "mgc_contracts": 3,
+        "mgc_contracts": 4,
         "gc_contracts": 0
       },
       {
         "setup": "mr_fade_long",
-        "entry": 4199.78,
-        "stop": 4186.99,
-        "target": 4225.35,
-        "risk_points": 12.8,
+        "entry": 4287.66,
+        "stop": 4275.22,
+        "target": 4312.55,
+        "risk_points": 12.4,
         "rr": 2.0,
-        "mgc_contracts": 3,
+        "mgc_contracts": 4,
         "gc_contracts": 0
       }
     ],
@@ -245,14 +237,14 @@
       "max_losses_per_day": 2,
       "note": "2 stop-outs = -$1000; stop trading for the day. Size from the stop distance, never from conviction."
     },
-    "expected_move_context": 43.6
+    "expected_move_context": 57.7
   },
   "data_freshness": {
-    "strategy": "2026-06-15T01:58:29+00:00",
+    "strategy": "2026-06-16T00:16:33+00:00",
     "positioning": "2026-06-15T01:56:31Z",
-    "macro": "2026-06-14T23:48:58+00:00",
+    "macro": "2026-06-16T00:16:32+00:00",
     "cot_report_date": "2026-05-26",
-    "vwap": "2026-06-14T23:48:58+00:00"
+    "vwap": "2026-06-16T00:16:32+00:00"
   },
   "key_levels": {
     "supports": [
@@ -268,6 +260,24 @@
     "magnet": 4350.0
   },
   "confluence_levels": [
+    {
+      "level": 4350.0,
+      "sources": [
+        "gamma_wall",
+        "oi_build",
+        "round_50",
+        "vwap_band"
+      ],
+      "confluence": 4,
+      "side": "above",
+      "distance_points": 11.5,
+      "detail": [
+        "vwap_band:+3sd",
+        "gamma_wall:\u03b3118",
+        "oi_build:+207/call",
+        "round_50:\u00d750"
+      ]
+    },
     {
       "level": 4500.0,
       "sources": [
@@ -305,22 +315,6 @@
       ]
     },
     {
-      "level": 4350.0,
-      "sources": [
-        "gamma_wall",
-        "oi_build",
-        "round_50"
-      ],
-      "confluence": 3,
-      "side": "above",
-      "distance_points": 11.5,
-      "detail": [
-        "gamma_wall:\u03b3118",
-        "oi_build:+207/call",
-        "round_50:\u00d750"
-      ]
-    },
-    {
       "level": 4400.0,
       "sources": [
         "gamma_wall",
@@ -333,38 +327,6 @@
       "detail": [
         "gamma_wall:\u03b3173",
         "oi_wall:3787OI/mixed",
-        "round_100:\u00d7100"
-      ]
-    },
-    {
-      "level": 4250.0,
-      "sources": [
-        "gamma_wall",
-        "round_50",
-        "vwap_band"
-      ],
-      "confluence": 3,
-      "side": "below",
-      "distance_points": -88.5,
-      "detail": [
-        "gamma_wall:\u03b3109",
-        "round_50:\u00d750",
-        "vwap_band:+2sd"
-      ]
-    },
-    {
-      "level": 4200.0,
-      "sources": [
-        "gamma_wall",
-        "round_100",
-        "vwap_band"
-      ],
-      "confluence": 3,
-      "side": "below",
-      "distance_points": -138.5,
-      "detail": [
-        "vwap_band:-2sd",
-        "gamma_wall:\u03b3102",
         "round_100:\u00d7100"
       ]
     },
@@ -395,6 +357,34 @@
       "distance_points": -38.5,
       "detail": [
         "gamma_wall:\u03b3131",
+        "round_100:\u00d7100"
+      ]
+    },
+    {
+      "level": 4250.0,
+      "sources": [
+        "gamma_wall",
+        "round_50"
+      ],
+      "confluence": 2,
+      "side": "below",
+      "distance_points": -88.5,
+      "detail": [
+        "gamma_wall:\u03b3109",
+        "round_50:\u00d750"
+      ]
+    },
+    {
+      "level": 4200.0,
+      "sources": [
+        "gamma_wall",
+        "round_100"
+      ],
+      "confluence": 2,
+      "side": "below",
+      "distance_points": -138.5,
+      "detail": [
+        "gamma_wall:\u03b3102",
         "round_100:\u00d7100"
       ]
     }
@@ -497,7 +487,7 @@
       10.0,
       20.0
     ],
-    "sl_points": 10.9,
+    "sl_points": 14.4,
     "oi_threshold_p75": 2383,
     "levels": [
       {
@@ -512,9 +502,9 @@
         "role": "magnet",
         "action": "fade short",
         "target": 4300.0,
-        "invalidation": 4360.9,
-        "sl_points": 10.9,
-        "rr": 4.59,
+        "invalidation": 4364.43,
+        "sl_points": 14.4,
+        "rr": 3.47,
         "aligned": false
       },
       {
@@ -529,9 +519,9 @@
         "role": "magnet",
         "action": "fade short",
         "target": 4350.0,
-        "invalidation": 4410.9,
-        "sl_points": 10.9,
-        "rr": 4.59,
+        "invalidation": 4414.43,
+        "sl_points": 14.4,
+        "rr": 3.47,
         "aligned": false
       },
       {
@@ -546,9 +536,9 @@
         "role": "magnet",
         "action": "fade short",
         "target": 4450.0,
-        "invalidation": 4510.9,
-        "sl_points": 10.9,
-        "rr": 4.59,
+        "invalidation": 4514.43,
+        "sl_points": 14.4,
+        "rr": 3.47,
         "aligned": false
       },
       {
@@ -563,9 +553,9 @@
         "role": "resistance",
         "action": "fade long",
         "target": 4350.0,
-        "invalidation": 4289.1,
-        "sl_points": 10.9,
-        "rr": 4.59,
+        "invalidation": 4285.57,
+        "sl_points": 14.4,
+        "rr": 3.47,
         "aligned": true
       },
       {
@@ -580,9 +570,9 @@
         "role": "support",
         "action": "fade long",
         "target": 4300.0,
-        "invalidation": 4239.1,
-        "sl_points": 10.9,
-        "rr": 4.59,
+        "invalidation": 4235.57,
+        "sl_points": 14.4,
+        "rr": 3.47,
         "aligned": true
       },
       {
@@ -597,9 +587,9 @@
         "role": "support",
         "action": "fade long",
         "target": 4250.0,
-        "invalidation": 4189.1,
-        "sl_points": 10.9,
-        "rr": 4.59,
+        "invalidation": 4185.57,
+        "sl_points": 14.4,
+        "rr": 3.47,
         "aligned": true
       }
     ],
@@ -616,9 +606,9 @@
         "role": "support",
         "action": "fade long",
         "target": 4050.0,
-        "invalidation": 3989.1,
-        "sl_points": 10.9,
-        "rr": 4.59,
+        "invalidation": 3985.57,
+        "sl_points": 14.4,
+        "rr": 3.47,
         "aligned": true
       },
       {
@@ -633,9 +623,9 @@
         "role": "support",
         "action": "fade long",
         "target": 4100.0,
-        "invalidation": 4039.1,
-        "sl_points": 10.9,
-        "rr": 4.59,
+        "invalidation": 4035.57,
+        "sl_points": 14.4,
+        "rr": 3.47,
         "aligned": true
       },
       {
@@ -650,9 +640,9 @@
         "role": "support",
         "action": "fade long",
         "target": 4150.0,
-        "invalidation": 4089.1,
-        "sl_points": 10.9,
-        "rr": 4.59,
+        "invalidation": 4085.57,
+        "sl_points": 14.4,
+        "rr": 3.47,
         "aligned": true
       },
       {
@@ -667,9 +657,9 @@
         "role": "support",
         "action": "fade long",
         "target": 4200.0,
-        "invalidation": 4139.1,
-        "sl_points": 10.9,
-        "rr": 4.59,
+        "invalidation": 4135.57,
+        "sl_points": 14.4,
+        "rr": 3.47,
         "aligned": true
       },
       {
@@ -684,9 +674,9 @@
         "role": "support",
         "action": "fade long",
         "target": 4250.0,
-        "invalidation": 4189.1,
-        "sl_points": 10.9,
-        "rr": 4.59,
+        "invalidation": 4185.57,
+        "sl_points": 14.4,
+        "rr": 3.47,
         "aligned": true
       },
       {
@@ -701,9 +691,9 @@
         "role": "support",
         "action": "fade long",
         "target": 4300.0,
-        "invalidation": 4239.1,
-        "sl_points": 10.9,
-        "rr": 4.59,
+        "invalidation": 4235.57,
+        "sl_points": 14.4,
+        "rr": 3.47,
         "aligned": true
       },
       {
@@ -718,9 +708,9 @@
         "role": "resistance",
         "action": "fade long",
         "target": 4350.0,
-        "invalidation": 4289.1,
-        "sl_points": 10.9,
-        "rr": 4.59,
+        "invalidation": 4285.57,
+        "sl_points": 14.4,
+        "rr": 3.47,
         "aligned": true
       },
       {
@@ -735,9 +725,9 @@
         "role": "magnet",
         "action": "fade short",
         "target": 4300.0,
-        "invalidation": 4360.9,
-        "sl_points": 10.9,
-        "rr": 4.59,
+        "invalidation": 4364.43,
+        "sl_points": 14.4,
+        "rr": 3.47,
         "aligned": false
       },
       {
@@ -752,9 +742,9 @@
         "role": "magnet",
         "action": "fade short",
         "target": 4350.0,
-        "invalidation": 4410.9,
-        "sl_points": 10.9,
-        "rr": 4.59,
+        "invalidation": 4414.43,
+        "sl_points": 14.4,
+        "rr": 3.47,
         "aligned": false
       },
       {
@@ -769,9 +759,9 @@
         "role": "resistance",
         "action": "fade short",
         "target": 4400.0,
-        "invalidation": 4460.9,
-        "sl_points": 10.9,
-        "rr": 4.59,
+        "invalidation": 4464.43,
+        "sl_points": 14.4,
+        "rr": 3.47,
         "aligned": false
       },
       {
@@ -786,9 +776,9 @@
         "role": "magnet",
         "action": "fade short",
         "target": 4450.0,
-        "invalidation": 4510.9,
-        "sl_points": 10.9,
-        "rr": 4.59,
+        "invalidation": 4514.43,
+        "sl_points": 14.4,
+        "rr": 3.47,
         "aligned": false
       },
       {
@@ -803,9 +793,9 @@
         "role": "support",
         "action": "fade short",
         "target": 4500.0,
-        "invalidation": 4560.9,
-        "sl_points": 10.9,
-        "rr": 4.59,
+        "invalidation": 4564.43,
+        "sl_points": 14.4,
+        "rr": 3.47,
         "aligned": false
       },
       {
@@ -820,9 +810,9 @@
         "role": "resistance",
         "action": "fade short",
         "target": 4550.0,
-        "invalidation": 4610.9,
-        "sl_points": 10.9,
-        "rr": 4.59,
+        "invalidation": 4614.43,
+        "sl_points": 14.4,
+        "rr": 3.47,
         "aligned": false
       },
       {
@@ -837,13 +827,13 @@
         "role": "resistance",
         "action": "fade short",
         "target": 4600.0,
-        "invalidation": 4660.9,
-        "sl_points": 10.9,
-        "rr": 4.59,
+        "invalidation": 4664.43,
+        "sl_points": 14.4,
+        "rr": 3.47,
         "aligned": false
       }
     ],
-    "note": "Round levels every 50 pts whose \u00b15-pt OI window is in the top quartile of all strike windows in range. Fade at touch, target the next round (50 pts), SL 11 pts (0.25x expected move clamped to 10-20). Edge is unproven until the round_wall scorecard verdict says otherwise."
+    "note": "Round levels every 50 pts whose \u00b15-pt OI window is in the top quartile of all strike windows in range. Fade at touch, target the next round (50 pts), SL 14 pts (0.25x expected move clamped to 10-20). Edge is unproven until the round_wall scorecard verdict says otherwise."
   },
   "heatmap_contract_flow": {
     "method": "latest OI heatmap build-up: newest non-null date minus previous non-null date",
@@ -1631,19 +1621,19 @@
     "gamma_magnet": "4000 (\u03b3197)",
     "upside_limit": "first 4350 (\u03b3118)",
     "downside_limit": "first 4305 (\u03b353); major 4300 (\u03b3131)",
-    "confluence_focus": "4500 (\u00d74: gamma_wall, oi_build, oi_wall, round_100)",
+    "confluence_focus": "4350 (\u00d74: gamma_wall, oi_build, round_50, vwap_band)",
     "nearest_wall_band": {
       "support": 4325.0,
       "resistance": 4345.0
     },
     "how_to_use": "Heatmap build/magnet = likely destination; gamma 1pct first wall = speed bump, major wall = real cap; confluence levels (\u22652 sources) are the highest-conviction strikes."
   },
-  "macro_context": "Macro neutral (+1): real yield +5bp/5d \u2192 headwind; DXY -0.54%/5d \u2192 tailwind",
+  "macro_context": "Macro neutral (+18): real yield -2bp/5d \u2192 tailwind; DXY -0.39%/5d \u2192 tailwind",
   "cot_context": "MM net long (+97,446, subdued) \u2192 momentum bullish; commercial net change in-line (net +5,863/wk, z=0.4) \u2192 no smart-money edge.",
   "scenarios": [
     {
       "bias": "upside",
-      "trigger": "sustained move above 4350 (confluence \u00d73)",
+      "trigger": "sustained move above 4350 (confluence \u00d74)",
       "then": "path toward 4400",
       "invalidation": "back below 4300"
     },
