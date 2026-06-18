@@ -278,6 +278,7 @@
                         data={currentHeatmap}
                         loading={heatmapLoading}
                         onChangeContract={onHeatmapContract}
+                        showChangeToggle={true}
                     />
                 {:else if activeTab === 'gamma'}
                     <HeatmapView
