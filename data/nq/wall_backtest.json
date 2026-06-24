@@ -1,10 +1,10 @@
 {
   "asset": "NQ",
-  "generated_at": "2026-06-24T04:06:34+00:00",
+  "generated_at": "2026-06-24T07:06:16+00:00",
   "days_evaluated": 12,
   "date_range": [
-    "2026-06-04",
-    "2026-06-22"
+    "2026-06-05",
+    "2026-06-23"
   ],
   "params": {
     "tolerance_points": 25.0,
@@ -12,47 +12,47 @@
     "top_n_walls": 5
   },
   "touch": {
-    "n_wall_days": 23,
-    "touched": 14,
-    "rate": 0.609,
+    "n_wall_days": 24,
+    "touched": 12,
+    "rate": 0.5,
     "ci95": [
-      0.408,
-      0.778
+      0.314,
+      0.686
     ]
   },
   "respect_given_touch": {
-    "n_touches": 14,
-    "respected": 6,
-    "rate": 0.429,
+    "n_touches": 12,
+    "respected": 4,
+    "rate": 0.333,
     "ci95": [
-      0.214,
-      0.674
+      0.138,
+      0.609
     ],
     "meaning": "price reached the nearest top-5 OI wall and failed to close beyond it (the fade-at-wall stat)"
   },
   "break_given_touch": {
-    "rate": 0.571
+    "rate": 0.667
   },
   "magnet_pull": {
     "n": 11,
-    "hits": 4,
-    "rate": 0.364,
+    "hits": 5,
+    "rate": 0.455,
     "ci95": [
-      0.152,
-      0.646
+      0.213,
+      0.72
     ],
     "meaning": "next close moved toward the single biggest OI pile"
   },
   "round_wall_fade": {
     "round_step": 100,
     "n_wall_sides": 24,
-    "touched": 15,
-    "touch_rate": 0.625,
-    "respected": 4,
-    "respect_rate": 0.267,
+    "touched": 17,
+    "touch_rate": 0.708,
+    "respected": 5,
+    "respect_rate": 0.294,
     "respect_ci95": [
-      0.109,
-      0.52
+      0.133,
+      0.531
     ],
     "meaning": "nearest round number (every 100 pts) holding top-quartile OI in its \u00b1tol window \u2014 touched next day and failed to close beyond it (the trader's round-to-round fade hypothesis)"
   },
@@ -63,32 +63,9 @@
   ],
   "daily_records": [
     {
-      "date": "2026-06-04",
-      "close": 30488.25,
-      "next": "2026-06-05",
-      "below": {
-        "wall": 30000.0,
-        "touched": true,
-        "respected": false
-      },
-      "round_walls": [
-        {
-          "wall": 30000.0,
-          "side": "below",
-          "touched": true,
-          "respected": false
-        }
-      ]
-    },
-    {
       "date": "2026-06-05",
       "close": 29026.5,
       "next": "2026-06-08",
-      "above": {
-        "wall": 29450.0,
-        "touched": true,
-        "respected": true
-      },
       "below": {
         "wall": 29000.0,
         "touched": true,
@@ -114,11 +91,17 @@
       "close": 29454.75,
       "next": "2026-06-09",
       "below": {
-        "wall": 29000.0,
+        "wall": 29450.0,
         "touched": true,
-        "respected": true
+        "respected": false
       },
       "round_walls": [
+        {
+          "wall": 29500.0,
+          "side": "above",
+          "touched": true,
+          "respected": true
+        },
         {
           "wall": 29400.0,
           "side": "below",
@@ -178,6 +161,11 @@
       "date": "2026-06-11",
       "close": 29464.75,
       "next": "2026-06-12",
+      "below": {
+        "wall": 29450.0,
+        "touched": true,
+        "respected": true
+      },
       "round_walls": [
         {
           "wall": 29500.0,
@@ -198,7 +186,7 @@
       "close": 29662.0,
       "next": "2026-06-15",
       "above": {
-        "wall": 30500.0,
+        "wall": 30000.0,
         "touched": true,
         "respected": false
       },
@@ -237,7 +225,15 @@
         "wall": 30000.0,
         "touched": true,
         "respected": true
-      }
+      },
+      "round_walls": [
+        {
+          "wall": 29900.0,
+          "side": "below",
+          "touched": true,
+          "respected": false
+        }
+      ]
     },
     {
       "date": "2026-06-17",
@@ -250,7 +246,7 @@
       },
       "round_walls": [
         {
-          "wall": 30000.0,
+          "wall": 29800.0,
           "side": "above",
           "touched": true,
           "respected": false
@@ -261,14 +257,9 @@
       "date": "2026-06-18",
       "close": 30263.349609375,
       "next": "2026-06-22",
-      "above": {
-        "wall": 30300.0,
-        "touched": true,
-        "respected": false
-      },
       "round_walls": [
         {
-          "wall": 30300.0,
+          "wall": 30500.0,
           "side": "above",
           "touched": true,
           "respected": false
@@ -279,28 +270,41 @@
       "date": "2026-06-22",
       "close": 30653.5,
       "next": "2026-06-23",
-      "above": {
-        "wall": 30700.0,
-        "touched": true,
-        "respected": true
-      },
       "below": {
-        "wall": 30600.0,
+        "wall": 30500.0,
         "touched": true,
         "respected": false
       },
       "round_walls": [
         {
-          "wall": 30700.0,
-          "side": "above",
-          "touched": true,
-          "respected": true
-        },
-        {
-          "wall": 30600.0,
+          "wall": 30500.0,
           "side": "below",
           "touched": true,
           "respected": false
+        }
+      ]
+    },
+    {
+      "date": "2026-06-23",
+      "close": 29666.0,
+      "next": "2026-06-24",
+      "above": {
+        "wall": 29800.0,
+        "touched": true,
+        "respected": false
+      },
+      "round_walls": [
+        {
+          "wall": 29700.0,
+          "side": "above",
+          "touched": true,
+          "respected": false
+        },
+        {
+          "wall": 29600.0,
+          "side": "below",
+          "touched": true,
+          "respected": true
         }
       ]
     }
