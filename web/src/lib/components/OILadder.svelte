@@ -21,6 +21,7 @@
 
     // ascending strike → left-to-right on the X axis
     const sorted = $derived([...(positionMap || [])].sort((a, b) => a.strike - b.strike));
+    const sortedStrikes = $derived(sorted.map((l) => Number(l.strike)).filter((s) => Number.isFinite(s)));
 
     function callTotal(l) {
         return (l.call_oi || 0) + (l.call_volume || 0);
@@ -48,27 +49,58 @@
         return isCallWall || isPutWall;
     }
 
-    // future-price marker as a % across the evenly-spaced strike columns
-    // (interpolated between the centres of the two bracketing strikes)
+    function medianStep(values) {
+        const diffs = [];
+        for (let i = 1; i < values.length; i++) {
+            const d = values[i] - values[i - 1];
+            if (d > 0) diffs.push(d);
+        }
+        if (!diffs.length) return 1;
+        diffs.sort((a, b) => a - b);
+        return diffs[Math.floor(diffs.length / 2)] || 1;
+    }
+
+    const strikeDomain = $derived.by(() => {
+        if (!sortedStrikes.length) return null;
+        let lo = Math.min(...sortedStrikes);
+        let hi = Math.max(...sortedStrikes);
+        const step = medianStep(sortedStrikes);
+        if (lo === hi) {
+            lo -= step;
+            hi += step;
+        }
+        const pad = Math.max(step * 0.5, (hi - lo) * 0.01);
+        return { lo: lo - pad, hi: hi + pad };
+    });
+
+    // CME/QuikStrike uses strike as a continuous x-axis, not an equal-width
+    // category column per wall. Keep every overlay on that same strike scale.
     function strikePos(level, clamp = false) {
-        const n = sorted.length;
-        if (!n || level == null || !Number.isFinite(level)) return null;
-        if (n === 1) return 50;
-        const p = level;
-        if (p < sorted[0].strike) return clamp ? (0.5 / n) * 100 : null;
-        if (p > sorted[n - 1].strike) return clamp ? ((n - 0.5) / n) * 100 : null;
-        if (p === sorted[0].strike) return (0.5 / n) * 100;
-        if (p === sorted[n - 1].strike) return ((n - 0.5) / n) * 100;
-        for (let i = 0; i < n - 1; i++) {
-            const a = sorted[i].strike;
-            const b = sorted[i + 1].strike;
-            if (p >= a && p <= b) {
-                const frac = b === a ? 0 : (p - a) / (b - a);
-                return ((i + 0.5 + frac) / n) * 100;
+        if (!strikeDomain || level == null || !Number.isFinite(level)) return null;
+        const span = strikeDomain.hi - strikeDomain.lo;
+        if (span <= 0) return null;
+        const x = ((level - strikeDomain.lo) / span) * 100;
+        if (x < 0) return clamp ? 0 : null;
+        if (x > 100) return clamp ? 100 : null;
+        return x;
+    }
+
+    const xLabels = $derived.by(() => {
+        const out = [];
+        const minGap = compact ? 8 : 3.6;
+        let lastShownX = -Infinity;
+        for (let i = 0; i < sorted.length; i++) {
+            const lv = sorted[i];
+            const x = strikePos(lv.strike, true);
+            if (x == null) continue;
+            const important = i === 0 || i === sorted.length - 1 || isKey(lv);
+            if (important || x - lastShownX >= minGap) {
+                out.push({ lv, i, x });
+                lastShownX = x;
             }
         }
-        return null;
-    }
+        return out;
+    });
 
     const pricePos = $derived.by(() => {
         return strikePos(futurePrice, true);
@@ -103,10 +135,10 @@
         return sd.side === 'minus' ? '38px' : '14px';
     }
 
-    // --- per-strike IV smile overlay (from OIData Vol Settle), aligned to the
-    // same strike scale as the bars. Use every visible raw IV strike, not only
-    // strikes that have an OI wall, then render the curve as a monotone cubic
-    // spline so it reads closer to QuikStrike without inventing extra extrema.
+    // --- per-strike IV smile overlay (from OIData Vol Settle).
+    // QuikStrike renders a fitted Vol Settle smile over a continuous strike axis.
+    // Fit a low-degree polynomial to the visible raw IV strikes, then sample it
+    // densely so the plotted line reads as one smooth smile instead of point joins.
     const IV_COLOR = '#c084fc';
     const ivPoints = $derived.by(() => {
         if (!showIv || !ivByStrike) return [];
@@ -121,9 +153,120 @@
         }
         return pts.sort((a, b) => a.strike - b.strike);
     });
+    function pathNum(v) {
+        return Number.isFinite(v) ? v.toFixed(2) : '0.00';
+    }
+
+    function solveLinearSystem(matrix, vector) {
+        const n = vector.length;
+        const a = matrix.map((row, i) => [...row, vector[i]]);
+        for (let col = 0; col < n; col++) {
+            let pivot = col;
+            for (let row = col + 1; row < n; row++) {
+                if (Math.abs(a[row][col]) > Math.abs(a[pivot][col])) pivot = row;
+            }
+            if (Math.abs(a[pivot][col]) < 1e-10) return null;
+            if (pivot !== col) [a[pivot], a[col]] = [a[col], a[pivot]];
+
+            const divisor = a[col][col];
+            for (let c = col; c <= n; c++) a[col][c] /= divisor;
+            for (let row = 0; row < n; row++) {
+                if (row === col) continue;
+                const factor = a[row][col];
+                for (let c = col; c <= n; c++) a[row][c] -= factor * a[col][c];
+            }
+        }
+        return a.map((row) => row[n]);
+    }
+
+    function fitPolynomial(points, degree, center, scale) {
+        const order = degree + 1;
+        const xtx = Array.from({ length: order }, () => Array(order).fill(0));
+        const xty = Array(order).fill(0);
+
+        for (const p of points) {
+            const t = (p.strike - center) / scale;
+            const powers = [1];
+            for (let i = 1; i < order; i++) powers[i] = powers[i - 1] * t;
+            for (let r = 0; r < order; r++) {
+                xty[r] += powers[r] * p.iv;
+                for (let c = 0; c < order; c++) xtx[r][c] += powers[r] * powers[c];
+            }
+        }
+
+        // Tiny ridge keeps the matrix stable when visible strikes are clustered.
+        for (let i = 0; i < order; i++) xtx[i][i] += 1e-8;
+        const coeffs = solveLinearSystem(xtx, xty);
+        if (!coeffs) return null;
+        return (strike) => {
+            const t = (strike - center) / scale;
+            let y = 0;
+            let power = 1;
+            for (const c of coeffs) {
+                y += c * power;
+                power *= t;
+            }
+            return y;
+        };
+    }
+
+    function linearIv(points, strike) {
+        if (strike <= points[0].strike) return points[0].iv;
+        if (strike >= points[points.length - 1].strike) return points[points.length - 1].iv;
+        for (let i = 0; i < points.length - 1; i++) {
+            const a = points[i];
+            const b = points[i + 1];
+            if (strike >= a.strike && strike <= b.strike) {
+                const f = b.strike === a.strike ? 0 : (strike - a.strike) / (b.strike - a.strike);
+                return a.iv + (b.iv - a.iv) * f;
+            }
+        }
+        return points[0].iv;
+    }
+
+    function buildSmileModel(points) {
+        if (points.length < 2 || !strikeDomain) return null;
+        const rawLo = Math.min(...points.map((p) => p.iv));
+        const rawHi = Math.max(...points.map((p) => p.iv));
+        const pad = Math.max((rawHi - rawLo) * 0.08, 0.35);
+        const minStrike = points[0].strike;
+        const maxStrike = points[points.length - 1].strike;
+        const center = Number.isFinite(futurePrice) ? futurePrice : (strikeDomain.lo + strikeDomain.hi) / 2;
+        const scale = Math.max((strikeDomain.hi - strikeDomain.lo) / 2, 1);
+        const degree = Math.min(points.length - 1, points.length >= 7 ? 3 : points.length >= 4 ? 2 : 1);
+        const fitted = degree >= 2 ? fitPolynomial(points, degree, center, scale) : null;
+        const evalIv = fitted || ((strike) => linearIv(points, strike));
+        return {
+            minStrike,
+            maxStrike,
+            eval(strike) {
+                const iv = evalIv(strike);
+                return Math.min(rawHi + pad, Math.max(rawLo - pad, iv));
+            }
+        };
+    }
+
+    const ivModel = $derived.by(() => buildSmileModel(ivPoints));
+    const ivCurveSamples = $derived.by(() => {
+        if (!ivModel || !strikeDomain) return [];
+        const start = Math.max(ivModel.minStrike, strikeDomain.lo);
+        const end = Math.min(ivModel.maxStrike, strikeDomain.hi);
+        if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return [];
+
+        const count = 140;
+        const out = [];
+        for (let i = 0; i < count; i++) {
+            const strike = start + ((end - start) * i) / (count - 1);
+            const x = strikePos(strike, false);
+            const iv = ivModel.eval(strike);
+            if (x != null && Number.isFinite(iv)) out.push({ strike, iv, x });
+        }
+        return out;
+    });
+
     const ivRange = $derived.by(() => {
-        if (ivPoints.length < 2) return null;
-        const vs = ivPoints.map((p) => p.iv);
+        if (ivCurveSamples.length < 2) return null;
+        const vs = ivCurveSamples.map((p) => p.iv);
         let lo = Math.min(...vs);
         let hi = Math.max(...vs);
         if (hi - lo < 1) { hi += 0.5; lo -= 0.5; } // avoid a flat divide-by-zero
@@ -135,66 +278,24 @@
         const f = (iv - ivRange.lo) / (ivRange.hi - ivRange.lo);
         return 8 + (1 - f) * 70;
     }
-    function pathNum(v) {
-        return Number.isFinite(v) ? v.toFixed(2) : '0.00';
-    }
-    function endpointTangent(h0, h1, d0, d1) {
-        let m = ((2 * h0 + h1) * d0 - h0 * d1) / (h0 + h1);
-        if (m * d0 <= 0) return 0;
-        if (d0 * d1 < 0 && Math.abs(m) > Math.abs(3 * d0)) return 3 * d0;
-        return m;
-    }
     function ivCurvePath(points) {
-        const pts = points
-            .map((p) => ({ x: p.x, y: ivY(p.iv) }))
-            .filter((p) => Number.isFinite(p.x) && Number.isFinite(p.y))
-            .sort((a, b) => a.x - b.x);
-
-        if (pts.length < 2) return '';
-        let d = `M ${pathNum(pts[0].x)} ${pathNum(pts[0].y)}`;
-        if (pts.length === 2) {
-            return `${d} L ${pathNum(pts[1].x)} ${pathNum(pts[1].y)}`;
-        }
-
-        const n = pts.length;
-        const h = [];
-        const slope = [];
-        for (let i = 0; i < n - 1; i++) {
-            h[i] = pts[i + 1].x - pts[i].x;
-            slope[i] = h[i] === 0 ? 0 : (pts[i + 1].y - pts[i].y) / h[i];
-        }
-
-        const m = Array(n).fill(0);
-        m[0] = endpointTangent(h[0], h[1], slope[0], slope[1]);
-        m[n - 1] = endpointTangent(h[n - 2], h[n - 3], slope[n - 2], slope[n - 3]);
-        for (let i = 1; i < n - 1; i++) {
-            if (slope[i - 1] * slope[i] <= 0) {
-                m[i] = 0;
-            } else {
-                const w1 = 2 * h[i] + h[i - 1];
-                const w2 = h[i] + 2 * h[i - 1];
-                m[i] = (w1 + w2) / (w1 / slope[i - 1] + w2 / slope[i]);
-            }
-        }
-
-        for (let i = 0; i < n - 1; i++) {
-            if (h[i] <= 0) continue;
-            const c1x = pts[i].x + h[i] / 3;
-            const c1y = pts[i].y + (m[i] * h[i]) / 3;
-            const c2x = pts[i + 1].x - h[i] / 3;
-            const c2y = pts[i + 1].y - (m[i + 1] * h[i]) / 3;
-            d += ` C ${pathNum(c1x)} ${pathNum(c1y)} ${pathNum(c2x)} ${pathNum(c2y)} ${pathNum(pts[i + 1].x)} ${pathNum(pts[i + 1].y)}`;
-        }
-        return d;
+        return points
+            .map((p, i) => `${i === 0 ? 'M' : 'L'} ${pathNum(p.x)} ${pathNum(ivY(p.iv))}`)
+            .join(' ');
     }
-    const ivPath = $derived(ivCurvePath(ivPoints));
-    const ivShown = $derived(showIv && ivPoints.length >= 2 && ivRange != null);
+    const ivPath = $derived(ivCurvePath(ivCurveSamples));
+    const ivShown = $derived(showIv && ivCurveSamples.length >= 2 && ivRange != null);
 
     let hovered = $state(null);
 
     const chartHeight = $derived(compact ? 160 : 230);
     const barMax = $derived(compact ? '12px' : '18px');
     const totalBarMax = $derived(compact ? '20px' : '30px');
+    const barClusterWidth = $derived(
+        mode === 'total'
+            ? (compact ? 'clamp(14px, 2vw, 22px)' : 'clamp(16px, 1.8vw, 30px)')
+            : (compact ? 'clamp(18px, 3vw, 28px)' : 'clamp(20px, 2.4vw, 34px)')
+    );
     const labelSize = $derived(compact ? 'text-[8px]' : 'text-[9px]');
 
     const TONES = {
@@ -209,13 +310,13 @@
     {@const v = vol || 0}
     {@const total = o + v}
     <div
-        class="flex h-full flex-col items-center justify-end"
+        class="flex h-full min-w-0 w-full flex-col items-center justify-end"
         style={`max-width:${tone === 'total' ? totalBarMax : barMax}`}
     >
         {#if total > 0}
             <!-- contract count for this bar (OI + intraday volume), vertical so it fits the thin column -->
             <span
-                class={`mb-0.5 font-mono font-semibold leading-none tabular-nums text-foreground/75 [writing-mode:vertical-rl] rotate-180 ${compact ? 'text-[8px]' : 'text-[10px]'}`}
+                class={`mb-0.5 hidden font-mono font-semibold leading-none tabular-nums text-foreground/75 [writing-mode:vertical-rl] rotate-180 sm:inline ${compact ? 'text-[8px]' : 'text-[10px]'}`}
             >{fmtK(total)}</span>
         {/if}
         <div class="flex w-full flex-col overflow-hidden rounded-t-sm" style={`height:${hPct(total)}%`}>
@@ -362,37 +463,42 @@
             {/if}
 
             <!-- grouped bars -->
-            <div class="absolute inset-0 flex items-end">
+            <div class="absolute inset-0">
                 {#each sorted as lv, i (lv.strike + '-' + i)}
-                    <button
-                        type="button"
-                        class={`group flex h-full flex-1 items-end justify-center gap-px p-0 ${hovered === i ? 'bg-surface-elevated/60' : ''}`}
-                        onmouseenter={() => (hovered = i)}
-                        onmouseleave={() => (hovered = null)}
-                        onfocus={() => (hovered = i)}
-                        onblur={() => (hovered = null)}
-                        aria-label={`Strike ${fmtStrike(lv.strike)}: put oi ${lv.put_oi || 0} vol ${lv.put_volume || 0}, call oi ${lv.call_oi || 0} vol ${lv.call_volume || 0}`}
-                    >
-                        {#if mode === 'total'}
-                            {@render bar((lv.put_oi || 0) + (lv.call_oi || 0), (lv.put_volume || 0) + (lv.call_volume || 0), 'total')}
-                        {:else}
-                            {@render bar(lv.put_oi, lv.put_volume, 'put')}
-                            {@render bar(lv.call_oi, lv.call_volume, 'call')}
-                        {/if}
-                    </button>
+                    {@const x = strikePos(lv.strike, true)}
+                    {#if x != null}
+                        <button
+                            type="button"
+                            class={`group absolute bottom-0 top-0 flex items-end justify-center gap-px p-0 ${hovered === i ? 'bg-surface-elevated/60' : ''}`}
+                            style={`left:${x}%;width:${barClusterWidth};transform:translateX(-50%)`}
+                            onmouseenter={() => (hovered = i)}
+                            onmouseleave={() => (hovered = null)}
+                            onfocus={() => (hovered = i)}
+                            onblur={() => (hovered = null)}
+                            aria-label={`Strike ${fmtStrike(lv.strike)}: put oi ${lv.put_oi || 0} vol ${lv.put_volume || 0}, call oi ${lv.call_oi || 0} vol ${lv.call_volume || 0}`}
+                        >
+                            {#if mode === 'total'}
+                                {@render bar((lv.put_oi || 0) + (lv.call_oi || 0), (lv.put_volume || 0) + (lv.call_volume || 0), 'total')}
+                            {:else}
+                                {@render bar(lv.put_oi, lv.put_volume, 'put')}
+                                {@render bar(lv.call_oi, lv.call_volume, 'call')}
+                            {/if}
+                        </button>
+                    {/if}
                 {/each}
             </div>
         </div>
 
         <!-- X-axis strike labels -->
-        <div class="mt-1 flex">
-            {#each sorted as lv, i (lv.strike + '-' + i)}
+        <div class="relative mt-1 h-3">
+            {#each xLabels as item (item.lv.strike + '-' + item.i)}
                 <div
-                    class={`flex-1 text-center font-mono tabular-nums leading-none ${labelSize} ${
-                        isKey(lv) ? 'font-semibold text-foreground' : 'text-muted-foreground'
-                    } ${hovered === i ? 'text-foreground' : ''}`}
+                    class={`absolute hidden -translate-x-1/2 text-center font-mono tabular-nums leading-none sm:block ${labelSize} ${
+                        isKey(item.lv) ? 'font-semibold text-foreground' : 'text-muted-foreground'
+                    } ${hovered === item.i ? 'text-foreground' : ''}`}
+                    style={`left:${item.x}%;width:${compact ? '34px' : '44px'}`}
                 >
-                    {fmtStrike(lv.strike)}
+                    {fmtStrike(item.lv.strike)}
                 </div>
             {/each}
         </div>
