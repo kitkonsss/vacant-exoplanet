@@ -104,18 +104,22 @@
     }
 
     // --- per-strike IV smile overlay (from OIData Vol Settle), aligned to the
-    // same strike columns as the bars; only strikes that actually have a vol are
-    // plotted, so the line shows the smile/skew shape right over the OI walls.
+    // same strike scale as the bars. Use every visible raw IV strike, not only
+    // strikes that have an OI wall, then render the curve as a monotone cubic
+    // spline so it reads closer to QuikStrike without inventing extra extrema.
     const IV_COLOR = '#c084fc';
     const ivPoints = $derived.by(() => {
         if (!showIv || !ivByStrike) return [];
-        const n = sorted.length;
         const pts = [];
-        for (let i = 0; i < n; i++) {
-            const iv = ivByStrike[sorted[i].strike];
-            if (Number.isFinite(iv) && iv > 0) pts.push({ iv, x: ((i + 0.5) / n) * 100 });
+        for (const [strikeKey, rawIv] of Object.entries(ivByStrike)) {
+            const strike = Number(strikeKey);
+            const iv = Number(rawIv);
+            const x = strikePos(strike, false);
+            if (Number.isFinite(strike) && Number.isFinite(iv) && iv > 0 && x != null) {
+                pts.push({ strike, iv, x });
+            }
         }
-        return pts;
+        return pts.sort((a, b) => a.strike - b.strike);
     });
     const ivRange = $derived.by(() => {
         if (ivPoints.length < 2) return null;
@@ -131,7 +135,59 @@
         const f = (iv - ivRange.lo) / (ivRange.hi - ivRange.lo);
         return 8 + (1 - f) * 70;
     }
-    const ivPolyline = $derived(ivPoints.map((p) => `${p.x.toFixed(2)},${ivY(p.iv).toFixed(2)}`).join(' '));
+    function pathNum(v) {
+        return Number.isFinite(v) ? v.toFixed(2) : '0.00';
+    }
+    function endpointTangent(h0, h1, d0, d1) {
+        let m = ((2 * h0 + h1) * d0 - h0 * d1) / (h0 + h1);
+        if (m * d0 <= 0) return 0;
+        if (d0 * d1 < 0 && Math.abs(m) > Math.abs(3 * d0)) return 3 * d0;
+        return m;
+    }
+    function ivCurvePath(points) {
+        const pts = points
+            .map((p) => ({ x: p.x, y: ivY(p.iv) }))
+            .filter((p) => Number.isFinite(p.x) && Number.isFinite(p.y))
+            .sort((a, b) => a.x - b.x);
+
+        if (pts.length < 2) return '';
+        let d = `M ${pathNum(pts[0].x)} ${pathNum(pts[0].y)}`;
+        if (pts.length === 2) {
+            return `${d} L ${pathNum(pts[1].x)} ${pathNum(pts[1].y)}`;
+        }
+
+        const n = pts.length;
+        const h = [];
+        const slope = [];
+        for (let i = 0; i < n - 1; i++) {
+            h[i] = pts[i + 1].x - pts[i].x;
+            slope[i] = h[i] === 0 ? 0 : (pts[i + 1].y - pts[i].y) / h[i];
+        }
+
+        const m = Array(n).fill(0);
+        m[0] = endpointTangent(h[0], h[1], slope[0], slope[1]);
+        m[n - 1] = endpointTangent(h[n - 2], h[n - 3], slope[n - 2], slope[n - 3]);
+        for (let i = 1; i < n - 1; i++) {
+            if (slope[i - 1] * slope[i] <= 0) {
+                m[i] = 0;
+            } else {
+                const w1 = 2 * h[i] + h[i - 1];
+                const w2 = h[i] + 2 * h[i - 1];
+                m[i] = (w1 + w2) / (w1 / slope[i - 1] + w2 / slope[i]);
+            }
+        }
+
+        for (let i = 0; i < n - 1; i++) {
+            if (h[i] <= 0) continue;
+            const c1x = pts[i].x + h[i] / 3;
+            const c1y = pts[i].y + (m[i] * h[i]) / 3;
+            const c2x = pts[i + 1].x - h[i] / 3;
+            const c2y = pts[i + 1].y - (m[i + 1] * h[i]) / 3;
+            d += ` C ${pathNum(c1x)} ${pathNum(c1y)} ${pathNum(c2x)} ${pathNum(c2y)} ${pathNum(pts[i + 1].x)} ${pathNum(pts[i + 1].y)}`;
+        }
+        return d;
+    }
+    const ivPath = $derived(ivCurvePath(ivPoints));
     const ivShown = $derived(showIv && ivPoints.length >= 2 && ivRange != null);
 
     let hovered = $state(null);
@@ -291,11 +347,11 @@
             <!-- IV smile overlay (per-strike vol), drawn over the bars -->
             {#if ivShown}
                 <svg class="pointer-events-none absolute inset-0 z-20 h-full w-full" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
-                    <polyline
-                        points={ivPolyline}
+                    <path
+                        d={ivPath}
                         fill="none"
                         stroke={IV_COLOR}
-                        stroke-width="1.5"
+                        stroke-width="1.6"
                         vector-effect="non-scaling-stroke"
                         stroke-linejoin="round"
                         stroke-linecap="round"
