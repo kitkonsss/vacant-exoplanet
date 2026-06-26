@@ -6,6 +6,8 @@ export const ASSET_PROFILES = {
         id: 'gc',
         label: 'Gold (GC)',
         shortLabel: 'GC',
+        source: 'static',
+        liveSymbol: 'GC=F',
         dataFolder: 'data',
         visibleStrikeRange: 350,
         // Target view: GC moves are quoted in $/oz (= 1 point). $100/contract per
@@ -20,6 +22,8 @@ export const ASSET_PROFILES = {
         id: 'nq',
         label: 'Nasdaq (NQ)',
         shortLabel: 'NQ',
+        source: 'static',
+        liveSymbol: 'NQ=F',
         dataFolder: 'data/nq',
         visibleStrikeRange: 2000,
         // NQ moves in index points: $20/contract per point, $2/contract per micro
@@ -27,6 +31,32 @@ export const ASSET_PROFILES = {
         unit: 'จุด',
         pointValueUsd: 20,
         microPointValueUsd: 2,
+        fixedTpRef: null
+    },
+    btc: {
+        id: 'btc',
+        label: 'Bitcoin (BTC)',
+        shortLabel: 'BTC',
+        source: 'crypto',
+        liveSymbol: 'BTC-USDT-SWAP',
+        dataFolder: null,
+        visibleStrikeRange: 30000,
+        unit: '$',
+        pointValueUsd: 1,
+        microPointValueUsd: null,
+        fixedTpRef: null
+    },
+    eth: {
+        id: 'eth',
+        label: 'Ethereum (ETH)',
+        shortLabel: 'ETH',
+        source: 'crypto',
+        liveSymbol: 'ETH-USDT-SWAP',
+        dataFolder: null,
+        visibleStrikeRange: 2500,
+        unit: '$',
+        pointValueUsd: 1,
+        microPointValueUsd: null,
         fixedTpRef: null
     }
 };
@@ -44,6 +74,14 @@ function dataUrl(assetId, fileName) {
     const profile = ASSET_PROFILES[assetId];
     const folder = profile?.dataFolder || 'data';
     return `${DATA_BASE}/${folder}/${fileName}`;
+}
+
+export function isCryptoAsset(assetId) {
+    return ASSET_PROFILES[assetId]?.source === 'crypto';
+}
+
+export function cryptoSnapshotUrl(assetId) {
+    return `/api/crypto/snapshot?asset=${encodeURIComponent(assetId)}`;
 }
 
 export function positionBiasUrl(assetId, fileName) {
