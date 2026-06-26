@@ -21,8 +21,6 @@
 
     // ascending strike → left-to-right on the X axis
     const sorted = $derived([...(positionMap || [])].sort((a, b) => a.strike - b.strike));
-    const sortedStrikes = $derived(sorted.map((l) => Number(l.strike)).filter((s) => Number.isFinite(s)));
-
     function callTotal(l) {
         return (l.call_oi || 0) + (l.call_volume || 0);
     }
@@ -49,58 +47,27 @@
         return isCallWall || isPutWall;
     }
 
-    function medianStep(values) {
-        const diffs = [];
-        for (let i = 1; i < values.length; i++) {
-            const d = values[i] - values[i - 1];
-            if (d > 0) diffs.push(d);
-        }
-        if (!diffs.length) return 1;
-        diffs.sort((a, b) => a - b);
-        return diffs[Math.floor(diffs.length / 2)] || 1;
-    }
-
-    const strikeDomain = $derived.by(() => {
-        if (!sortedStrikes.length) return null;
-        let lo = Math.min(...sortedStrikes);
-        let hi = Math.max(...sortedStrikes);
-        const step = medianStep(sortedStrikes);
-        if (lo === hi) {
-            lo -= step;
-            hi += step;
-        }
-        const pad = Math.max(step * 0.5, (hi - lo) * 0.01);
-        return { lo: lo - pad, hi: hi + pad };
-    });
-
-    // CME/QuikStrike uses strike as a continuous x-axis, not an equal-width
-    // category column per wall. Keep every overlay on that same strike scale.
+    // future-price marker as a % across the evenly-spaced strike columns
+    // (interpolated between the centres of the two bracketing strikes)
     function strikePos(level, clamp = false) {
-        if (!strikeDomain || level == null || !Number.isFinite(level)) return null;
-        const span = strikeDomain.hi - strikeDomain.lo;
-        if (span <= 0) return null;
-        const x = ((level - strikeDomain.lo) / span) * 100;
-        if (x < 0) return clamp ? 0 : null;
-        if (x > 100) return clamp ? 100 : null;
-        return x;
-    }
-
-    const xLabels = $derived.by(() => {
-        const out = [];
-        const minGap = compact ? 8 : 3.6;
-        let lastShownX = -Infinity;
-        for (let i = 0; i < sorted.length; i++) {
-            const lv = sorted[i];
-            const x = strikePos(lv.strike, true);
-            if (x == null) continue;
-            const important = i === 0 || i === sorted.length - 1 || isKey(lv);
-            if (important || x - lastShownX >= minGap) {
-                out.push({ lv, i, x });
-                lastShownX = x;
+        const n = sorted.length;
+        if (!n || level == null || !Number.isFinite(level)) return null;
+        if (n === 1) return 50;
+        const p = level;
+        if (p < sorted[0].strike) return clamp ? (0.5 / n) * 100 : null;
+        if (p > sorted[n - 1].strike) return clamp ? ((n - 0.5) / n) * 100 : null;
+        if (p === sorted[0].strike) return (0.5 / n) * 100;
+        if (p === sorted[n - 1].strike) return ((n - 0.5) / n) * 100;
+        for (let i = 0; i < n - 1; i++) {
+            const a = sorted[i].strike;
+            const b = sorted[i + 1].strike;
+            if (p >= a && p <= b) {
+                const frac = b === a ? 0 : (p - a) / (b - a);
+                return ((i + 0.5 + frac) / n) * 100;
             }
         }
-        return out;
-    });
+        return null;
+    }
 
     const pricePos = $derived.by(() => {
         return strikePos(futurePrice, true);
@@ -136,9 +103,8 @@
     }
 
     // --- per-strike IV smile overlay (from OIData Vol Settle).
-    // QuikStrike renders a fitted Vol Settle smile over a continuous strike axis.
-    // Fit a low-degree polynomial to the visible raw IV strikes, then sample it
-    // densely so the plotted line reads as one smooth smile instead of point joins.
+    // Bars stay in equal-width strike columns. Fit IV in that rendered x-space
+    // and sample densely so uneven strike gaps cannot bend the bars or kink the smile.
     const IV_COLOR = '#c084fc';
     const ivPoints = $derived.by(() => {
         if (!showIv || !ivByStrike) return [];
@@ -185,7 +151,7 @@
         const xty = Array(order).fill(0);
 
         for (const p of points) {
-            const t = (p.strike - center) / scale;
+            const t = (p.x - center) / scale;
             const powers = [1];
             for (let i = 1; i < order; i++) powers[i] = powers[i - 1] * t;
             for (let r = 0; r < order; r++) {
@@ -198,8 +164,8 @@
         for (let i = 0; i < order; i++) xtx[i][i] += 1e-8;
         const coeffs = solveLinearSystem(xtx, xty);
         if (!coeffs) return null;
-        return (strike) => {
-            const t = (strike - center) / scale;
+        return (x) => {
+            const t = (x - center) / scale;
             let y = 0;
             let power = 1;
             for (const c of coeffs) {
@@ -210,14 +176,14 @@
         };
     }
 
-    function linearIv(points, strike) {
-        if (strike <= points[0].strike) return points[0].iv;
-        if (strike >= points[points.length - 1].strike) return points[points.length - 1].iv;
+    function linearIv(points, x) {
+        if (x <= points[0].x) return points[0].iv;
+        if (x >= points[points.length - 1].x) return points[points.length - 1].iv;
         for (let i = 0; i < points.length - 1; i++) {
             const a = points[i];
             const b = points[i + 1];
-            if (strike >= a.strike && strike <= b.strike) {
-                const f = b.strike === a.strike ? 0 : (strike - a.strike) / (b.strike - a.strike);
+            if (x >= a.x && x <= b.x) {
+                const f = b.x === a.x ? 0 : (x - a.x) / (b.x - a.x);
                 return a.iv + (b.iv - a.iv) * f;
             }
         }
@@ -225,22 +191,23 @@
     }
 
     function buildSmileModel(points) {
-        if (points.length < 2 || !strikeDomain) return null;
+        if (points.length < 2) return null;
         const rawLo = Math.min(...points.map((p) => p.iv));
         const rawHi = Math.max(...points.map((p) => p.iv));
         const pad = Math.max((rawHi - rawLo) * 0.08, 0.35);
-        const minStrike = points[0].strike;
-        const maxStrike = points[points.length - 1].strike;
-        const center = Number.isFinite(futurePrice) ? futurePrice : (strikeDomain.lo + strikeDomain.hi) / 2;
-        const scale = Math.max((strikeDomain.hi - strikeDomain.lo) / 2, 1);
+        const minX = Math.min(...points.map((p) => p.x));
+        const maxX = Math.max(...points.map((p) => p.x));
+        const priceX = strikePos(futurePrice, true);
+        const center = Number.isFinite(priceX) ? priceX : (minX + maxX) / 2;
+        const scale = Math.max((maxX - minX) / 2, 1);
         const degree = Math.min(points.length - 1, points.length >= 7 ? 3 : points.length >= 4 ? 2 : 1);
         const fitted = degree >= 2 ? fitPolynomial(points, degree, center, scale) : null;
-        const evalIv = fitted || ((strike) => linearIv(points, strike));
+        const evalIv = fitted || ((x) => linearIv(points, x));
         return {
-            minStrike,
-            maxStrike,
-            eval(strike) {
-                const iv = evalIv(strike);
+            minX,
+            maxX,
+            eval(x) {
+                const iv = evalIv(x);
                 return Math.min(rawHi + pad, Math.max(rawLo - pad, iv));
             }
         };
@@ -248,18 +215,17 @@
 
     const ivModel = $derived.by(() => buildSmileModel(ivPoints));
     const ivCurveSamples = $derived.by(() => {
-        if (!ivModel || !strikeDomain) return [];
-        const start = Math.max(ivModel.minStrike, strikeDomain.lo);
-        const end = Math.min(ivModel.maxStrike, strikeDomain.hi);
+        if (!ivModel) return [];
+        const start = ivModel.minX;
+        const end = ivModel.maxX;
         if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return [];
 
         const count = 140;
         const out = [];
         for (let i = 0; i < count; i++) {
-            const strike = start + ((end - start) * i) / (count - 1);
-            const x = strikePos(strike, false);
-            const iv = ivModel.eval(strike);
-            if (x != null && Number.isFinite(iv)) out.push({ strike, iv, x });
+            const x = start + ((end - start) * i) / (count - 1);
+            const iv = ivModel.eval(x);
+            if (Number.isFinite(iv)) out.push({ iv, x });
         }
         return out;
     });
@@ -291,11 +257,6 @@
     const chartHeight = $derived(compact ? 160 : 230);
     const barMax = $derived(compact ? '12px' : '18px');
     const totalBarMax = $derived(compact ? '20px' : '30px');
-    const barClusterWidth = $derived(
-        mode === 'total'
-            ? (compact ? 'clamp(14px, 2vw, 22px)' : 'clamp(16px, 1.8vw, 30px)')
-            : (compact ? 'clamp(18px, 3vw, 28px)' : 'clamp(20px, 2.4vw, 34px)')
-    );
     const labelSize = $derived(compact ? 'text-[8px]' : 'text-[9px]');
 
     const TONES = {
@@ -309,14 +270,11 @@
     {@const o = oi || 0}
     {@const v = vol || 0}
     {@const total = o + v}
-    <div
-        class="flex h-full min-w-0 w-full flex-col items-center justify-end"
-        style={`max-width:${tone === 'total' ? totalBarMax : barMax}`}
-    >
+    <div class="flex h-full flex-col items-center justify-end" style={`max-width:${tone === 'total' ? totalBarMax : barMax}`}>
         {#if total > 0}
             <!-- contract count for this bar (OI + intraday volume), vertical so it fits the thin column -->
             <span
-                class={`mb-0.5 hidden font-mono font-semibold leading-none tabular-nums text-foreground/75 [writing-mode:vertical-rl] rotate-180 sm:inline ${compact ? 'text-[8px]' : 'text-[10px]'}`}
+                class={`mb-0.5 font-mono font-semibold leading-none tabular-nums text-foreground/75 [writing-mode:vertical-rl] rotate-180 ${compact ? 'text-[8px]' : 'text-[10px]'}`}
             >{fmtK(total)}</span>
         {/if}
         <div class="flex w-full flex-col overflow-hidden rounded-t-sm" style={`height:${hPct(total)}%`}>
@@ -463,42 +421,37 @@
             {/if}
 
             <!-- grouped bars -->
-            <div class="absolute inset-0">
+            <div class="absolute inset-0 flex items-end">
                 {#each sorted as lv, i (lv.strike + '-' + i)}
-                    {@const x = strikePos(lv.strike, true)}
-                    {#if x != null}
-                        <button
-                            type="button"
-                            class={`group absolute bottom-0 top-0 flex items-end justify-center gap-px p-0 ${hovered === i ? 'bg-surface-elevated/60' : ''}`}
-                            style={`left:${x}%;width:${barClusterWidth};transform:translateX(-50%)`}
-                            onmouseenter={() => (hovered = i)}
-                            onmouseleave={() => (hovered = null)}
-                            onfocus={() => (hovered = i)}
-                            onblur={() => (hovered = null)}
-                            aria-label={`Strike ${fmtStrike(lv.strike)}: put oi ${lv.put_oi || 0} vol ${lv.put_volume || 0}, call oi ${lv.call_oi || 0} vol ${lv.call_volume || 0}`}
-                        >
-                            {#if mode === 'total'}
-                                {@render bar((lv.put_oi || 0) + (lv.call_oi || 0), (lv.put_volume || 0) + (lv.call_volume || 0), 'total')}
-                            {:else}
-                                {@render bar(lv.put_oi, lv.put_volume, 'put')}
-                                {@render bar(lv.call_oi, lv.call_volume, 'call')}
-                            {/if}
-                        </button>
-                    {/if}
+                    <button
+                        type="button"
+                        class={`group flex h-full flex-1 items-end justify-center gap-px p-0 ${hovered === i ? 'bg-surface-elevated/60' : ''}`}
+                        onmouseenter={() => (hovered = i)}
+                        onmouseleave={() => (hovered = null)}
+                        onfocus={() => (hovered = i)}
+                        onblur={() => (hovered = null)}
+                        aria-label={`Strike ${fmtStrike(lv.strike)}: put oi ${lv.put_oi || 0} vol ${lv.put_volume || 0}, call oi ${lv.call_oi || 0} vol ${lv.call_volume || 0}`}
+                    >
+                        {#if mode === 'total'}
+                            {@render bar((lv.put_oi || 0) + (lv.call_oi || 0), (lv.put_volume || 0) + (lv.call_volume || 0), 'total')}
+                        {:else}
+                            {@render bar(lv.put_oi, lv.put_volume, 'put')}
+                            {@render bar(lv.call_oi, lv.call_volume, 'call')}
+                        {/if}
+                    </button>
                 {/each}
             </div>
         </div>
 
         <!-- X-axis strike labels -->
-        <div class="relative mt-1 h-3">
-            {#each xLabels as item (item.lv.strike + '-' + item.i)}
+        <div class="mt-1 flex">
+            {#each sorted as lv, i (lv.strike + '-' + i)}
                 <div
-                    class={`absolute hidden -translate-x-1/2 text-center font-mono tabular-nums leading-none sm:block ${labelSize} ${
-                        isKey(item.lv) ? 'font-semibold text-foreground' : 'text-muted-foreground'
-                    } ${hovered === item.i ? 'text-foreground' : ''}`}
-                    style={`left:${item.x}%;width:${compact ? '34px' : '44px'}`}
+                    class={`flex-1 text-center font-mono tabular-nums leading-none ${labelSize} ${
+                        isKey(lv) ? 'font-semibold text-foreground' : 'text-muted-foreground'
+                    } ${hovered === i ? 'text-foreground' : ''}`}
                 >
-                    {fmtStrike(item.lv.strike)}
+                    <span class="hidden sm:inline">{fmtStrike(lv.strike)}</span>
                 </div>
             {/each}
         </div>
