@@ -11,7 +11,7 @@
     import { LineChart, Grid3X3, Activity, Target } from 'lucide-svelte';
 
     let asset = $state('gc');
-    let activeTab = $state('target');
+    let activeTab = $state('analysis');
     let payload = $state(null);
     let loading = $state(true);
     let refreshing = $state(false);
@@ -68,8 +68,8 @@
     );
 
     const tabs = [
-        { key: 'target',   label: 'เป้าวันนี้',     tone: 'warn',    icon: Target },
         { key: 'analysis', label: 'Position Bias', tone: 'primary', icon: LineChart },
+        { key: 'target',   label: 'เป้าวันนี้',     tone: 'warn',    icon: Target },
         { key: 'heatmap',  label: 'OI Heatmap',    tone: 'mag',     icon: Grid3X3 },
         { key: 'gamma',    label: 'Gamma Heatmap', tone: 'mag',     icon: Activity }
     ];
