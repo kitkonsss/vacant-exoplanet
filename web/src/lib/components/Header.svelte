@@ -43,8 +43,8 @@
 </script>
 
 <header class="relative border-b border-border bg-surface">
-    <div class="flex items-center justify-between gap-4 px-6 py-3">
-        <div class="flex items-center gap-5 min-w-0">
+    <div class="flex items-center justify-between gap-2 px-3 py-3 sm:gap-4 sm:px-6">
+        <div class="flex min-w-0 flex-1 items-center gap-3 sm:gap-5">
             <!-- Logo -->
             <div class="flex items-center gap-2.5 shrink-0">
                 <div class="flex h-8 w-8 items-center justify-center rounded-md bg-primary">
@@ -61,7 +61,7 @@
             </div>
 
             <!-- Asset selector -->
-            <Select bind:value={asset}>
+            <Select bind:value={asset} class="w-[150px] max-w-[42vw] sm:w-auto sm:max-w-none">
                 {#each Object.values(ASSET_PROFILES) as profile}
                     <option value={profile.id}>{profile.label}</option>
                 {/each}
@@ -92,7 +92,7 @@
             </div>
         </div>
 
-        <div class="flex items-center gap-3 shrink-0">
+        <div class="flex shrink-0 items-center gap-2 sm:gap-3">
             {#if dte != null}
                 <span class="inline-flex items-center gap-1.5 rounded-md border border-primary bg-primary px-2.5 py-1 font-mono text-xs font-semibold tabular-nums text-primary-foreground">
                     DTE {fmtNumber(dte, 2)}
@@ -102,6 +102,7 @@
             <Button
                 variant="ghost"
                 size="sm"
+                class="shrink-0 px-2 sm:px-3"
                 onclick={onRefresh}
                 disabled={refreshing}
                 title="Refresh data (R)"
@@ -111,7 +112,7 @@
                     class={`h-3.5 w-3.5 ${refreshing ? 'animate-spin-slow text-primary' : ''}`}
                     strokeWidth={2.2}
                 />
-                {refreshing ? 'Refreshing…' : 'Refresh'}
+                <span class="hidden sm:inline">{refreshing ? 'Refreshing...' : 'Refresh'}</span>
             </Button>
 
             <div class="hidden items-center gap-2 rounded-md border border-border bg-surface px-2.5 py-1 font-mono text-[10px] text-muted-foreground sm:flex">

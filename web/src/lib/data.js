@@ -1,9 +1,17 @@
-import { CONTRACT_OPTIONS, briefUrl, cotUrl, econCalendarUrl, expectedRangeUrl, gammaHeatmapUrl, heatmapUrl, ivBaselineUrl, macroUrl, oiDataUrl, optionFlowUrl, positionBiasUrl, signalLogUrl, signalScorecardUrl, strategyUrl, wallBacktestUrl } from './config.js';
+import { CONTRACT_OPTIONS, briefUrl, cotUrl, cryptoSnapshotUrl, econCalendarUrl, expectedRangeUrl, gammaHeatmapUrl, heatmapUrl, isCryptoAsset, ivBaselineUrl, macroUrl, oiDataUrl, optionFlowUrl, positionBiasUrl, signalLogUrl, signalScorecardUrl, strategyUrl, wallBacktestUrl } from './config.js';
 import { parseOIData } from './vol2vol.js';
+
+const CRYPTO_SNAPSHOT_TTL_MS = 4000;
+/** @type {Map<string, {ts: number, data: any, pending?: Promise<any>}>} */
+const cryptoSnapshotCache = new Map();
+
+function cacheBust(url) {
+    return `${url}${url.includes('?') ? '&' : '?'}t=${Date.now()}`;
+}
 
 async function fetchJsonSoft(url) {
     try {
-        const res = await fetch(`${url}?t=${Date.now()}`);
+        const res = await fetch(cacheBust(url));
         if (!res.ok) return null;
         return await res.json();
     } catch (e) {
@@ -14,7 +22,7 @@ async function fetchJsonSoft(url) {
 
 async function fetchTextSoft(url) {
     try {
-        const res = await fetch(`${url}?t=${Date.now()}`);
+        const res = await fetch(cacheBust(url));
         if (!res.ok) return null;
         return await res.text();
     } catch (e) {
@@ -23,11 +31,39 @@ async function fetchTextSoft(url) {
     }
 }
 
+async function fetchCryptoSnapshot(assetId, { force = false } = {}) {
+    const now = Date.now();
+    const cached = cryptoSnapshotCache.get(assetId);
+    if (!force && cached?.data && now - cached.ts < CRYPTO_SNAPSHOT_TTL_MS) {
+        return cached.data;
+    }
+    if (!force && cached?.pending) return cached.pending;
+
+    const pending = fetchJsonSoft(cryptoSnapshotUrl(assetId)).then((data) => {
+        cryptoSnapshotCache.set(assetId, { ts: Date.now(), data });
+        return data;
+    }).catch((e) => {
+        console.warn(`crypto snapshot failed: ${assetId}`, e);
+        cryptoSnapshotCache.set(assetId, { ts: Date.now(), data: cached?.data ?? null });
+        return cached?.data ?? null;
+    });
+    cryptoSnapshotCache.set(assetId, { ts: cached?.ts ?? 0, data: cached?.data ?? null, pending });
+    return pending;
+}
+
 /**
  * Fetches position bias summary + per-contract files for an asset.
  * Returns `{ summary, contracts }` with contracts filtered to those that loaded.
  */
 export async function fetchPositionBias(assetId) {
+    if (isCryptoAsset(assetId)) {
+        const snapshot = await fetchCryptoSnapshot(assetId);
+        return {
+            contracts: snapshot?.contracts || [],
+            expectedRange: snapshot?.expected_range || null
+        };
+    }
+
     const keys = CONTRACT_OPTIONS.map(({ key }) => key);
     const [contractResults, expectedRange] = await Promise.all([
         Promise.all(keys.map((key) => fetchJsonSoft(positionBiasUrl(assetId, `${key}_PositionBias.json`)))),
@@ -43,6 +79,10 @@ export async function fetchPositionBias(assetId) {
  * Fetches an OI heatmap JSON for one contract (strike × historical day).
  */
 export async function fetchHeatmap(assetId, contractKey) {
+    if (isCryptoAsset(assetId)) {
+        const snapshot = await fetchCryptoSnapshot(assetId);
+        return snapshot?.heatmaps?.[contractKey] ?? null;
+    }
     return fetchJsonSoft(heatmapUrl(assetId, contractKey));
 }
 
@@ -50,6 +90,10 @@ export async function fetchHeatmap(assetId, contractKey) {
  * Fetches a Gamma (1 Pct) heatmap JSON for one contract (strike × historical day).
  */
 export async function fetchGammaHeatmap(assetId, contractKey) {
+    if (isCryptoAsset(assetId)) {
+        const snapshot = await fetchCryptoSnapshot(assetId);
+        return snapshot?.gamma_heatmaps?.[contractKey] ?? null;
+    }
     return fetchJsonSoft(gammaHeatmapUrl(assetId, contractKey));
 }
 
@@ -59,6 +103,10 @@ export async function fetchGammaHeatmap(assetId, contractKey) {
  * ({ contract, futPrc, futureChg, vol, dte, settle, strikes:[...] }) or null.
  */
 export async function fetchOIData(assetId, contractKey) {
+    if (isCryptoAsset(assetId)) {
+        const snapshot = await fetchCryptoSnapshot(assetId);
+        return snapshot?.oi_data?.[contractKey] ?? null;
+    }
     const text = await fetchTextSoft(oiDataUrl(assetId, contractKey));
     return parseOIData(text);
 }
@@ -77,6 +125,7 @@ export async function fetchMacro() {
  * NQ shape: { leveraged_funds, asset_manager, dealer, interpretation }.
  */
 export async function fetchCot(assetId) {
+    if (isCryptoAsset(assetId)) return null;
     return fetchJsonSoft(cotUrl(assetId));
 }
 
@@ -85,6 +134,10 @@ export async function fetchCot(assetId) {
  * Shape: { directional_bias, components, key_levels, scenarios, ... }.
  */
 export async function fetchStrategy(assetId) {
+    if (isCryptoAsset(assetId)) {
+        const snapshot = await fetchCryptoSnapshot(assetId);
+        return snapshot?.strategy ?? null;
+    }
     return fetchJsonSoft(strategyUrl(assetId));
 }
 
@@ -92,6 +145,7 @@ export async function fetchStrategy(assetId) {
  * Fetches the LLM narrative daily brief (markdown text) for an asset.
  */
 export async function fetchBrief(assetId) {
+    if (isCryptoAsset(assetId)) return null;
     return fetchTextSoft(briefUrl(assetId));
 }
 
@@ -101,6 +155,18 @@ export async function fetchBrief(assetId) {
  * pipeline hasn't produced it yet (e.g. no signals fired).
  */
 export async function fetchSignals(assetId) {
+    if (isCryptoAsset(assetId)) {
+        const snapshot = await fetchCryptoSnapshot(assetId);
+        return {
+            expectedRange: snapshot?.expected_range ?? null,
+            log: [],
+            scorecard: null,
+            optionFlow: snapshot?.strategy?.option_flow ?? null,
+            wallBacktest: null,
+            roundWalls: null
+        };
+    }
+
     const [expectedRange, log, scorecard, optionFlow, wallBacktest, strategy] = await Promise.all([
         fetchJsonSoft(expectedRangeUrl(assetId)),
         fetchJsonSoft(signalLogUrl(assetId)),
@@ -135,6 +201,7 @@ export async function fetchEconCalendar() {
  * recent norm. Always returns an array (possibly empty), never null.
  */
 export async function fetchIvBaseline(assetId) {
+    if (isCryptoAsset(assetId)) return [];
     const arr = await fetchJsonSoft(ivBaselineUrl(assetId));
     return Array.isArray(arr) ? arr : [];
 }
@@ -148,7 +215,13 @@ export async function fetchIvBaseline(assetId) {
  * host without the function (e.g. the legacy GitHub Pages URL) this 404s and
  * returns null, so callers transparently fall back to the scrape-time price.
  */
-export async function fetchLivePrice(sym) {
+export async function fetchLivePrice(sym, assetId = null) {
+    if (assetId && isCryptoAsset(assetId)) {
+        const snapshot = await fetchCryptoSnapshot(assetId, { force: true });
+        const live = snapshot?.live_price;
+        return live && Number.isFinite(live.price) ? live : null;
+    }
+
     try {
         const res = await fetch(`/api/price?sym=${encodeURIComponent(sym)}`);
         if (!res.ok) return null;

@@ -45,10 +45,13 @@
     let liveAt = $state(null);
     const isLive = $derived(Number.isFinite(livePrice) && livePrice > 0);
     $effect(() => {
-        const sym = asset === 'nq' ? 'NQ=F' : 'GC=F';
+        const activeAsset = asset;
+        const activeProfile = ASSET_PROFILES[activeAsset];
+        const sym = activeProfile?.liveSymbol || (activeAsset === 'nq' ? 'NQ=F' : 'GC=F');
+        const pollMs = activeProfile?.source === 'crypto' ? 5000 : 20000;
         let stopped = false;
         async function tick() {
-            const d = await fetchLivePrice(sym);
+            const d = await fetchLivePrice(sym, activeAsset);
             if (stopped) return;
             if (d && Number.isFinite(d.price)) {
                 livePrice = d.price;
@@ -58,7 +61,7 @@
         livePrice = null;
         liveAt = null;
         tick();
-        const id = setInterval(tick, 20000);
+        const id = setInterval(tick, pollMs);
         return () => { stopped = true; clearInterval(id); };
     });
 
@@ -95,8 +98,8 @@
         return contractKeys[0];
     }
 
-    async function load() {
-        loading = true;
+    async function load({ silent = false } = {}) {
+        if (!silent) loading = true;
         try {
             const nextPayload = await fetchPositionBias(asset);
             const nextContractKeys = (nextPayload?.contracts || []).map((contract) => contract.contract_key);
@@ -110,59 +113,62 @@
             lastUpdateAt = stamp;
             return nextKey;
         } finally {
-            loading = false;
+            if (!silent) loading = false;
         }
     }
 
-    async function ensureHeatmap(contractKey) {
+    async function ensureHeatmap(contractKey, { force = false, silent = false } = {}) {
         const cached = untrack(() => heatmapCache[contractKey]);
-        if (cached) return;
-        heatmapLoading = true;
+        if (cached && !force) return;
+        if (!silent) heatmapLoading = true;
         try {
             const data = await fetchHeatmap(asset, contractKey);
             heatmapCache = { ...untrack(() => heatmapCache), [contractKey]: data };
         } finally {
-            heatmapLoading = false;
+            if (!silent) heatmapLoading = false;
         }
     }
 
-    async function ensureGamma(contractKey) {
+    async function ensureGamma(contractKey, { force = false, silent = false } = {}) {
         const cached = untrack(() => gammaCache[contractKey]);
-        if (cached) return;
-        gammaLoading = true;
+        if (cached && !force) return;
+        if (!silent) gammaLoading = true;
         try {
             const data = await fetchGammaHeatmap(asset, contractKey);
             gammaCache = { ...untrack(() => gammaCache), [contractKey]: data };
         } finally {
-            gammaLoading = false;
+            if (!silent) gammaLoading = false;
         }
     }
 
-    async function ensureStrategy() {
-        strategyLoading = true;
+    async function ensureStrategy({ silent = false } = {}) {
+        if (!silent) strategyLoading = true;
         try {
             strategy = await fetchStrategy(asset);
         } finally {
-            strategyLoading = false;
+            if (!silent) strategyLoading = false;
         }
     }
 
-    async function refresh() {
-        if (refreshing) return;
-        refreshing = true;
+    async function refresh({ silent = false } = {}) {
+        if (refreshing && !silent) return;
+        if (!silent) refreshing = true;
         try {
-            heatmapCache = {};
-            gammaCache = {};
-            const nextKey = await load();
+            if (!silent) {
+                heatmapCache = {};
+                gammaCache = {};
+            }
+            const nextKey = await load({ silent });
+            const forceLive = silent && ASSET_PROFILES[asset]?.source === 'crypto';
             if (activeTab === 'heatmap' && nextKey) {
-                await ensureHeatmap(nextKey);
+                await ensureHeatmap(nextKey, { force: forceLive, silent });
             } else if (activeTab === 'gamma' && nextKey) {
-                await ensureGamma(nextKey);
+                await ensureGamma(nextKey, { force: forceLive, silent });
             } else if (activeTab === 'target') {
-                await ensureStrategy();
+                await ensureStrategy({ silent });
             }
         } finally {
-            refreshing = false;
+            if (!silent) refreshing = false;
         }
     }
 
@@ -232,6 +238,18 @@
                 }
             });
         });
+    });
+
+    $effect(() => {
+        const activeAsset = asset;
+        if (ASSET_PROFILES[activeAsset]?.source !== 'crypto') return;
+        let stopped = false;
+        async function tick() {
+            if (stopped || loading || refreshing) return;
+            await refresh({ silent: true });
+        }
+        const id = setInterval(tick, 5000);
+        return () => { stopped = true; clearInterval(id); };
     });
 </script>
 
