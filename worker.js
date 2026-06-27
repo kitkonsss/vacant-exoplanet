@@ -467,6 +467,7 @@ function aggregateExpiry(rows, price, cfg, contractKey) {
         contract: `${cfg.short} ${expiryLabel(rows[0].expiryMs)}`,
         expiration: isoDate(rows[0].expiryMs),
         dte: round(dte, 2),
+        dte_raw: round(dte, 6),
         future_price: price,
         confidence: 'live',
         position_bias: { label, score },
@@ -488,30 +489,70 @@ function chooseBuckets(rows) {
     return picked;
 }
 
-function nearestIv(positionMap, price, type, strikeTarget = price) {
-    let best = null;
-    let bestDist = Infinity;
-    for (const row of positionMap || []) {
-        const iv = type === 'put' ? row.put_iv : row.call_iv;
-        if (!Number.isFinite(iv) || iv <= 0) continue;
-        const dist = Math.abs(row.strike - strikeTarget);
-        if (dist < bestDist) {
-            best = iv;
-            bestDist = dist;
+function dteForMath(contract) {
+    return Number.isFinite(contract?.dte_raw) ? contract.dte_raw : contract?.dte;
+}
+
+function ivPoints(positionMap, type) {
+    return (positionMap || [])
+        .map((row) => ({
+            strike: row.strike,
+            iv: type === 'put' ? row.put_iv : row.call_iv,
+        }))
+        .filter((row) => Number.isFinite(row.strike) && Number.isFinite(row.iv) && row.iv > 0)
+        .sort((a, b) => a.strike - b.strike);
+}
+
+function interpolatedIv(positionMap, type, strikeTarget) {
+    if (!Number.isFinite(strikeTarget)) return null;
+    const points = ivPoints(positionMap, type);
+    if (!points.length) return null;
+    if (points.length === 1 || strikeTarget <= points[0].strike) return points[0].iv;
+    const last = points[points.length - 1];
+    if (strikeTarget >= last.strike) return last.iv;
+    for (let i = 0; i < points.length - 1; i += 1) {
+        const a = points[i];
+        const b = points[i + 1];
+        if (a.strike <= strikeTarget && strikeTarget <= b.strike) {
+            const t = b.strike > a.strike ? (strikeTarget - a.strike) / (b.strike - a.strike) : 0;
+            return a.iv + (b.iv - a.iv) * t;
         }
     }
-    return best;
+    return null;
+}
+
+function averageFinite(values) {
+    const xs = values.filter(Number.isFinite);
+    return xs.length ? xs.reduce((s, v) => s + v, 0) / xs.length : null;
+}
+
+function atmIv(positionMap, price) {
+    return averageFinite([
+        interpolatedIv(positionMap, 'call', price),
+        interpolatedIv(positionMap, 'put', price),
+    ]);
+}
+
+function oneDayBasisTenor(tenors) {
+    const targetDays = 1;
+    return [...tenors]
+        .filter((t) => Number.isFinite(t.atm_iv) && t.atm_iv > 0 && Number.isFinite(dteForMath(t)) && dteForMath(t) > 0)
+        .sort((a, b) => {
+            const ad = dteForMath(a);
+            const bd = dteForMath(b);
+            const diff = Math.abs(ad - targetDays) - Math.abs(bd - targetDays);
+            if (diff !== 0) return diff;
+            return Number(bd >= targetDays) - Number(ad >= targetDays);
+        })[0] || null;
 }
 
 function buildExpectedRange(contracts, price) {
     const tenors = [];
     for (const c of contracts) {
-        const callIv = nearestIv(c.position_map, price, 'call');
-        const putIv = nearestIv(c.position_map, price, 'put');
-        const ivs = [callIv, putIv].filter(Number.isFinite);
-        const atmIv = ivs.length ? ivs.reduce((s, v) => s + v, 0) / ivs.length : null;
-        if (!Number.isFinite(atmIv) || atmIv <= 0 || !Number.isFinite(c.dte) || c.dte <= 0) continue;
-        const move = price * atmIv * Math.sqrt(c.dte / 365);
+        const iv = atmIv(c.position_map, price);
+        const dte = dteForMath(c);
+        if (!Number.isFinite(iv) || iv <= 0 || !Number.isFinite(dte) || dte <= 0) continue;
+        const move = price * iv * Math.sqrt(dte / 365);
         const bands = {};
         for (const k of [1, 2, 3]) {
             bands[`plus${k}`] = round(price + k * move, 2);
@@ -523,8 +564,8 @@ function buildExpectedRange(contracts, price) {
             expiration: c.expiration,
             dte: c.dte,
             future_price: price,
-            atm_iv: round(atmIv, 5),
-            atm_iv_pct: round(atmIv * 100, 2),
+            atm_iv: round(iv, 5),
+            atm_iv_pct: round(iv * 100, 2),
             expected_move_to_expiry: round(move, 2),
             bands_to_expiry: bands,
         });
@@ -532,16 +573,17 @@ function buildExpectedRange(contracts, price) {
     if (!tenors.length) return null;
     const short = tenors[0];
     const long = tenors[tenors.length - 1];
-    const horizonDays = Math.min(1, short.dte);
-    const expectedMove = price * short.atm_iv * Math.sqrt(horizonDays / 365);
+    const basis = oneDayBasisTenor(tenors) || short;
+    const horizonDays = 1;
+    const expectedMove = price * basis.atm_iv * Math.sqrt(horizonDays / 365);
     const slope = round((short.atm_iv - long.atm_iv) * 100, 2);
     const shape = slope > 2 ? 'inverted (front crypto vol premium)' : slope < -2 ? 'contango (risk priced later)' : 'flat';
 
-    const basisContract = contracts.find((c) => c.contract_key === short.contract_key) || contracts[0];
-    const putIv = nearestIv(basisContract.position_map, price, 'put', price * 0.98);
-    const callIv = nearestIv(basisContract.position_map, price, 'call', price * 1.02);
-    const putSkew = putIv && short.atm_iv ? round((putIv - short.atm_iv) * 100, 2) : null;
-    const callSkew = callIv && short.atm_iv ? round((callIv - short.atm_iv) * 100, 2) : null;
+    const basisContract = contracts.find((c) => c.contract_key === basis.contract_key) || contracts[0];
+    const putIv = interpolatedIv(basisContract.position_map, 'put', price * 0.98);
+    const callIv = interpolatedIv(basisContract.position_map, 'call', price * 1.02);
+    const putSkew = putIv && basis.atm_iv ? round((putIv - basis.atm_iv) * 100, 2) : null;
+    const callSkew = callIv && basis.atm_iv ? round((callIv - basis.atm_iv) * 100, 2) : null;
     const skewRead = putSkew != null && callSkew != null
         ? putSkew - callSkew > 1 ? 'put_skew_dominant (downside fear priced in)'
             : callSkew - putSkew > 1 ? 'call_skew_dominant (upside chase priced in)'
@@ -555,15 +597,15 @@ function buildExpectedRange(contracts, price) {
     }
 
     return {
-        method: 'Realtime crypto ATM IV from public exchange option chain; move = F x IV x sqrt(DTE/365)',
+        method: 'Realtime crypto ATM IV interpolated from public exchange option chain; 1d move = F x IV x sqrt(1/365)',
         expected_move: round(expectedMove, 2),
         expected_move_1d: round(expectedMove, 2),
         day_high_est: round(price + expectedMove, 2),
         day_low_est: round(price - expectedMove, 2),
-        atm_iv_pct: short.atm_iv_pct,
-        atm_iv_pct_1d_basis: short.atm_iv_pct,
-        iv_basis_tenor: { contract_key: short.contract_key, symbol: short.symbol, dte: short.dte },
-        basis_tenor: { contract_key: short.contract_key, symbol: short.symbol, dte: short.dte },
+        atm_iv_pct: basis.atm_iv_pct,
+        atm_iv_pct_1d_basis: basis.atm_iv_pct,
+        iv_basis_tenor: { contract_key: basis.contract_key, symbol: basis.symbol, dte: basis.dte },
+        basis_tenor: { contract_key: basis.contract_key, symbol: basis.symbol, dte: basis.dte },
         horizon_days: horizonDays,
         bands_1d: bands1d,
         term_structure: {
@@ -588,6 +630,7 @@ function buildHeatmaps(contracts, price, generatedAt, cfg, provider = 'crypto') 
     const oiData = {};
     for (const c of contracts) {
         const visibleRows = [...(c.position_map || [])].sort((a, b) => b.strike - a.strike);
+        const contractAtmIv = atmIv(c.position_map, price);
         heatmaps[c.contract_key] = {
             asset: cfg.id,
             provider,
@@ -609,9 +652,9 @@ function buildHeatmaps(contracts, price, generatedAt, cfg, provider = 'crypto') 
         oiData[c.contract_key] = {
             contract: c.contract,
             futPrc: price,
-            futureChg: null,
-            vol: null,
-            dte: c.dte,
+            futureChg: 0,
+            vol: Number.isFinite(contractAtmIv) ? round(contractAtmIv * 100, 2) : null,
+            dte: dteForMath(c),
             settle: price,
             strikes: c.position_map.map((r) => {
                 const ivCount = (r.call_iv ? 1 : 0) + (r.put_iv ? 1 : 0);
