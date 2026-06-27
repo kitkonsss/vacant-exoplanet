@@ -3,15 +3,16 @@
     import Header from '$lib/components/Header.svelte';
     import TabNav from '$lib/components/TabNav.svelte';
     import AppFooter from '$lib/components/AppFooter.svelte';
+    import PositionBiasDashboard from '$lib/components/PositionBiasDashboard.svelte';
     import PositionBiasView from '$lib/components/PositionBiasView.svelte';
     import HeatmapView from '$lib/components/HeatmapView.svelte';
     import TargetView from '$lib/components/TargetView.svelte';
-    import { fetchGammaHeatmap, fetchHeatmap, fetchLivePrice, fetchPositionBias, fetchStrategy } from '$lib/data.js';
-    import { ASSET_PROFILES, DEFAULT_CONTRACT_KEY } from '$lib/config.js';
-    import { LineChart, Grid3X3, Activity, Target } from 'lucide-svelte';
+    import { fetchGammaHeatmap, fetchHeatmap, fetchLivePrice, fetchPositionBias, fetchPositionBiasDashboard, fetchStrategy } from '$lib/data.js';
+    import { ASSET_PROFILES, CONTRACT_OPTIONS, DEFAULT_CONTRACT_KEY } from '$lib/config.js';
+    import { LineChart, Grid3X3, Activity, LayoutDashboard, Target } from 'lucide-svelte';
 
     let asset = $state('gc');
-    let activeTab = $state('analysis');
+    let activeTab = $state('dashboard');
     let payload = $state(null);
     let loading = $state(true);
     let refreshing = $state(false);
@@ -31,14 +32,20 @@
     let gammaCache = $state({});
     let gammaLoading = $state(false);
 
-    // Daily strategy JSON — the Target tab's only data source (bias + regime +
-    // expected move + gamma/confluence walls). The strategy *tab* was removed;
-    // the fetch stays because TargetView synthesizes its read from this file.
+    // Cross-asset dashboard: one selected contract slot shown across all assets.
+    let dashboardContract = $state(DEFAULT_CONTRACT_KEY);
+    /** @type {Record<string, any>} */
+    let dashboardPayloads = $state({});
+    /** @type {Record<string, any>} */
+    let dashboardLivePrices = $state({});
+    let dashboardLoading = $state(false);
+    const dashboardAssetIds = Object.keys(ASSET_PROFILES);
+
     let strategy = $state(null);
     let strategyLoading = $state(false);
 
     // Live futures price (same-origin /api/price proxy) — ONE source of truth
-    // shared by the Header and the Target card so they never disagree. Polled
+    // shared by the Header and position-bias cards so they never disagree. Polled
     // every 20s; falls back to the scrape-time contract price if the proxy is down.
     let livePrice = $state(null);
     /** @type {Date | null} */
@@ -66,20 +73,25 @@
     });
 
     const profile = $derived(ASSET_PROFILES[asset]);
+    const dashboardContractLabel = $derived(
+        CONTRACT_OPTIONS.find((option) => option.key === dashboardContract)?.label || 'Current'
+    );
     const availableContractKeys = $derived(
         (payload?.contracts || []).map((contract) => contract.contract_key)
     );
 
     const tabs = [
-        { key: 'target',   label: 'เป้าวันนี้',     tone: 'warn',    icon: Target },
-        { key: 'analysis', label: 'Position Bias', tone: 'primary', icon: LineChart },
-        { key: 'heatmap',  label: 'OI Heatmap',    tone: 'mag',     icon: Grid3X3 },
-        { key: 'gamma',    label: 'Gamma Heatmap', tone: 'mag',     icon: Activity }
+        { key: 'dashboard', label: 'Bias Dashboard', tone: 'warn',    icon: LayoutDashboard },
+        { key: 'target',    label: 'Target',         tone: 'warn',    icon: Target },
+        { key: 'analysis',  label: 'Position Bias',  tone: 'primary', icon: LineChart },
+        { key: 'heatmap',   label: 'OI Heatmap',     tone: 'mag',     icon: Grid3X3 },
+        { key: 'gamma',     label: 'Gamma Heatmap',  tone: 'mag',     icon: Activity }
     ];
 
     const singleContractKey = $derived(
         activeTab === 'heatmap' ? heatmapContract
             : activeTab === 'gamma' ? gammaContract
+            : activeTab === 'dashboard' ? dashboardContract
             : 'current'
     );
 
@@ -90,6 +102,11 @@
 
     const currentHeatmap = $derived(heatmapCache[heatmapContract] ?? null);
     const currentGamma = $derived(gammaCache[gammaContract] ?? null);
+    const sourceLabel = $derived(
+        ASSET_PROFILES[asset]?.source === 'crypto'
+            ? payload?.provider_label || payload?.provider || 'Crypto aggregate'
+            : 'pageth/Vol2VolData'
+    );
 
     function resolveContractKey(contractKeys, preferredKey = heatmapContract) {
         if (!contractKeys.length) return null;
@@ -117,6 +134,39 @@
         }
     }
 
+    async function refreshDashboardLivePrices() {
+        const entries = await Promise.all(
+            dashboardAssetIds.map(async (assetId) => {
+                const assetProfile = ASSET_PROFILES[assetId];
+                const data = await fetchLivePrice(assetProfile.liveSymbol, assetId);
+                return [assetId, data && Number.isFinite(data.price) ? data : null];
+            })
+        );
+        dashboardLivePrices = Object.fromEntries(entries);
+    }
+
+    async function loadDashboard({ silent = false } = {}) {
+        if (!silent) dashboardLoading = true;
+        try {
+            dashboardPayloads = await fetchPositionBiasDashboard(dashboardAssetIds);
+            await refreshDashboardLivePrices();
+            const stamp = new Date();
+            lastUpdate = stamp.toLocaleTimeString();
+            lastUpdateAt = stamp;
+        } finally {
+            if (!silent) dashboardLoading = false;
+        }
+    }
+
+    async function ensureStrategy({ silent = false } = {}) {
+        if (!silent) strategyLoading = true;
+        try {
+            strategy = await fetchStrategy(asset);
+        } finally {
+            if (!silent) strategyLoading = false;
+        }
+    }
+
     async function ensureHeatmap(contractKey, { force = false, silent = false } = {}) {
         const cached = untrack(() => heatmapCache[contractKey]);
         if (cached && !force) return;
@@ -141,15 +191,6 @@
         }
     }
 
-    async function ensureStrategy({ silent = false } = {}) {
-        if (!silent) strategyLoading = true;
-        try {
-            strategy = await fetchStrategy(asset);
-        } finally {
-            if (!silent) strategyLoading = false;
-        }
-    }
-
     async function refresh({ silent = false } = {}) {
         if (refreshing && !silent) return;
         if (!silent) refreshing = true;
@@ -160,12 +201,14 @@
             }
             const nextKey = await load({ silent });
             const forceLive = silent && ASSET_PROFILES[asset]?.source === 'crypto';
-            if (activeTab === 'heatmap' && nextKey) {
+            if (activeTab === 'dashboard') {
+                await loadDashboard({ silent });
+            } else if (activeTab === 'target') {
+                await ensureStrategy({ silent });
+            } else if (activeTab === 'heatmap' && nextKey) {
                 await ensureHeatmap(nextKey, { force: forceLive, silent });
             } else if (activeTab === 'gamma' && nextKey) {
                 await ensureGamma(nextKey, { force: forceLive, silent });
-            } else if (activeTab === 'target') {
-                await ensureStrategy({ silent });
             }
         } finally {
             if (!silent) refreshing = false;
@@ -198,7 +241,11 @@
     }
 
     function onTabChange(key) {
-        if (key === 'heatmap') {
+        if (key === 'dashboard') {
+            void loadDashboard();
+        } else if (key === 'target') {
+            void ensureStrategy();
+        } else if (key === 'heatmap') {
             const nextKey = resolveContractKey(availableContractKeys);
             if (!nextKey) return;
             if (nextKey !== heatmapContract) heatmapContract = nextKey;
@@ -208,9 +255,11 @@
             if (!nextKey) return;
             if (nextKey !== gammaContract) gammaContract = nextKey;
             void ensureGamma(nextKey);
-        } else if (key === 'target') {
-            void ensureStrategy();
         }
+    }
+
+    function onDashboardContract(key) {
+        dashboardContract = key;
     }
 
     function onHeatmapContract(key) {
@@ -229,15 +278,29 @@
             heatmapCache = {};
             gammaCache = {};
             void load().then((nextKey) => {
-                if (activeTab === 'heatmap' && nextKey) {
+                if (activeTab === 'dashboard') {
+                    void loadDashboard();
+                } else if (activeTab === 'target') {
+                    void ensureStrategy();
+                } else if (activeTab === 'heatmap' && nextKey) {
                     void ensureHeatmap(nextKey);
                 } else if (activeTab === 'gamma' && nextKey) {
                     void ensureGamma(nextKey);
-                } else if (activeTab === 'target') {
-                    void ensureStrategy();
                 }
             });
         });
+    });
+
+    $effect(() => {
+        if (activeTab !== 'dashboard') return;
+        let stopped = false;
+        async function tick() {
+            if (stopped) return;
+            await refreshDashboardLivePrices();
+        }
+        tick();
+        const id = setInterval(tick, 5000);
+        return () => { stopped = true; clearInterval(id); };
     });
 
     $effect(() => {
@@ -258,20 +321,22 @@
 <div class="flex h-screen flex-col overflow-hidden">
     <Header
         bind:asset
-        contract={profile.label}
+        contract={activeTab === 'dashboard' ? 'Position Bias Dashboard' : profile.label}
         contractCode={activeTab === 'heatmap'
             ? currentHeatmap?.contract || visibleContract?.contract || ''
             : activeTab === 'gamma'
                 ? currentGamma?.contract || visibleContract?.contract || ''
             : activeTab === 'target'
-                ? 'เป้าวันนี้'
+                ? 'Target'
+            : activeTab === 'dashboard'
+                ? `${dashboardContractLabel} - ${dashboardAssetIds.length} assets`
                 : visibleContract?.contract || ''}
-        price={isLive ? livePrice : visibleContract?.future_price}
-        live={isLive}
-        dte={visibleContract?.dte}
+        price={activeTab === 'dashboard' ? null : (isLive ? livePrice : visibleContract?.future_price)}
+        live={activeTab === 'dashboard' ? false : isLive}
+        dte={activeTab === 'dashboard' ? null : visibleContract?.dte}
         {lastUpdate}
         {lastUpdateAt}
-        refreshing={refreshing || loading}
+        refreshing={refreshing || loading || dashboardLoading || strategyLoading}
         onRefresh={refresh}
     />
 
@@ -280,7 +345,17 @@
     <main class="flex flex-1 min-h-0 flex-col overflow-hidden px-6 py-5">
         {#key activeTab}
             <div class="flex flex-1 min-h-0 flex-col overflow-hidden animate-fade-in">
-                {#if activeTab === 'target'}
+                {#if activeTab === 'dashboard'}
+                    <div class="flex flex-col gap-4 overflow-y-auto">
+                        <PositionBiasDashboard
+                            payloads={dashboardPayloads}
+                            loading={dashboardLoading}
+                            bind:contractKey={dashboardContract}
+                            onChangeContract={onDashboardContract}
+                            livePrices={dashboardLivePrices}
+                        />
+                    </div>
+                {:else if activeTab === 'target'}
                     <div class="flex flex-col gap-4 overflow-y-auto">
                         <TargetView {strategy} assetId={asset} loading={strategyLoading} {livePrice} {liveAt} />
                     </div>
@@ -317,12 +392,16 @@
     </main>
 
     <AppFooter
-        contract={activeTab === 'heatmap'
+        source={activeTab === 'dashboard' ? 'Cross-asset position bias' : sourceLabel}
+        contract={activeTab === 'dashboard'
+            ? `${dashboardContractLabel} - ${dashboardAssetIds.length} assets`
+            : activeTab === 'heatmap'
             ? currentHeatmap?.contract || visibleContract?.contract || '—'
             : activeTab === 'gamma'
                 ? currentGamma?.contract || visibleContract?.contract || '—'
                 : visibleContract?.contract || '—'}
-        dataType={activeTab === 'target' ? 'เป้าวันนี้'
+        dataType={activeTab === 'dashboard' ? 'Position Bias Dashboard'
+            : activeTab === 'target' ? 'Target'
             : activeTab === 'analysis' ? 'Position Bias'
             : activeTab === 'heatmap' ? 'OI Heatmap'
             : activeTab === 'gamma' ? 'Gamma Heatmap'

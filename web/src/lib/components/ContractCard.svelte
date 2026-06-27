@@ -7,6 +7,7 @@
     let {
         contract = null,
         compact = false,
+        assetLabel = null,
         mode = 'split',
         livePrice = null,
         ivByStrike = null,
@@ -22,6 +23,7 @@
 
     const totals = $derived(contract?.totals || {});
     const pcr = $derived(totals.oi_put_call_ratio);
+    const bias = $derived(contract?.position_bias || null);
 
     // Nearest call/put wall measured from the (live) display price so the metrics
     // agree with the chart's price line — not the scrape-time distances baked into
@@ -51,7 +53,17 @@
         if (v < 0.95) return 'call';
         return 'muted';
     }
+    function biasTone(label, score) {
+        const s = String(label || '').toLowerCase();
+        if (s.includes('bull') || score > 5) return 'up';
+        if (s.includes('bear') || score < -5) return 'down';
+        return 'muted';
+    }
+    function biasText(label) {
+        return String(label || 'neutral').replaceAll('_', ' ');
+    }
     const pcrTones = $derived(toneClasses(pcrTone(pcr)));
+    const biasVariant = $derived(biasTone(bias?.label, bias?.score));
 </script>
 
 <Card class="h-full overflow-hidden">
@@ -60,10 +72,21 @@
         <header class="flex items-start justify-between gap-3 min-w-0">
             <div class="flex flex-col gap-1 min-w-0">
                 <div class={`flex flex-wrap items-center ${compact ? 'gap-1.5' : 'gap-2'}`}>
+                    {#if assetLabel}
+                        <Badge variant="secondary" class={compact ? 'px-1.5 text-[9px]' : ''}>{assetLabel}</Badge>
+                    {/if}
                     <Badge variant="muted" class={compact ? 'px-1.5 text-[9px]' : ''}>{contract?.contract_key?.toUpperCase() || '—'}</Badge>
                     {#if contract?.confidence}
                         <Badge variant="outline" class={compact ? 'px-1.5 text-[9px]' : ''}>
                             {contract.confidence} conf.
+                        </Badge>
+                    {/if}
+                    {#if bias}
+                        <Badge variant={biasVariant} class={compact ? 'px-1.5 text-[9px]' : ''}>
+                            {biasText(bias.label)}
+                            {#if bias.score != null}
+                                <span class="ml-1 font-mono">{bias.score > 0 ? '+' : ''}{fmtNumber(bias.score, 1)}</span>
+                            {/if}
                         </Badge>
                     {/if}
                 </div>

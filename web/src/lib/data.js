@@ -1,4 +1,4 @@
-import { CONTRACT_OPTIONS, briefUrl, cotUrl, cryptoSnapshotUrl, econCalendarUrl, expectedRangeUrl, gammaHeatmapUrl, heatmapUrl, isCryptoAsset, ivBaselineUrl, macroUrl, oiDataUrl, optionFlowUrl, positionBiasUrl, signalLogUrl, signalScorecardUrl, strategyUrl, wallBacktestUrl } from './config.js';
+import { ASSET_PROFILES, CONTRACT_OPTIONS, briefUrl, cotUrl, cryptoSnapshotUrl, econCalendarUrl, expectedRangeUrl, gammaHeatmapUrl, heatmapUrl, isCryptoAsset, ivBaselineUrl, macroUrl, oiDataUrl, optionFlowUrl, positionBiasUrl, signalLogUrl, signalScorecardUrl, strategyUrl, wallBacktestUrl } from './config.js';
 import { parseOIData } from './vol2vol.js';
 
 const CRYPTO_SNAPSHOT_TTL_MS = 4000;
@@ -59,6 +59,7 @@ export async function fetchPositionBias(assetId) {
     if (isCryptoAsset(assetId)) {
         const snapshot = await fetchCryptoSnapshot(assetId);
         return {
+            ...snapshot,
             contracts: snapshot?.contracts || [],
             expectedRange: snapshot?.expected_range || null
         };
@@ -73,6 +74,17 @@ export async function fetchPositionBias(assetId) {
         contracts: contractResults.filter(Boolean),
         expectedRange
     };
+}
+
+/**
+ * Fetches the position-bias payload for every dashboard asset.
+ * Returns an object keyed by asset id: `{ gc, nq, btc, eth }`.
+ */
+export async function fetchPositionBiasDashboard(assetIds = Object.keys(ASSET_PROFILES)) {
+    const entries = await Promise.all(
+        assetIds.map(async (assetId) => [assetId, await fetchPositionBias(assetId)])
+    );
+    return Object.fromEntries(entries);
 }
 
 /**

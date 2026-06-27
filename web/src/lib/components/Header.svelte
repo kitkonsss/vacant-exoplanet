@@ -84,7 +84,7 @@
                         {price != null ? fmtNumber(price, 1) : '—'}
                     </span>
                     {#if live}
-                        <span class="inline-flex items-center gap-1 text-[10px] font-semibold text-up" title="ราคา realtime (เดียวกับการ์ดเป้าวันนี้)">
+                        <span class="inline-flex items-center gap-1 text-[10px] font-semibold text-up" title="ราคา realtime">
                             <span class="h-1.5 w-1.5 rounded-full bg-up animate-pulse-dot"></span>live
                         </span>
                     {/if}
