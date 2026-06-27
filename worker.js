@@ -15,6 +15,8 @@ const CRYPTO_ASSETS = {
         okxSwap: 'BTC-USDT-SWAP',
         bybitBase: 'BTC',
         bybitLinear: 'BTCUSDT',
+        deribitCurrency: 'BTC',
+        deribitIndex: 'btc_usd',
         strikeWindow: 30000,
     },
     eth: {
@@ -24,9 +26,13 @@ const CRYPTO_ASSETS = {
         okxSwap: 'ETH-USDT-SWAP',
         bybitBase: 'ETH',
         bybitLinear: 'ETHUSDT',
+        deribitCurrency: 'ETH',
+        deribitIndex: 'eth_usd',
         strikeWindow: 2500,
     },
 };
+const CRYPTO_VENUES = new Set(['aggregate', 'deribit', 'okx', 'bybit']);
+const AGGREGATE_VENUES = ['deribit', 'okx', 'bybit'];
 const MS_DAY = 86400000;
 const MONTHS = { JAN: 0, FEB: 1, MAR: 2, APR: 3, MAY: 4, JUN: 5, JUL: 6, AUG: 7, SEP: 8, OCT: 9, NOV: 10, DEC: 11 };
 
@@ -101,6 +107,58 @@ function round(v, d = 2) {
     return Math.round(v * f) / f;
 }
 
+function normalizeIv(v) {
+    const n = num(v);
+    if (!Number.isFinite(n) || n <= 0) return null;
+    return n > 3 ? n / 100 : n;
+}
+
+function median(values) {
+    const xs = values.filter(Number.isFinite).sort((a, b) => a - b);
+    if (!xs.length) return null;
+    const mid = Math.floor(xs.length / 2);
+    return xs.length % 2 ? xs[mid] : (xs[mid - 1] + xs[mid]) / 2;
+}
+
+function erf(x) {
+    const sign = x < 0 ? -1 : 1;
+    const ax = Math.abs(x);
+    const t = 1 / (1 + 0.3275911 * ax);
+    const y = 1 - (((((1.061405429 * t - 1.453152027) * t) + 1.421413741) * t - 0.284496736) * t + 0.254829592) * t * Math.exp(-ax * ax);
+    return sign * y;
+}
+
+function normalCdf(x) {
+    return 0.5 * (1 + erf(x / Math.SQRT2));
+}
+
+function normalPdf(x) {
+    return Math.exp(-0.5 * x * x) / Math.sqrt(2 * Math.PI);
+}
+
+function proxyGreeks({ price, strike, expiryMs, iv, type }) {
+    if (!Number.isFinite(price) || price <= 0 || !Number.isFinite(strike) || strike <= 0 || !Number.isFinite(iv) || iv <= 0) {
+        return {};
+    }
+    const years = Math.max((expiryMs - Date.now()) / MS_DAY / 365, 1 / 365 / 24);
+    const sqrtT = Math.sqrt(years);
+    const d1 = (Math.log(price / strike) + 0.5 * iv * iv * years) / (iv * sqrtT);
+    const d2 = d1 - iv * sqrtT;
+    const pdf = normalPdf(d1);
+    const call = type === 'C';
+    const delta = call ? normalCdf(d1) : normalCdf(d1) - 1;
+    const gamma = pdf / (price * iv * sqrtT);
+    const vega = price * pdf * sqrtT / 100;
+    const theta = -(price * pdf * iv) / (2 * sqrtT * 365);
+    return {
+        delta,
+        gamma,
+        vega,
+        theta: call ? theta : theta,
+        theoreticalProbability: call ? normalCdf(d2) : normalCdf(-d2),
+    };
+}
+
 function isoDate(ms) {
     return new Date(ms).toISOString().slice(0, 10);
 }
@@ -153,6 +211,20 @@ function parseBybitOptionId(symbol) {
     };
 }
 
+function parseDeribitOptionId(instrumentName) {
+    const m = String(instrumentName || '').match(/^(BTC|ETH)-(\d{1,2})([A-Z]{3})(\d{2})-([0-9.]+)-([CP])$/);
+    if (!m) return null;
+    const expiryMs = bybitExpiryMs(m[2].padStart(2, '0'), m[3], m[4]);
+    if (!expiryMs) return null;
+    return {
+        key: `${m[1]}-${m[2].padStart(2, '0')}${m[3]}${m[4]}-${m[5]}-${m[6]}`,
+        expiryMs,
+        expiryCode: `${m[2].padStart(2, '0')}${m[3]}${m[4]}`,
+        strike: Number(m[5]),
+        type: m[6],
+    };
+}
+
 async function fetchOkx(path) {
     const res = await fetch(`https://www.okx.com${path}`, {
         headers: { accept: 'application/json' },
@@ -175,6 +247,17 @@ async function fetchBybit(path) {
     return Array.isArray(j?.result?.list) ? j.result.list : [];
 }
 
+async function fetchDeribit(path) {
+    const res = await fetch(`https://www.deribit.com${path}`, {
+        headers: { accept: 'application/json' },
+        cf: { cacheTtl: 5, cacheEverything: true },
+    });
+    if (!res.ok) throw new Error(`Deribit ${res.status}`);
+    const j = await res.json();
+    if (j?.error) throw new Error(`Deribit ${j.error?.code || 'error'} ${j.error?.message || ''}`.trim());
+    return j?.result;
+}
+
 function optionRowsFromOkx(summaryRows, oiRows, nowMs) {
     const oiByKey = new Map();
     for (const row of oiRows || []) {
@@ -192,24 +275,28 @@ function optionRowsFromOkx(summaryRows, oiRows, nowMs) {
         const parsed = parseOkxOptionId(row.instId);
         if (!parsed || parsed.expiryMs <= nowMs || !Number.isFinite(parsed.strike)) continue;
         const oi = oiByKey.get(parsed.key) || {};
+        const openInterest = oi.oiCcy ?? oi.oi ?? 0;
         out.push({
             provider: 'okx',
+            venue: 'okx',
             symbol: row.instId,
             expiryMs: parsed.expiryMs,
             expiryCode: parsed.expiryCode,
             strike: parsed.strike,
             type: parsed.type,
-            markIv: num(row.markVol) ?? num(row.volLv),
-            bidIv: num(row.bidVol),
-            askIv: num(row.askVol),
+            markIv: normalizeIv(row.markVol) ?? normalizeIv(row.volLv),
+            bidIv: normalizeIv(row.bidVol),
+            askIv: normalizeIv(row.askVol),
             delta: num(row.delta),
             gamma: num(row.gamma),
             vega: num(row.vega),
             theta: num(row.theta),
             fwdPx: num(row.fwdPx),
-            openInterest: oi.oi ?? 0,
-            openInterestUsd: oi.oiUsd,
+            openInterest,
+            openInterestRaw: oi.oi ?? 0,
+            openInterestUsd: oi.oiUsd ?? (num(row.fwdPx) && openInterest ? num(row.fwdPx) * openInterest : null),
             volume24h: 0,
+            volumeUsd: null,
         });
     }
     return out;
@@ -220,24 +307,70 @@ function optionRowsFromBybit(tickerRows, nowMs) {
     for (const row of tickerRows || []) {
         const parsed = parseBybitOptionId(row.symbol);
         if (!parsed || parsed.expiryMs <= nowMs || !Number.isFinite(parsed.strike)) continue;
+        const price = num(row.underlyingPrice) ?? num(row.indexPrice);
+        const openInterest = num(row.openInterest) ?? 0;
         out.push({
             provider: 'bybit',
+            venue: 'bybit',
             symbol: row.symbol,
             expiryMs: parsed.expiryMs,
             expiryCode: parsed.expiryCode,
             strike: parsed.strike,
             type: parsed.type,
-            markIv: num(row.markIv),
-            bidIv: num(row.bid1Iv),
-            askIv: num(row.ask1Iv),
+            markIv: normalizeIv(row.markIv),
+            bidIv: normalizeIv(row.bid1Iv),
+            askIv: normalizeIv(row.ask1Iv),
             delta: num(row.delta),
             gamma: num(row.gamma),
             vega: num(row.vega),
             theta: num(row.theta),
-            fwdPx: num(row.underlyingPrice) ?? num(row.indexPrice),
-            openInterest: num(row.openInterest) ?? 0,
-            openInterestUsd: null,
+            fwdPx: price,
+            openInterest,
+            openInterestRaw: openInterest,
+            openInterestUsd: price && openInterest ? price * openInterest : null,
             volume24h: num(row.volume24h) ?? num(row.totalVolume) ?? 0,
+            volumeUsd: num(row.turnover24h) ?? num(row.totalTurnover),
+        });
+    }
+    return out;
+}
+
+function optionRowsFromDeribit(summaryRows, indexPrice, nowMs) {
+    const out = [];
+    for (const row of summaryRows || []) {
+        const parsed = parseDeribitOptionId(row.instrument_name);
+        if (!parsed || parsed.expiryMs <= nowMs || !Number.isFinite(parsed.strike)) continue;
+        const fwdPx = num(row.underlying_price) ?? num(row.estimated_delivery_price) ?? indexPrice;
+        const markIv = normalizeIv(row.mark_iv);
+        const greeks = proxyGreeks({
+            price: fwdPx ?? indexPrice,
+            strike: parsed.strike,
+            expiryMs: parsed.expiryMs,
+            iv: markIv,
+            type: parsed.type,
+        });
+        const openInterest = num(row.open_interest) ?? 0;
+        out.push({
+            provider: 'deribit',
+            venue: 'deribit',
+            symbol: row.instrument_name,
+            expiryMs: parsed.expiryMs,
+            expiryCode: parsed.expiryCode,
+            strike: parsed.strike,
+            type: parsed.type,
+            markIv,
+            bidIv: null,
+            askIv: null,
+            delta: greeks.delta ?? null,
+            gamma: greeks.gamma ?? null,
+            vega: greeks.vega ?? null,
+            theta: greeks.theta ?? null,
+            fwdPx,
+            openInterest,
+            openInterestRaw: openInterest,
+            openInterestUsd: indexPrice && openInterest ? indexPrice * openInterest : null,
+            volume24h: num(row.volume) ?? 0,
+            volumeUsd: num(row.volume_usd),
         });
     }
     return out;
@@ -254,30 +387,33 @@ function aggregateExpiry(rows, price, cfg, contractKey) {
             call_volume: 0,
             put_volume: 0,
             call_iv_sum: 0,
-            call_iv_n: 0,
+            call_iv_weight: 0,
             put_iv_sum: 0,
-            put_iv_n: 0,
+            put_iv_weight: 0,
             call_gamma: 0,
             put_gamma: 0,
+            venue_oi: {},
         };
         const oi = Math.max(0, r.openInterest || 0);
         const vol = Math.max(0, r.volume24h || 0);
         const gamma1pct = Math.abs(r.gamma || 0) * price * 0.01 * oi;
+        const venue = r.venue || r.provider || 'unknown';
+        item.venue_oi[venue] = (item.venue_oi[venue] || 0) + oi;
         if (r.type === 'C') {
             item.call_oi += oi;
             item.call_volume += vol;
             item.call_gamma += gamma1pct;
-            if (r.markIv) {
-                item.call_iv_sum += r.markIv;
-                item.call_iv_n += 1;
+            if (r.markIv && oi > 0) {
+                item.call_iv_sum += r.markIv * oi;
+                item.call_iv_weight += oi;
             }
         } else {
             item.put_oi += oi;
             item.put_volume += vol;
             item.put_gamma += gamma1pct;
-            if (r.markIv) {
-                item.put_iv_sum += r.markIv;
-                item.put_iv_n += 1;
+            if (r.markIv && oi > 0) {
+                item.put_iv_sum += r.markIv * oi;
+                item.put_iv_weight += oi;
             }
         }
         byStrike.set(r.strike, item);
@@ -299,9 +435,10 @@ function aggregateExpiry(rows, price, cfg, contractKey) {
                 call_volume: round(x.call_volume, 4),
                 put_volume: round(x.put_volume, 4),
                 activity_vs_oi: totalOi > 0 ? round(totalVol / totalOi, 4) : null,
-                call_iv: x.call_iv_n ? round(x.call_iv_sum / x.call_iv_n, 5) : null,
-                put_iv: x.put_iv_n ? round(x.put_iv_sum / x.put_iv_n, 5) : null,
+                call_iv: x.call_iv_weight ? round(x.call_iv_sum / x.call_iv_weight, 5) : null,
+                put_iv: x.put_iv_weight ? round(x.put_iv_sum / x.put_iv_weight, 5) : null,
                 gamma_1pct: round(x.call_gamma + x.put_gamma, 4),
+                venues: Object.fromEntries(Object.entries(x.venue_oi).map(([venue, value]) => [venue, round(value, 4)])),
             };
         })
         .filter((x) => x.total_oi > 0 || x.call_volume > 0 || x.put_volume > 0)
@@ -445,7 +582,7 @@ function buildExpectedRange(contracts, price) {
     };
 }
 
-function buildHeatmaps(contracts, price, generatedAt, cfg) {
+function buildHeatmaps(contracts, price, generatedAt, cfg, provider = 'crypto') {
     const heatmaps = {};
     const gammaHeatmaps = {};
     const oiData = {};
@@ -453,7 +590,7 @@ function buildHeatmaps(contracts, price, generatedAt, cfg) {
         const visibleRows = [...(c.position_map || [])].sort((a, b) => b.strike - a.strike);
         heatmaps[c.contract_key] = {
             asset: cfg.id,
-            provider: 'crypto',
+            provider,
             generated_at: generatedAt,
             contract: c.contract,
             underlying: price,
@@ -462,7 +599,7 @@ function buildHeatmaps(contracts, price, generatedAt, cfg) {
         };
         gammaHeatmaps[c.contract_key] = {
             asset: cfg.id,
-            provider: 'crypto',
+            provider,
             generated_at: generatedAt,
             contract: c.contract,
             underlying: price,
@@ -521,7 +658,7 @@ function buildGammaSummary(contracts, price) {
     };
 }
 
-function buildStrategy({ cfg, price, generatedAt, contracts, expectedRange, funding, swapOi, provider }) {
+function buildStrategy({ cfg, price, generatedAt, contracts, expectedRange, funding, swapOi, provider, providerLabel, venueBreakdown, venueErrors }) {
     const primary = contracts[0];
     const support = primary?.position_map?.filter((x) => x.strike < price).reduce((s, x) => s + (x.put_oi || 0), 0) || 0;
     const resistance = primary?.position_map?.filter((x) => x.strike > price).reduce((s, x) => s + (x.call_oi || 0), 0) || 0;
@@ -548,6 +685,7 @@ function buildStrategy({ cfg, price, generatedAt, contracts, expectedRange, fund
         future_price: price,
         source: 'crypto_realtime',
         provider,
+        provider_label: providerLabel || provider,
         directional_bias: { label, score, confidence: 'medium' },
         components: {
             positioning: { score: round(wallScore, 1), label, weight: 0.75 },
@@ -583,12 +721,112 @@ function buildStrategy({ cfg, price, generatedAt, contracts, expectedRange, fund
         data_freshness: {
             source: 'exchange_public_api',
             provider,
+            provider_label: providerLabel || provider,
+            venues: venueBreakdown || null,
+            venue_errors: venueErrors || [],
             updated: generatedAt,
         },
     };
 }
 
-function snapshotFromRows({ cfg, provider, rows, price, funding, swapOi, generatedAt }) {
+function providerLabel(provider, venueBreakdown) {
+    if (provider !== 'aggregate') return provider.toUpperCase();
+    const names = { deribit: 'Deribit', okx: 'OKX', bybit: 'Bybit' };
+    const active = Object.entries(venueBreakdown || {})
+        .filter(([, meta]) => meta?.ok)
+        .map(([venue]) => names[venue] || venue.toUpperCase());
+    return `Aggregate: ${active.join(' + ') || 'No venues'}`;
+}
+
+function summarizeVenueRows(rows, price) {
+    const totals = rows.reduce((acc, row) => {
+        acc.option_rows += 1;
+        acc.option_open_interest += row.openInterest || 0;
+        acc.option_open_interest_usd += row.openInterestUsd || ((row.openInterest || 0) * price);
+        acc.option_volume += row.volume24h || 0;
+        acc.option_volume_usd += row.volumeUsd || 0;
+        return acc;
+    }, { option_rows: 0, option_open_interest: 0, option_open_interest_usd: 0, option_volume: 0, option_volume_usd: 0 });
+    return {
+        option_rows: totals.option_rows,
+        option_open_interest: round(totals.option_open_interest, 4),
+        option_open_interest_usd: round(totals.option_open_interest_usd, 2),
+        option_volume_24h: round(totals.option_volume, 4),
+        option_volume_usd_24h: round(totals.option_volume_usd, 2),
+    };
+}
+
+function buildVenueBreakdown(venueData, venueErrors = []) {
+    const out = {};
+    for (const data of venueData || []) {
+        out[data.venue] = {
+            ok: true,
+            price: round(data.price, 2),
+            ...summarizeVenueRows(data.rows || [], data.price),
+            futures_open_interest_usd: round(data.swapOi?.oiUsd ?? null, 2),
+            funding_rate: data.funding?.fundingRate ?? null,
+        };
+    }
+    for (const err of venueErrors || []) {
+        if (!out[err.venue]) out[err.venue] = { ok: false, error: err.error };
+    }
+    return out;
+}
+
+function aggregateFunding(venueData) {
+    let weight = 0;
+    let funding = 0;
+    let premium = 0;
+    let premiumWeight = 0;
+    let nextFundingTime = null;
+    const venues = {};
+    for (const data of venueData || []) {
+        const rate = data.funding?.fundingRate;
+        const oiUsd = data.swapOi?.oiUsd;
+        if (Number.isFinite(rate) && Number.isFinite(oiUsd) && oiUsd > 0) {
+            funding += rate * oiUsd;
+            weight += oiUsd;
+        }
+        if (Number.isFinite(data.funding?.premium) && Number.isFinite(oiUsd) && oiUsd > 0) {
+            premium += data.funding.premium * oiUsd;
+            premiumWeight += oiUsd;
+        }
+        if (Number.isFinite(data.funding?.nextFundingTime)) {
+            nextFundingTime = nextFundingTime == null ? data.funding.nextFundingTime : Math.min(nextFundingTime, data.funding.nextFundingTime);
+        }
+        if (data.funding) venues[data.venue] = data.funding;
+    }
+    return {
+        fundingRate: weight ? funding / weight : null,
+        nextFundingTime,
+        premium: premiumWeight ? premium / premiumWeight : null,
+        venues,
+        method: 'OI USD weighted across venues with futures/perp funding',
+    };
+}
+
+function aggregateSwapOi(venueData) {
+    const venues = {};
+    let oi = 0;
+    let oiCcy = 0;
+    let oiUsd = 0;
+    for (const data of venueData || []) {
+        if (!data.swapOi) continue;
+        venues[data.venue] = data.swapOi;
+        oi += data.swapOi.oi || 0;
+        oiCcy += data.swapOi.oiCcy || data.swapOi.oi || 0;
+        oiUsd += data.swapOi.oiUsd || 0;
+    }
+    return {
+        oi: oi ? round(oi, 4) : null,
+        oiCcy: oiCcy ? round(oiCcy, 4) : null,
+        oiUsd: oiUsd ? round(oiUsd, 2) : null,
+        venues,
+        method: 'Sum of OKX + Bybit linear/swap open interest; Deribit excluded from perp funding aggregate',
+    };
+}
+
+function snapshotFromRows({ cfg, provider, rows, price, funding, swapOi, generatedAt, venueBreakdown = {}, venueErrors = [] }) {
     const buckets = chooseBuckets(rows);
     const contracts = [];
     for (const [key, expiryMs] of buckets.entries()) {
@@ -596,19 +834,35 @@ function snapshotFromRows({ cfg, provider, rows, price, funding, swapOi, generat
         if (expiryRows.length) contracts.push(aggregateExpiry(expiryRows, price, cfg, key));
     }
     const expectedRange = buildExpectedRange(contracts, price);
-    const { heatmaps, gammaHeatmaps, oiData } = buildHeatmaps(contracts, price, generatedAt, cfg);
-    const strategy = buildStrategy({ cfg, price, generatedAt, contracts, expectedRange, funding, swapOi, provider });
+    const { heatmaps, gammaHeatmaps, oiData } = buildHeatmaps(contracts, price, generatedAt, cfg, provider);
+    const label = providerLabel(provider, venueBreakdown);
+    const strategy = buildStrategy({
+        cfg,
+        price,
+        generatedAt,
+        contracts,
+        expectedRange,
+        funding,
+        swapOi,
+        provider,
+        providerLabel: label,
+        venueBreakdown,
+        venueErrors,
+    });
     return {
         asset: cfg.id,
         asset_label: `${cfg.short} Crypto Options`,
         source: 'crypto_realtime',
         provider,
+        provider_label: label,
+        venues: venueBreakdown,
+        venue_errors: venueErrors,
         generated_at: generatedAt,
         live_price: {
-            sym: provider === 'okx' ? cfg.okxSwap : cfg.bybitLinear,
+            sym: provider === 'aggregate' ? `${cfg.short}-AGG` : provider === 'okx' ? cfg.okxSwap : provider === 'bybit' ? cfg.bybitLinear : `${cfg.short}-DERIBIT`,
             price,
             time: Math.floor(Date.parse(generatedAt) / 1000),
-            exch: provider.toUpperCase(),
+            exch: provider === 'aggregate' ? 'AGGREGATE' : provider.toUpperCase(),
         },
         future_price: price,
         contracts,
@@ -625,7 +879,7 @@ function snapshotHasOi(snapshot) {
     return (snapshot?.contracts || []).some((c) => (c?.totals?.open_interest || 0) > 0);
 }
 
-async function buildOkxCryptoSnapshot(cfg, generatedAt, nowMs) {
+async function buildOkxVenueData(cfg, nowMs) {
     const [tickerRows, swapOiRows, fundingRows, summaryRows, optionOiRows] = await Promise.all([
         fetchOkx(`/api/v5/market/ticker?instId=${encodeURIComponent(cfg.okxSwap)}`),
         fetchOkx(`/api/v5/public/open-interest?instType=SWAP&instId=${encodeURIComponent(cfg.okxSwap)}`),
@@ -637,9 +891,8 @@ async function buildOkxCryptoSnapshot(cfg, generatedAt, nowMs) {
     if (!price) throw new Error('OKX missing price');
     const rows = optionRowsFromOkx(summaryRows, optionOiRows, nowMs);
     if (!rows.length) throw new Error('OKX missing option rows');
-    return snapshotFromRows({
-        cfg,
-        provider: 'okx',
+    return {
+        venue: 'okx',
         rows,
         price,
         funding: {
@@ -652,11 +905,10 @@ async function buildOkxCryptoSnapshot(cfg, generatedAt, nowMs) {
             oiCcy: num(swapOiRows[0]?.oiCcy),
             oiUsd: num(swapOiRows[0]?.oiUsd),
         },
-        generatedAt,
-    });
+    };
 }
 
-async function buildBybitCryptoSnapshot(cfg, generatedAt, nowMs) {
+async function buildBybitVenueData(cfg, nowMs) {
     const [linearRows, optionRowsRaw] = await Promise.all([
         fetchBybit(`/v5/market/tickers?category=linear&symbol=${encodeURIComponent(cfg.bybitLinear)}`),
         fetchBybit(`/v5/market/tickers?category=option&baseCoin=${encodeURIComponent(cfg.bybitBase)}`),
@@ -666,9 +918,8 @@ async function buildBybitCryptoSnapshot(cfg, generatedAt, nowMs) {
     const price = num(linear.lastPrice) ?? rows.find((r) => r.fwdPx)?.fwdPx;
     if (!price) throw new Error('Bybit missing price');
     if (!rows.length) throw new Error('Bybit missing option rows');
-    return snapshotFromRows({
-        cfg,
-        provider: 'bybit',
+    return {
+        venue: 'bybit',
         rows,
         price,
         funding: {
@@ -681,35 +932,109 @@ async function buildBybitCryptoSnapshot(cfg, generatedAt, nowMs) {
             oiCcy: num(linear.openInterest),
             oiUsd: num(linear.openInterestValue),
         },
+    };
+}
+
+async function buildDeribitVenueData(cfg, nowMs) {
+    const [summaryRows, indexResult] = await Promise.all([
+        fetchDeribit(`/api/v2/public/get_book_summary_by_currency?currency=${encodeURIComponent(cfg.deribitCurrency)}&kind=option`),
+        fetchDeribit(`/api/v2/public/get_index_price?index_name=${encodeURIComponent(cfg.deribitIndex)}`),
+    ]);
+    const indexPrice = num(indexResult?.index_price) ?? num(indexResult?.estimated_delivery_price);
+    const rows = optionRowsFromDeribit(Array.isArray(summaryRows) ? summaryRows : [], indexPrice, nowMs);
+    const price = indexPrice ?? median(rows.map((r) => r.fwdPx));
+    if (!price) throw new Error('Deribit missing price');
+    if (!rows.length) throw new Error('Deribit missing option rows');
+    return {
+        venue: 'deribit',
+        rows,
+        price,
+        funding: null,
+        swapOi: null,
+    };
+}
+
+async function buildVenueData(cfg, venue, nowMs) {
+    if (venue === 'deribit') return buildDeribitVenueData(cfg, nowMs);
+    if (venue === 'okx') return buildOkxVenueData(cfg, nowMs);
+    if (venue === 'bybit') return buildBybitVenueData(cfg, nowMs);
+    throw new Error(`Unsupported venue ${venue}`);
+}
+
+async function buildSingleVenueSnapshot(cfg, venue, generatedAt, nowMs) {
+    const data = await buildVenueData(cfg, venue, nowMs);
+    const venueBreakdown = buildVenueBreakdown([data]);
+    const snapshot = snapshotFromRows({
+        cfg,
+        provider: venue,
+        rows: data.rows,
+        price: data.price,
+        funding: data.funding,
+        swapOi: data.swapOi,
         generatedAt,
+        venueBreakdown,
     });
+    if (!snapshotHasOi(snapshot)) throw new Error(`${venue} returned no usable option OI`);
+    return snapshot;
+}
+
+async function buildAggregateCryptoSnapshot(cfg, generatedAt, nowMs) {
+    const settled = await Promise.all(AGGREGATE_VENUES.map(async (venue) => {
+        try {
+            const data = await buildVenueData(cfg, venue, nowMs);
+            if (!data.rows.some((row) => (row.openInterest || 0) > 0)) {
+                throw new Error(`${venue} returned no usable option OI`);
+            }
+            return { ok: true, data };
+        } catch (e) {
+            return { ok: false, venue, error: String(e?.message || e) };
+        }
+    }));
+    const venueData = settled.filter((x) => x.ok).map((x) => x.data);
+    const venueErrors = settled.filter((x) => !x.ok).map(({ venue, error }) => ({ venue, error }));
+    if (!venueData.length) {
+        throw Object.assign(new Error('All crypto venues failed'), { venueErrors });
+    }
+
+    const price = median(venueData.map((data) => data.price));
+    const rows = venueData.flatMap((data) => data.rows);
+    const venueBreakdown = buildVenueBreakdown(venueData, venueErrors);
+    const snapshot = snapshotFromRows({
+        cfg,
+        provider: 'aggregate',
+        rows,
+        price,
+        funding: aggregateFunding(venueData),
+        swapOi: aggregateSwapOi(venueData),
+        generatedAt,
+        venueBreakdown,
+        venueErrors,
+    });
+    if (!snapshotHasOi(snapshot)) {
+        throw Object.assign(new Error('Aggregate returned no usable option OI'), { venueErrors });
+    }
+    return snapshot;
 }
 
 async function cryptoSnapshot(request) {
-    const asset = (new URL(request.url).searchParams.get('asset') || '').toLowerCase();
+    const url = new URL(request.url);
+    const asset = (url.searchParams.get('asset') || '').toLowerCase();
+    const venue = (url.searchParams.get('venue') || 'aggregate').toLowerCase();
     const cfg = CRYPTO_ASSETS[asset];
     if (!cfg) return cryptoJson({ error: 'bad asset', allowed: Object.keys(CRYPTO_ASSETS) }, 400);
+    if (!CRYPTO_VENUES.has(venue)) return cryptoJson({ error: 'bad venue', allowed: [...CRYPTO_VENUES] }, 400);
 
     const nowMs = Date.now();
     const generatedAt = new Date(nowMs).toISOString();
-    const errors = [];
-
     try {
-        const okx = await buildOkxCryptoSnapshot(cfg, generatedAt, nowMs);
-        if (snapshotHasOi(okx)) return cryptoJson(okx);
-        errors.push('OKX returned no usable option OI');
+        const snapshot = venue === 'aggregate'
+            ? await buildAggregateCryptoSnapshot(cfg, generatedAt, nowMs)
+            : await buildSingleVenueSnapshot(cfg, venue, generatedAt, nowMs);
+        return cryptoJson(snapshot);
     } catch (e) {
-        errors.push(String(e?.message || e));
+        const venueErrors = e?.venueErrors || [{ venue, error: String(e?.message || e) }];
+        return cryptoJson({ error: 'provider failure', asset, venue, venue_errors: venueErrors }, 502);
     }
-
-    try {
-        const bybit = await buildBybitCryptoSnapshot(cfg, generatedAt, nowMs);
-        return cryptoJson({ ...bybit, fallback_errors: errors });
-    } catch (e) {
-        errors.push(String(e?.message || e));
-    }
-
-    return cryptoJson({ error: 'provider failure', asset, errors }, 502);
 }
 
 async function price(request) {
