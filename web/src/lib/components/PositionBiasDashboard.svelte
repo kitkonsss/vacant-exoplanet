@@ -2,6 +2,7 @@
     import Card from './ui/Card.svelte';
     import ContractCard from './ContractCard.svelte';
     import { ASSET_PROFILES, CONTRACT_OPTIONS } from '$lib/config.js';
+    import { fetchOIData } from '$lib/data.js';
     import { cn } from '$lib/utils.js';
 
     let {
@@ -13,6 +14,10 @@
     } = $props();
 
     let mode = $state('split');
+    let showIv = $state(true);
+    let showDaySd = $state(true);
+    let showExpSd = $state(true);
+    let ivMaps = $state({});
 
     const assetIds = Object.keys(ASSET_PROFILES);
     const selectedContract = $derived(
@@ -46,6 +51,79 @@
         contractKey = key;
         onChangeContract(key);
     }
+
+    $effect(() => {
+        const key = contractKey;
+        const activeRows = rows.filter((row) => row.contract);
+        let stopped = false;
+        (async () => {
+            const entries = await Promise.all(
+                activeRows.map(async (row) => {
+                    const oi = await fetchOIData(row.assetId, key);
+                    if (!oi?.strikes) return [row.assetId, null];
+                    const map = {};
+                    for (const strike of oi.strikes) {
+                        if (Number.isFinite(strike.strike) && strike.volSettle > 0) {
+                            map[strike.strike] = strike.volSettle * 100;
+                        }
+                    }
+                    return [row.assetId, Object.keys(map).length ? map : null];
+                })
+            );
+            if (!stopped) ivMaps = Object.fromEntries(entries);
+        })();
+        return () => { stopped = true; };
+    });
+
+    function tenorFor(assetId, contract) {
+        const tenors = payloads?.[assetId]?.expectedRange?.tenors || [];
+        return tenors.find((tenor) => tenor.contract_key === contract?.contract_key)
+            || tenors.find((tenor) => tenor.symbol === contract?.contract)
+            || null;
+    }
+
+    function pushBands(out, bands, group, color, labelPrefix) {
+        if (!bands) return;
+        for (const k of [1, 2, 3]) {
+            for (const side of ['minus', 'plus']) {
+                const level = Number(bands[`${side}${k}`]);
+                if (Number.isFinite(level)) {
+                    out.push({
+                        k,
+                        side,
+                        group,
+                        color,
+                        level,
+                        label: `${side === 'plus' ? '+' : '-'}${k}${labelPrefix}`
+                    });
+                }
+            }
+        }
+    }
+
+    function dayBandsFor(tenor) {
+        const f = Number(tenor?.future_price);
+        const iv = Number(tenor?.atm_iv);
+        const dte = Number(tenor?.dte);
+        if (!Number.isFinite(f) || !Number.isFinite(iv) || !Number.isFinite(dte) || dte <= 0) return null;
+
+        const horizonDays = Math.min(1, dte);
+        const move = f * iv * Math.sqrt(horizonDays / 365);
+        const bands = {};
+        for (const k of [1, 2, 3]) {
+            bands[`plus${k}`] = f + k * move;
+            bands[`minus${k}`] = f - k * move;
+        }
+        return bands;
+    }
+
+    function sdBandsFor(assetId, contract) {
+        const tenor = tenorFor(assetId, contract);
+        const out = [];
+        if (showDaySd) pushBands(out, dayBandsFor(tenor), 'day', '#38bdf8', 'D');
+        if (showExpSd) pushBands(out, tenor?.bands_to_expiry, 'expiry', '#f59e0b', 'E');
+        return out;
+    }
 </script>
 
 {#if loading && loadedCount === 0}
@@ -69,6 +147,40 @@
             </div>
 
             <div class="flex flex-wrap items-center gap-2">
+                <button
+                    type="button"
+                    onclick={() => (showIv = !showIv)}
+                    title="Overlay IV smile on every asset wall chart"
+                    class={cn(
+                        'flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider transition-colors',
+                        showIv ? 'border-[#c084fc] text-[#c084fc]' : 'border-border text-muted-foreground hover:text-foreground'
+                    )}
+                >
+                    <span class="inline-block h-[2px] w-3 rounded-sm bg-[#c084fc]"></span> IV smile
+                </button>
+                <button
+                    type="button"
+                    onclick={() => (showDaySd = !showDaySd)}
+                    title="Overlay 1-day standard-deviation bands for each asset"
+                    class={cn(
+                        'flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider transition-colors',
+                        showDaySd ? 'border-[#38bdf8] text-[#38bdf8]' : 'border-border text-muted-foreground hover:text-foreground'
+                    )}
+                >
+                    <span class="inline-block h-3 w-[2px] rounded-sm bg-[#38bdf8]"></span> 1D SD
+                </button>
+                <button
+                    type="button"
+                    onclick={() => (showExpSd = !showExpSd)}
+                    title="Overlay to-expiry standard-deviation bands for each asset"
+                    class={cn(
+                        'flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider transition-colors',
+                        showExpSd ? 'border-[#f59e0b] text-[#f59e0b]' : 'border-border text-muted-foreground hover:text-foreground'
+                    )}
+                >
+                    <span class="inline-block h-3 w-[2px] rounded-sm bg-[#f59e0b]"></span> Exp SD
+                </button>
+
                 <div class="flex items-center gap-1 rounded-md border border-border bg-surface p-0.5">
                     {#each CONTRACT_OPTIONS as option}
                         <button
@@ -110,6 +222,9 @@
                         assetLabel={row.profile.shortLabel}
                         {mode}
                         livePrice={livePrices?.[row.assetId]?.price ?? null}
+                        ivByStrike={ivMaps[row.assetId] || null}
+                        {showIv}
+                        sdBands={sdBandsFor(row.assetId, row.contract)}
                     />
                 {:else}
                     <Card class="flex min-h-[320px] flex-col justify-between p-5">
