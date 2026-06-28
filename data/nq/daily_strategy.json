@@ -1,11 +1,11 @@
 {
   "version": 2,
   "asset": "NQ",
-  "generated_at": "2026-06-28T10:23:44+00:00",
+  "generated_at": "2026-06-28T23:44:34+00:00",
   "future_price": 29307.8,
   "directional_bias": {
-    "label": "lean_bearish",
-    "score": -12.3,
+    "label": "neutral",
+    "score": -7.7,
     "confidence": "medium"
   },
   "components": {
@@ -15,12 +15,12 @@
       "weight": 0.45
     },
     "macro": {
-      "score": -9.0,
+      "score": 10.0,
       "label": "neutral",
       "weight": 0.35,
       "drivers": [
-        "10Y -2bp/5d \u2192 tailwind",
-        "VIX 18.9, rising \u2192 risk-off"
+        "10Y -9bp/5d \u2192 tailwind",
+        "VIX 18.4, rising \u2192 risk-off"
       ]
     },
     "cot": {
@@ -34,54 +34,26 @@
     }
   },
   "agreement": {
-    "bullish_layers": 0,
-    "bearish_layers": 3,
-    "aligned": 3,
+    "bullish_layers": 1,
+    "bearish_layers": 2,
+    "aligned": 2,
     "total": 3
   },
   "regime": {
     "regime": "mixed",
     "score": 0,
     "reasons": [
-      "VIX 18.9"
+      "VIX 18.4"
     ],
     "lead_playbook": "both"
   },
   "expected_range": {
-    "method": "ATM IV from Vol2Vol smile (1-day move); ATR(14) kept as cross-check",
+    "method": "ATR(14) daily true-range proxy",
     "atr": 905.07,
-    "expected_move": 437.2,
-    "day_high_est": 29745.0,
-    "day_low_est": 28870.6,
-    "note": "IV-based 1SD daily move (forward-looking). bands_1d are \u00b11/2/3 SD anchored at the scrape-time future price; ATR retained for regime detection.",
-    "atm_iv_pct": 28.5,
-    "iv_basis_tenor": {
-      "contract_key": "current",
-      "symbol": "Q5AM6",
-      "dte": 3.33
-    },
-    "bands_1d": {
-      "plus1": 29745.0,
-      "minus1": 28870.6,
-      "plus2": 30182.2,
-      "minus2": 28433.4,
-      "plus3": 30619.4,
-      "minus3": 27996.2
-    },
-    "term_structure": {
-      "slope_volpts_short_minus_monthly": -0.16,
-      "shape": "flat",
-      "short_tenor": "Q5AM6",
-      "long_tenor": "NEN6"
-    },
-    "skew": {
-      "measured_at_pct": 2.0,
-      "put_skew_volpts": 3.03,
-      "call_skew_volpts": -3.27,
-      "read": "baseline_building (16/20 sessions) \u2014 structural put skew; absolute read suppressed",
-      "skew_spread_volpts": 6.3,
-      "baseline_n": 16
-    }
+    "expected_move": 905.07,
+    "day_high_est": 30212.87,
+    "day_low_est": 28402.73,
+    "note": "Typical 1-day travel; a wall beyond \u00b1ATR from price is unlikely to be reached intraday."
   },
   "option_flow": {
     "generated_at": "2026-06-28T10:23:43+00:00",
@@ -144,7 +116,7 @@
   "contrarian_flag": "none",
   "momentum": {
     "direction": "down",
-    "bias": "lean_bearish",
+    "bias": "neutral",
     "aligned_with_regime": false,
     "trigger": "break below 29000 (confluence \u00d72)",
     "targets": [
@@ -181,12 +153,12 @@
       "max_losses_per_day": 2,
       "note": "2 stop-outs = -$1000; stop trading for the day. Size from the stop distance, never from conviction."
     },
-    "expected_move_context": 437.2
+    "expected_move_context": 905.07
   },
   "data_freshness": {
-    "strategy": "2026-06-28T10:23:44+00:00",
+    "strategy": "2026-06-28T23:44:34+00:00",
     "positioning": "2026-06-26T12:06:05Z",
-    "macro": "2026-06-25T23:57:03+00:00",
+    "macro": "2026-06-28T23:44:34+00:00",
     "cot_report_date": "2026-06-02",
     "vwap": null
   },
@@ -1700,7 +1672,7 @@
     },
     "how_to_use": "Heatmap build/magnet = likely destination; gamma 1pct first wall = speed bump, major wall = real cap; confluence levels (\u22652 sources) are the highest-conviction strikes."
   },
-  "macro_context": "Macro neutral (-9): 10Y -2bp/5d \u2192 tailwind; VIX 18.9, rising \u2192 risk-off",
+  "macro_context": "Macro neutral (+10): 10Y -9bp/5d \u2192 tailwind; VIX 18.4, rising \u2192 risk-off",
   "cot_context": "Leveraged funds net -53,650 (falling); Asset managers net +79,091 (falling).",
   "scenarios": [
     {
@@ -1716,6 +1688,6 @@
       "invalidation": "reclaim 29500"
     }
   ],
-  "what_would_change_my_mind": "a clean break of the key levels above with the macro backdrop confirming.",
+  "what_would_change_my_mind": "call walls keep building above price (options positioning stays heavy); funds cut longs (COT rolls over).",
   "disclaimer": "Educational/hypothetical synthesis of options positioning + macro + COT. Not financial advice; produces a directional read and levels, not live entry/stop/target orders."
 }
