@@ -2,6 +2,7 @@ import { ASSET_PROFILES, CONTRACT_OPTIONS, briefUrl, cotUrl, cryptoSnapshotUrl, 
 import { parseOIData } from './vol2vol.js';
 
 const CRYPTO_SNAPSHOT_TTL_MS = 4000;
+const SOFT_FETCH_RETRY_MS = 250;
 /** @type {Map<string, {ts: number, data: any, pending?: Promise<any>}>} */
 const cryptoSnapshotCache = new Map();
 
@@ -9,15 +10,28 @@ function cacheBust(url) {
     return `${url}${url.includes('?') ? '&' : '?'}t=${Date.now()}`;
 }
 
-async function fetchJsonSoft(url) {
-    try {
-        const res = await fetch(cacheBust(url));
-        if (!res.ok) return null;
-        return await res.json();
-    } catch (e) {
-        console.warn(`fetch failed: ${url}`, e);
-        return null;
+function delay(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function fetchJsonSoft(url, { retries = 1 } = {}) {
+    let lastError = null;
+    for (let attempt = 0; attempt <= retries; attempt += 1) {
+        try {
+            const res = await fetch(cacheBust(url), { cache: 'no-store' });
+            if (res.ok) return await res.json();
+            lastError = new Error(`HTTP ${res.status}`);
+        } catch (e) {
+            lastError = e;
+        }
+
+        if (attempt < retries) {
+            await delay(SOFT_FETCH_RETRY_MS * (attempt + 1));
+        }
     }
+
+    console.warn(`fetch failed: ${url}`, lastError);
+    return null;
 }
 
 async function fetchTextSoft(url) {
