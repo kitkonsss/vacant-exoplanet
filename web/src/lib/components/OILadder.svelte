@@ -258,6 +258,13 @@
     const barMax = $derived(compact ? '12px' : '18px');
     const totalBarMax = $derived(compact ? '20px' : '30px');
     const labelSize = $derived(compact ? 'text-[8px]' : 'text-[9px]');
+    const xLabelStep = $derived.by(() => {
+        const maxLabels = compact ? 14 : 22;
+        return Math.max(1, Math.ceil(sorted.length / maxLabels));
+    });
+    function showXLabel(i) {
+        return i === 0 || i === sorted.length - 1 || i % xLabelStep === 0 || hovered === i;
+    }
 
     const TONES = {
         call: { solid: 'bg-call/90 group-hover:bg-call', faded: 'bg-call/35 group-hover:bg-call/55' },
@@ -447,11 +454,12 @@
         <div class="mt-1 flex">
             {#each sorted as lv, i (lv.strike + '-' + i)}
                 <div
-                    class={`flex-1 text-center font-mono tabular-nums leading-none ${labelSize} ${
+                    title={fmtStrike(lv.strike)}
+                    class={`min-w-0 flex-1 text-center font-mono tabular-nums leading-none ${labelSize} ${
                         isKey(lv) ? 'font-semibold text-foreground' : 'text-muted-foreground'
                     } ${hovered === i ? 'text-foreground' : ''}`}
                 >
-                    <span class="hidden sm:inline">{fmtStrike(lv.strike)}</span>
+                    <span class={showXLabel(i) ? 'hidden sm:inline' : 'hidden'}>{fmtStrike(lv.strike)}</span>
                 </div>
             {/each}
         </div>
