@@ -3,12 +3,13 @@
     import Header from '$lib/components/Header.svelte';
     import TabNav from '$lib/components/TabNav.svelte';
     import AppFooter from '$lib/components/AppFooter.svelte';
+    import BiasHistoryView from '$lib/components/BiasHistoryView.svelte';
     import PositionBiasDashboard from '$lib/components/PositionBiasDashboard.svelte';
     import PositionBiasView from '$lib/components/PositionBiasView.svelte';
     import HeatmapView from '$lib/components/HeatmapView.svelte';
-    import { fetchGammaHeatmap, fetchHeatmap, fetchLivePrice, fetchPositionBias, fetchPositionBiasDashboard } from '$lib/data.js';
+    import { fetchBiasHistory, fetchGammaHeatmap, fetchHeatmap, fetchLivePrice, fetchPositionBias, fetchPositionBiasDashboard } from '$lib/data.js';
     import { ASSET_PROFILES, CONTRACT_OPTIONS, DEFAULT_CONTRACT_KEY } from '$lib/config.js';
-    import { LineChart, Grid3X3, Activity, LayoutDashboard } from 'lucide-svelte';
+    import { LineChart, Grid3X3, Activity, LayoutDashboard, History } from 'lucide-svelte';
 
     let asset = $state('gc');
     let activeTab = $state('dashboard');
@@ -39,6 +40,10 @@
     let dashboardLivePrices = $state({});
     let dashboardLoading = $state(false);
     const dashboardAssetIds = Object.keys(ASSET_PROFILES);
+
+    let historyPayload = $state(null);
+    let historyLoading = $state(false);
+    let historyContract = $state(DEFAULT_CONTRACT_KEY);
 
     // Live futures price (same-origin /api/price proxy) — ONE source of truth
     // shared by the Header and position-bias cards so they never disagree. Polled
@@ -78,6 +83,7 @@
 
     const tabs = [
         { key: 'dashboard', label: 'Bias Dashboard', tone: 'warn',    icon: LayoutDashboard },
+        { key: 'history',   label: 'History',        tone: 'primary', icon: History },
         { key: 'analysis',  label: 'Position Bias',  tone: 'primary', icon: LineChart },
         { key: 'heatmap',   label: 'OI Heatmap',     tone: 'mag',     icon: Grid3X3 },
         { key: 'gamma',     label: 'Gamma Heatmap',  tone: 'mag',     icon: Activity }
@@ -87,6 +93,7 @@
         activeTab === 'heatmap' ? heatmapContract
             : activeTab === 'gamma' ? gammaContract
             : activeTab === 'dashboard' ? dashboardContract
+            : activeTab === 'history' ? historyContract
             : 'current'
     );
 
@@ -153,6 +160,18 @@
         }
     }
 
+    async function loadHistory({ silent = false } = {}) {
+        if (!silent) historyLoading = true;
+        try {
+            historyPayload = await fetchBiasHistory();
+            const stamp = new Date();
+            lastUpdate = stamp.toLocaleTimeString();
+            lastUpdateAt = stamp;
+        } finally {
+            if (!silent) historyLoading = false;
+        }
+    }
+
     async function ensureHeatmap(contractKey, { force = false, silent = false } = {}) {
         const cached = untrack(() => heatmapCache[contractKey]);
         if (cached && !force) return;
@@ -189,6 +208,8 @@
             const forceLive = silent && ASSET_PROFILES[asset]?.source === 'crypto';
             if (activeTab === 'dashboard') {
                 await loadDashboard({ silent });
+            } else if (activeTab === 'history') {
+                await loadHistory({ silent });
             } else if (activeTab === 'heatmap' && nextKey) {
                 await ensureHeatmap(nextKey, { force: forceLive, silent });
             } else if (activeTab === 'gamma' && nextKey) {
@@ -227,6 +248,8 @@
     function onTabChange(key) {
         if (key === 'dashboard') {
             void loadDashboard();
+        } else if (key === 'history') {
+            void loadHistory();
         } else if (key === 'heatmap') {
             const nextKey = resolveContractKey(availableContractKeys);
             if (!nextKey) return;
@@ -262,6 +285,8 @@
             void load().then((nextKey) => {
                 if (activeTab === 'dashboard') {
                     void loadDashboard();
+                } else if (activeTab === 'history') {
+                    void loadHistory();
                 } else if (activeTab === 'heatmap' && nextKey) {
                     void ensureHeatmap(nextKey);
                 } else if (activeTab === 'gamma' && nextKey) {
@@ -306,15 +331,17 @@
             ? currentHeatmap?.contract || visibleContract?.contract || ''
             : activeTab === 'gamma'
                 ? currentGamma?.contract || visibleContract?.contract || ''
+            : activeTab === 'history'
+                ? `Bias History - ${historyContract.toUpperCase()}`
             : activeTab === 'dashboard'
                 ? `${dashboardContractLabel} - ${dashboardAssetIds.length} assets`
                 : visibleContract?.contract || ''}
-        price={activeTab === 'dashboard' ? null : (isLive ? livePrice : visibleContract?.future_price)}
-        live={activeTab === 'dashboard' ? false : isLive}
-        dte={activeTab === 'dashboard' ? null : visibleContract?.dte}
+        price={activeTab === 'dashboard' || activeTab === 'history' ? null : (isLive ? livePrice : visibleContract?.future_price)}
+        live={activeTab === 'dashboard' || activeTab === 'history' ? false : isLive}
+        dte={activeTab === 'dashboard' || activeTab === 'history' ? null : visibleContract?.dte}
         {lastUpdate}
         {lastUpdateAt}
-        refreshing={refreshing || loading || dashboardLoading}
+        refreshing={refreshing || loading || dashboardLoading || historyLoading}
         onRefresh={refresh}
     />
 
@@ -331,6 +358,15 @@
                             bind:contractKey={dashboardContract}
                             onChangeContract={onDashboardContract}
                             livePrices={dashboardLivePrices}
+                        />
+                    </div>
+                {:else if activeTab === 'history'}
+                    <div class="flex flex-col gap-4 overflow-y-auto">
+                        <BiasHistoryView
+                            history={historyPayload}
+                            loading={historyLoading}
+                            bind:assetId={asset}
+                            bind:contractKey={historyContract}
                         />
                     </div>
                 {:else if activeTab === 'analysis'}
@@ -366,15 +402,20 @@
     </main>
 
     <AppFooter
-        source={activeTab === 'dashboard' ? 'Cross-asset position bias' : sourceLabel}
+        source={activeTab === 'dashboard' ? 'Cross-asset position bias'
+            : activeTab === 'history' ? 'Bias snapshots'
+            : sourceLabel}
         contract={activeTab === 'dashboard'
             ? `${dashboardContractLabel} - ${dashboardAssetIds.length} assets`
+            : activeTab === 'history'
+            ? `${profile.shortLabel} - ${historyContract.toUpperCase()}`
             : activeTab === 'heatmap'
             ? currentHeatmap?.contract || visibleContract?.contract || '—'
             : activeTab === 'gamma'
                 ? currentGamma?.contract || visibleContract?.contract || '—'
                 : visibleContract?.contract || '—'}
         dataType={activeTab === 'dashboard' ? 'Position Bias Dashboard'
+            : activeTab === 'history' ? 'Bias History'
             : activeTab === 'analysis' ? 'Position Bias'
             : activeTab === 'heatmap' ? 'OI Heatmap'
             : activeTab === 'gamma' ? 'Gamma Heatmap'

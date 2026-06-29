@@ -1,4 +1,4 @@
-import { ASSET_PROFILES, CONTRACT_OPTIONS, briefUrl, cotUrl, cryptoSnapshotUrl, econCalendarUrl, expectedRangeUrl, gammaHeatmapUrl, heatmapUrl, isCryptoAsset, ivBaselineUrl, macroUrl, oiDataUrl, optionFlowUrl, positionBiasUrl, signalLogUrl, signalScorecardUrl, strategyUrl, wallBacktestUrl } from './config.js';
+import { ASSET_PROFILES, CONTRACT_OPTIONS, biasHistoryUrl, briefUrl, cotUrl, cryptoSnapshotUrl, econCalendarUrl, expectedRangeUrl, gammaHeatmapUrl, heatmapUrl, isCryptoAsset, ivBaselineUrl, macroUrl, oiDataUrl, optionFlowUrl, positionBiasUrl, signalLogUrl, signalScorecardUrl, strategyUrl, wallBacktestUrl } from './config.js';
 import { parseOIData } from './vol2vol.js';
 
 const CRYPTO_SNAPSHOT_TTL_MS = 4000;
@@ -99,6 +99,14 @@ export async function fetchPositionBiasDashboard(assetIds = Object.keys(ASSET_PR
         assetIds.map(async (assetId) => [assetId, await fetchPositionBias(assetId)])
     );
     return Object.fromEntries(entries);
+}
+
+export async function fetchBiasHistory() {
+    const data = await fetchJsonSoft(biasHistoryUrl(), { retries: 2 });
+    return {
+        ...data,
+        records: Array.isArray(data?.records) ? data.records : []
+    };
 }
 
 /**

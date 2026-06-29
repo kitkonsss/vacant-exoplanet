@@ -88,6 +88,10 @@ export function positionBiasUrl(assetId, fileName) {
     return dataUrl(assetId, fileName);
 }
 
+export function biasHistoryUrl() {
+    return `${DATA_BASE}/data/bias_snapshots/bias_history.json`;
+}
+
 // Per-contract historical OI heatmap (strike × historical day).
 export function heatmapUrl(assetId, contractKey) {
     return dataUrl(assetId, `${contractKey}_OIHeatmap.json`);
