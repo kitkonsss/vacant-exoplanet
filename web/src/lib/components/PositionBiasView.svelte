@@ -11,7 +11,7 @@
 
     // One selector for the whole view: flip every contract's wall chart between
     // split (Call/Put side-by-side) and total (combined Put+Call) at once.
-    let mode = $state('split'); // 'split' | 'total'
+    let mode = $state('total'); // 'split' | 'total'
     let showIv = $state(true);     // overlay the per-strike IV smile on every chart
     let showDaySd = $state(true);  // overlay 1-day expected-move bands per tenor
     let showExpSd = $state(true);  // overlay to-expiry expected-move bands per tenor

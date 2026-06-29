@@ -13,7 +13,7 @@
         livePrices = {}
     } = $props();
 
-    let mode = $state('split');
+    let mode = $state('total');
     let showIv = $state(true);
     let showDaySd = $state(true);
     let showExpSd = $state(true);
