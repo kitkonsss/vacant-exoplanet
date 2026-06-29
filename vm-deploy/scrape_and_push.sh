@@ -52,9 +52,13 @@ if [ $SCRAPE_EXIT -ne 0 ]; then
     exit $SCRAPE_EXIT
 fi
 
+# Keep one Position Bias dashboard snapshot per Bangkok-time session slot.
+cd "$REPO_DIR"
+python scraper/bias_snapshot.py >> "$LOG_FILE" 2>&1 || true
+
 # ── Commit & Push (data/ includes data/nq/ for NQ) ──
 cd "$REPO_DIR"
-if ! git diff --quiet data/; then
+if [ -n "$(git status --porcelain data/)" ]; then
     BRANCH="$(git rev-parse --abbrev-ref HEAD)"
     git add data/
     git commit -m "auto-update data $(date '+%Y-%m-%d %H:%M') [skip ci]" --quiet

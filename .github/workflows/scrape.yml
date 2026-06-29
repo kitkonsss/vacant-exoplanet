@@ -114,6 +114,12 @@ jobs:
         cd scraper
         python quikstrike_scraper.py ${{ inputs.mode == 'intraday' && '--intraday-only' || '' }}
 
+    - name: Snapshot position-bias dashboard
+      # Keep one Bangkok-time dashboard snapshot per session slot
+      # (morning/afternoon/evening/night). Same-slot reruns replace that slot,
+      # giving us P/C persistence history without noisy 5-min duplicates.
+      run: python scraper/bias_snapshot.py || true
+
     - name: Snapshot heatmap history
       # Archive a date-stamped copy of the OI + vol2vol (gamma) heatmaps and append
       # the per-day backtest record, so we can later check whether price reached the
