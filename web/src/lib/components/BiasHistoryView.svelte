@@ -1,6 +1,7 @@
 <script>
     import Card from './ui/Card.svelte';
     import Badge from './ui/Badge.svelte';
+    import PcrTrendChart from './PcrTrendChart.svelte';
     import { ASSET_PROFILES, CONTRACT_OPTIONS } from '$lib/config.js';
     import { cn } from '$lib/utils.js';
 
@@ -65,15 +66,6 @@
     });
 
     const latestTone = $derived(toneForBias(latest?.bias?.label, latest?.bias?.score));
-    const chartPoints = $derived.by(() => {
-        const rows = contractRows.slice(-24);
-        const values = rows
-            .flatMap((row) => [Number(row.totals?.oi_put_call_ratio), Number(row.totals?.volume_put_call_ratio)])
-            .filter(Number.isFinite);
-        const min = Math.min(0.5, ...values);
-        const max = Math.max(2.5, ...values);
-        return { rows, min, max };
-    });
 
     function toneForBias(label, score) {
         const text = String(label || '').toLowerCase();
@@ -104,25 +96,6 @@
     function stamp(row) {
         if (!row) return '-';
         return `${row.date_bangkok || '-'} ${slotLabels[row.slot] || row.slot || ''}`;
-    }
-
-    function xAt(index, count) {
-        return count <= 1 ? 50 : 8 + (index / (count - 1)) * 84;
-    }
-
-    function yAt(value, min, max) {
-        const n = Number(value);
-        if (!Number.isFinite(n) || max <= min) return 50;
-        return 86 - ((n - min) / (max - min)) * 72;
-    }
-
-    function pathFor(rows, field, min, max) {
-        return rows
-            .map((row, i) => {
-                const point = `${xAt(i, rows.length)},${yAt(row.totals?.[field], min, max)}`;
-                return `${i === 0 ? 'M' : 'L'}${point}`;
-            })
-            .join(' ');
     }
 </script>
 
@@ -255,21 +228,8 @@
                         </div>
                     </div>
 
-                    <div class="mt-3 h-56 w-full overflow-hidden rounded-md border border-border bg-background">
-                        <svg class="h-full w-full" viewBox="0 0 100 100" preserveAspectRatio="none" role="img" aria-label="Put call ratio trend">
-                            <line x1="0" x2="100" y1={yAt(1, chartPoints.min, chartPoints.max)} y2={yAt(1, chartPoints.min, chartPoints.max)} stroke="hsl(var(--border))" stroke-width="0.35" vector-effect="non-scaling-stroke" />
-                            <path d={pathFor(chartPoints.rows, 'oi_put_call_ratio', chartPoints.min, chartPoints.max)} fill="none" stroke="hsl(var(--put))" stroke-width="1.6" vector-effect="non-scaling-stroke" />
-                            <path d={pathFor(chartPoints.rows, 'volume_put_call_ratio', chartPoints.min, chartPoints.max)} fill="none" stroke="hsl(var(--call))" stroke-width="1.3" stroke-dasharray="3 2" vector-effect="non-scaling-stroke" />
-                            {#each chartPoints.rows as row, i}
-                                <circle cx={xAt(i, chartPoints.rows.length)} cy={yAt(row.totals?.oi_put_call_ratio, chartPoints.min, chartPoints.max)} r="1.1" fill="hsl(var(--put))" vector-effect="non-scaling-stroke" />
-                                <circle cx={xAt(i, chartPoints.rows.length)} cy={yAt(row.totals?.volume_put_call_ratio, chartPoints.min, chartPoints.max)} r="0.9" fill="hsl(var(--call))" vector-effect="non-scaling-stroke" />
-                            {/each}
-                        </svg>
-                    </div>
-                    <div class="mt-2 flex justify-between font-mono text-[10px] text-muted-foreground">
-                        <span>{stamp(chartPoints.rows[0])}</span>
-                        <span>range {fmt(chartPoints.min)}-{fmt(chartPoints.max)}</span>
-                        <span>{stamp(chartPoints.rows[chartPoints.rows.length - 1])}</span>
+                    <div class="mt-3">
+                        <PcrTrendChart rows={contractRows} />
                     </div>
                 </Card>
             {/if}
