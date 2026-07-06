@@ -9,6 +9,8 @@
     const PRICE_PANEL_HEIGHT = 164;
     const PRICE_PAD_TOP = 18;
     const PRICE_PAD_BOTTOM = 24;
+    const VISIBLE_RIGHT_OFFSET = 2;
+    const MIN_LOGICAL_SPAN = 2;
     const TOOLTIP_WIDTH = 304;
     const TOOLTIP_MIN_WIDTH = 180;
     const slotLabels = {
@@ -112,12 +114,54 @@
     function fallbackRange(points = chartData) {
         const count = points.length;
         if (!count) return { from: 0, to: 1 };
-        if (count <= LATEST_WINDOW) return { from: 0, to: Math.max(1, count - 1) };
-        return { from: Math.max(0, count - LATEST_WINDOW), to: count - 1 };
+        return latestLogicalRange(points);
     }
 
     function currentRange() {
         return visibleRange || fallbackRange();
+    }
+
+    function fullLogicalRange(points = chartData) {
+        const count = points.length;
+        if (!count) return { from: 0, to: 1 };
+        return { from: 0, to: Math.max(count - 1 + VISIBLE_RIGHT_OFFSET, 1) };
+    }
+
+    function latestLogicalRange(points = chartData) {
+        const count = points.length;
+        if (!count) return { from: 0, to: 1 };
+        const to = Math.max(count - 1 + VISIBLE_RIGHT_OFFSET, 1);
+        const visibleBars = Math.min(count, LATEST_WINDOW);
+        const span = Math.min(to, Math.max(visibleBars - 1 + VISIBLE_RIGHT_OFFSET, 1));
+        return { from: Math.max(0, to - span), to };
+    }
+
+    function sanitizeLogicalRange(nextRange, points = chartData) {
+        const count = points.length;
+        if (!count) return { from: 0, to: 1 };
+        const maxTo = Math.max(count - 1 + VISIBLE_RIGHT_OFFSET, 1);
+        const maxSpan = Math.max(maxTo, 1);
+        const minSpan = Math.min(MIN_LOGICAL_SPAN, maxSpan);
+        let from = Number(nextRange?.from);
+        let to = Number(nextRange?.to);
+        if (!Number.isFinite(from) || !Number.isFinite(to) || to <= from) {
+            return fallbackRange(points);
+        }
+
+        const span = clamp(to - from, minSpan, maxSpan);
+        const maxFrom = Math.max(maxTo - span, 0);
+        from = clamp(from, 0, maxFrom);
+        to = from + span;
+        if (to > maxTo) {
+            to = maxTo;
+            from = Math.max(0, to - span);
+        }
+        return { from, to };
+    }
+
+    function rangesClose(a, b) {
+        return Math.abs((a?.from ?? 0) - (b?.from ?? 0)) < 0.01
+            && Math.abs((a?.to ?? 0) - (b?.to ?? 0)) < 0.01;
     }
 
     function clamp(value, min, max) {
@@ -210,11 +254,11 @@
         return PRICE_PAD_TOP + ((range.max - n) / (range.max - range.min)) * plotHeight;
     }
 
-    function pathFrom(points, valueFn, range, size) {
+    function pathFrom(points, valueFn, range, size, logicalRange) {
         return points
             .map((point) => {
                 const value = valueFn(point);
-                const x = logicalX(point.index, currentRange(), size.width);
+                const x = logicalX(point.index, logicalRange, size.width);
                 const y = priceY(value, range, size.height);
                 if (!Number.isFinite(value) || !Number.isFinite(x) || !Number.isFinite(y)) return null;
                 return { x, y };
@@ -224,7 +268,7 @@
             .join(' ');
     }
 
-    function areaPath(points, upperKey, lowerKey, range, size) {
+    function areaPath(points, upperKey, lowerKey, range, size, logicalRange) {
         const bands = points
             .map((point) => {
                 const rowBands = sdBands(point.row);
@@ -232,7 +276,7 @@
                 const lower = numeric(rowBands?.[lowerKey]);
                 if (upper == null || lower == null) return null;
                 return {
-                    x: logicalX(point.index, currentRange(), size.width),
+                    x: logicalX(point.index, logicalRange, size.width),
                     upperY: priceY(upper, range, size.height),
                     lowerY: priceY(lower, range, size.height)
                 };
@@ -260,10 +304,10 @@
             width: Math.max(Math.floor(sizeInput.width || 0), 1),
             height: Math.max(Math.floor(sizeInput.height || PRICE_PANEL_HEIGHT), 1)
         };
-        const activeRange = range || fallbackRange(points);
+        const activeRange = sanitizeLogicalRange(range || fallbackRange(points), points);
         const visible = pointsInRange(points, activeRange);
         const latest = visible[visible.length - 1] || null;
-        const pricePath = pathFrom(visible, (point) => numeric(point.row?.future_price), rangeInput, size);
+        const pricePath = pathFrom(visible, (point) => numeric(point.row?.future_price), rangeInput, size, activeRange);
         const wallMarkers = visible.flatMap((point) => wallEntries(point.row).map((wall) => ({
             point,
             wall,
@@ -300,12 +344,12 @@
         return {
             ...size,
             pricePath,
-            sdArea2: areaPath(visible, 'plus2', 'minus2', rangeInput, size),
-            sdArea1: areaPath(visible, 'plus1', 'minus1', rangeInput, size),
-            sdPlus1: pathFrom(visible, (point) => numeric(sdBands(point.row)?.plus1), rangeInput, size),
-            sdMinus1: pathFrom(visible, (point) => numeric(sdBands(point.row)?.minus1), rangeInput, size),
-            sdPlus2: pathFrom(visible, (point) => numeric(sdBands(point.row)?.plus2), rangeInput, size),
-            sdMinus2: pathFrom(visible, (point) => numeric(sdBands(point.row)?.minus2), rangeInput, size),
+            sdArea2: areaPath(visible, 'plus2', 'minus2', rangeInput, size, activeRange),
+            sdArea1: areaPath(visible, 'plus1', 'minus1', rangeInput, size, activeRange),
+            sdPlus1: pathFrom(visible, (point) => numeric(sdBands(point.row)?.plus1), rangeInput, size, activeRange),
+            sdMinus1: pathFrom(visible, (point) => numeric(sdBands(point.row)?.minus1), rangeInput, size, activeRange),
+            sdPlus2: pathFrom(visible, (point) => numeric(sdBands(point.row)?.plus2), rangeInput, size, activeRange),
+            sdMinus2: pathFrom(visible, (point) => numeric(sdBands(point.row)?.minus2), rangeInput, size, activeRange),
             wallMarkers,
             priceDots,
             labels,
@@ -364,40 +408,20 @@
     function showLatest() {
         if (!chart || !chartData.length) return;
         viewMode = 'latest';
-        const count = chartData.length;
-        if (count <= LATEST_WINDOW) {
-            chart.timeScale().fitContent();
-            visibleRange = fallbackRange();
-            return;
-        }
-        chart.timeScale().setVisibleLogicalRange({
-            from: Math.max(0, count - LATEST_WINDOW),
-            to: count - 1
-        });
+        setVisibleRange(latestLogicalRange());
     }
 
     function showAll() {
         if (!chart || !chartData.length) return;
         viewMode = 'all';
-        chart.timeScale().fitContent();
+        setVisibleRange(fullLogicalRange());
     }
 
     function setVisibleRange(nextRange) {
         if (!chart || !chartData.length) return;
-        const maxIndex = Math.max(chartData.length - 1, 0);
-        let from = Number(nextRange.from);
-        let to = Number(nextRange.to);
-        if (!Number.isFinite(from) || !Number.isFinite(to) || to <= from) return;
-        const span = Math.min(Math.max(to - from, 2), Math.max(maxIndex, 2));
-        if (from < 0) {
-            from = 0;
-            to = from + span;
-        }
-        if (to > maxIndex) {
-            to = maxIndex;
-            from = to - span;
-        }
-        chart.timeScale().setVisibleLogicalRange({ from: Math.max(0, from), to: Math.max(1, to) });
+        const range = sanitizeLogicalRange(nextRange);
+        visibleRange = range;
+        chart.timeScale().setVisibleLogicalRange(range);
     }
 
     function syncChart(points = chartData) {
@@ -489,7 +513,8 @@
         const ratio = clamp((event.clientX - rect.left) / Math.max(rect.width, 1), 0, 1);
         const anchor = range.from + ratio * span;
         const factor = event.deltaY > 0 ? 1.18 : 0.84;
-        const nextSpan = Math.max(2, Math.min(Math.max(chartData.length - 1, 2), span * factor));
+        const maxSpan = Math.max(chartData.length - 1 + VISIBLE_RIGHT_OFFSET, MIN_LOGICAL_SPAN);
+        const nextSpan = clamp(span * factor, MIN_LOGICAL_SPAN, maxSpan);
         setVisibleRange({
             from: anchor - ratio * nextSpan,
             to: anchor + (1 - ratio) * nextSpan
@@ -604,7 +629,11 @@
         });
 
         visibleRangeHandler = (range) => {
-            visibleRange = range || fallbackRange();
+            const next = sanitizeLogicalRange(range || fallbackRange());
+            visibleRange = next;
+            if (range && !rangesClose(range, next)) {
+                chart.timeScale().setVisibleLogicalRange(next);
+            }
         };
         chart.timeScale().subscribeVisibleLogicalRangeChange(visibleRangeHandler);
 
