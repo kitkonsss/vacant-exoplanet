@@ -6,25 +6,49 @@
     } = $props();
 
     const LATEST_WINDOW = 24;
+    const PRICE_PANEL_HEIGHT = 164;
+    const PRICE_PAD_TOP = 18;
+    const PRICE_PAD_BOTTOM = 24;
+    const TOOLTIP_WIDTH = 304;
+    const TOOLTIP_MIN_WIDTH = 180;
     const slotLabels = {
         morning: 'Morning',
         afternoon: 'Afternoon',
         evening: 'Evening',
         night: 'Night'
     };
+    const wallTypes = [
+        { key: 'dominant_call', label: 'Call Wall', color: 'hsl(var(--put))', short: 'Call' },
+        { key: 'dominant_put', label: 'Put Wall', color: 'hsl(var(--call))', short: 'Put' },
+        { key: 'largest_combined_position', label: 'Largest Wall', color: 'hsl(var(--warn))', short: 'Largest' }
+    ];
+    const sdBandDefs = [
+        { key: 'plus2', label: '+2SD', color: 'hsl(var(--primary))', opacity: 0.34 },
+        { key: 'plus1', label: '+1SD', color: 'hsl(var(--primary))', opacity: 0.52 },
+        { key: 'minus1', label: '-1SD', color: 'hsl(var(--primary))', opacity: 0.52 },
+        { key: 'minus2', label: '-2SD', color: 'hsl(var(--primary))', opacity: 0.34 }
+    ];
 
+    let rootHost;
     let chartHost;
+    let priceHost;
     let chart = null;
     let oiSeries = null;
     let volumeSeries = null;
     let referenceLine = null;
     let resizeObserver = null;
     let chartModule = null;
+    let visibleRangeHandler = null;
     let lastDataKey = '';
+    let priceDrag = null;
     let tooltip = $state(null);
     let viewMode = $state('latest');
+    let visibleRange = $state(null);
+    let activeIndex = $state(null);
+    let overlaySize = $state({ width: 0, height: PRICE_PANEL_HEIGHT });
 
     const chartData = $derived.by(() => normalizeRows(rows));
+    const visiblePoints = $derived.by(() => pointsInRange(chartData, visibleRange));
     const valueRange = $derived.by(() => {
         const values = chartData
             .flatMap((point) => [point.oi, point.volume])
@@ -34,6 +58,9 @@
             max: Math.max(2.5, ...values)
         };
     });
+    const priceRange = $derived.by(() => buildPriceRange(visiblePoints));
+    const priceOverlay = $derived.by(() => buildPriceOverlay(chartData, visibleRange, overlaySize, priceRange));
+    const hasAnySd = $derived(chartData.some((point) => Boolean(sdBands(point.row))));
     const firstStamp = $derived(chartData[0] ? stamp(chartData[0].row) : '-');
     const lastStamp = $derived(chartData[chartData.length - 1] ? stamp(chartData[chartData.length - 1].row) : '-');
 
@@ -63,14 +90,15 @@
         });
         let previousTime = 0;
         return ordered
-            .map((row, index) => {
+            .map((row, sortIndex) => {
                 const oi = Number(row.totals?.oi_put_call_ratio);
                 const volume = Number(row.totals?.volume_put_call_ratio);
-                const time = toTimestamp(row, index, previousTime);
+                const time = toTimestamp(row, sortIndex, previousTime);
                 previousTime = time;
                 return { time, row, oi, volume };
             })
-            .filter((point) => Number.isFinite(point.oi) || Number.isFinite(point.volume));
+            .filter((point) => Number.isFinite(point.oi) || Number.isFinite(point.volume))
+            .map((point, index) => ({ ...point, index }));
     }
 
     function lineData(points, field) {
@@ -81,14 +109,230 @@
         ));
     }
 
+    function fallbackRange(points = chartData) {
+        const count = points.length;
+        if (!count) return { from: 0, to: 1 };
+        if (count <= LATEST_WINDOW) return { from: 0, to: Math.max(1, count - 1) };
+        return { from: Math.max(0, count - LATEST_WINDOW), to: count - 1 };
+    }
+
+    function currentRange() {
+        return visibleRange || fallbackRange();
+    }
+
+    function clamp(value, min, max) {
+        return Math.max(min, Math.min(max, value));
+    }
+
+    function logicalX(index, range = currentRange(), width = overlaySize.width) {
+        const w = Math.max(width || 0, 1);
+        const span = Math.max((range?.to ?? 1) - (range?.from ?? 0), 1);
+        if (chartData.length <= 1) return w / 2;
+        return ((index - (range?.from ?? 0)) / span) * w;
+    }
+
+    function indexFromX(x, range = currentRange(), width = overlaySize.width) {
+        if (!chartData.length) return null;
+        if (chartData.length === 1) return 0;
+        const span = Math.max((range?.to ?? 1) - (range?.from ?? 0), 1);
+        const logical = (range?.from ?? 0) + (clamp(x, 0, width) / Math.max(width, 1)) * span;
+        return clamp(Math.round(logical), 0, chartData.length - 1);
+    }
+
+    function pointsInRange(points, range) {
+        if (!points.length) return [];
+        const activeRange = range || fallbackRange(points);
+        const from = Math.floor((activeRange?.from ?? 0) - 1);
+        const to = Math.ceil((activeRange?.to ?? points.length - 1) + 1);
+        return points.filter((point) => point.index >= from && point.index <= to);
+    }
+
+    function numeric(value) {
+        const n = Number(value);
+        return Number.isFinite(n) ? n : null;
+    }
+
+    function wallEntries(row) {
+        const walls = row?.walls || {};
+        return wallTypes
+            .map((meta) => {
+                const wall = walls[meta.key];
+                const strike = numeric(wall?.strike);
+                if (strike == null) return null;
+                return { ...meta, ...wall, strike };
+            })
+            .filter(Boolean);
+    }
+
+    function sdBands(row) {
+        const er = row?.expected_range;
+        if (!er) return null;
+        return er.bands_to_expiry || er.bands_1d || null;
+    }
+
+    function sdBandRows(row) {
+        const bands = sdBands(row);
+        if (!bands) return [];
+        return sdBandDefs
+            .map((meta) => {
+                const value = numeric(bands[meta.key]);
+                return value == null ? null : { ...meta, value };
+            })
+            .filter(Boolean);
+    }
+
+    function priceValues(point) {
+        const row = point?.row;
+        return [
+            numeric(row?.future_price),
+            ...wallEntries(row).map((wall) => wall.strike),
+            ...sdBandRows(row).map((band) => band.value)
+        ].filter(Number.isFinite);
+    }
+
+    function buildPriceRange(points) {
+        const values = points.flatMap(priceValues).filter(Number.isFinite);
+        if (!values.length) return { min: 0, max: 1 };
+        const min = Math.min(...values);
+        const max = Math.max(...values);
+        const span = Math.max(max - min, Math.abs(max) * 0.006, 1);
+        return {
+            min: min - span * 0.14,
+            max: max + span * 0.14
+        };
+    }
+
+    function priceY(value, range = priceRange, height = overlaySize.height) {
+        const n = Number(value);
+        const h = Math.max(height || PRICE_PANEL_HEIGHT, 1);
+        if (!Number.isFinite(n) || range.max <= range.min) return h / 2;
+        const plotHeight = Math.max(h - PRICE_PAD_TOP - PRICE_PAD_BOTTOM, 1);
+        return PRICE_PAD_TOP + ((range.max - n) / (range.max - range.min)) * plotHeight;
+    }
+
+    function pathFrom(points, valueFn, range, size) {
+        return points
+            .map((point) => {
+                const value = valueFn(point);
+                const x = logicalX(point.index, currentRange(), size.width);
+                const y = priceY(value, range, size.height);
+                if (!Number.isFinite(value) || !Number.isFinite(x) || !Number.isFinite(y)) return null;
+                return { x, y };
+            })
+            .filter(Boolean)
+            .map((point, index) => `${index === 0 ? 'M' : 'L'}${point.x.toFixed(1)},${point.y.toFixed(1)}`)
+            .join(' ');
+    }
+
+    function areaPath(points, upperKey, lowerKey, range, size) {
+        const bands = points
+            .map((point) => {
+                const rowBands = sdBands(point.row);
+                const upper = numeric(rowBands?.[upperKey]);
+                const lower = numeric(rowBands?.[lowerKey]);
+                if (upper == null || lower == null) return null;
+                return {
+                    x: logicalX(point.index, currentRange(), size.width),
+                    upperY: priceY(upper, range, size.height),
+                    lowerY: priceY(lower, range, size.height)
+                };
+            })
+            .filter(Boolean);
+        if (bands.length < 2) return '';
+        const upperPath = bands.map((point, index) => `${index === 0 ? 'M' : 'L'}${point.x.toFixed(1)},${point.upperY.toFixed(1)}`);
+        const lowerPath = [...bands].reverse().map((point) => `L${point.x.toFixed(1)},${point.lowerY.toFixed(1)}`);
+        return `${upperPath.join(' ')} ${lowerPath.join(' ')} Z`;
+    }
+
+    function stackLabels(labels, height) {
+        let lastY = 8;
+        return labels
+            .sort((a, b) => a.y - b.y)
+            .map((label) => {
+                const y = clamp(Math.max(label.y, lastY + 14), 12, Math.max(height - 14, 12));
+                lastY = y;
+                return { ...label, y };
+            });
+    }
+
+    function buildPriceOverlay(points, range, sizeInput, rangeInput) {
+        const size = {
+            width: Math.max(Math.floor(sizeInput.width || 0), 1),
+            height: Math.max(Math.floor(sizeInput.height || PRICE_PANEL_HEIGHT), 1)
+        };
+        const activeRange = range || fallbackRange(points);
+        const visible = pointsInRange(points, activeRange);
+        const latest = visible[visible.length - 1] || null;
+        const pricePath = pathFrom(visible, (point) => numeric(point.row?.future_price), rangeInput, size);
+        const wallMarkers = visible.flatMap((point) => wallEntries(point.row).map((wall) => ({
+            point,
+            wall,
+            x: logicalX(point.index, activeRange, size.width),
+            y: priceY(wall.strike, rangeInput, size.height)
+        })));
+        const priceDots = visible
+            .map((point) => ({
+                point,
+                x: logicalX(point.index, activeRange, size.width),
+                y: priceY(point.row?.future_price, rangeInput, size.height)
+            }))
+            .filter((dot) => Number.isFinite(dot.y));
+        const labels = latest
+            ? stackLabels([
+                ...wallEntries(latest.row).map((wall) => ({
+                    text: `${wall.short} ${fmtLevel(wall.strike)}`,
+                    color: wall.color,
+                    x: logicalX(latest.index, activeRange, size.width),
+                    y: priceY(wall.strike, rangeInput, size.height)
+                })),
+                ...sdBandRows(latest.row)
+                    .filter((band) => band.key === 'plus1' || band.key === 'minus1')
+                    .map((band) => ({
+                        text: `${band.label} ${fmtLevel(band.value)}`,
+                        color: band.color,
+                        x: logicalX(latest.index, activeRange, size.width),
+                        y: priceY(band.value, rangeInput, size.height)
+                    }))
+            ], size.height)
+            : [];
+        const activeX = activeIndex == null ? null : logicalX(activeIndex, activeRange, size.width);
+
+        return {
+            ...size,
+            pricePath,
+            sdArea2: areaPath(visible, 'plus2', 'minus2', rangeInput, size),
+            sdArea1: areaPath(visible, 'plus1', 'minus1', rangeInput, size),
+            sdPlus1: pathFrom(visible, (point) => numeric(sdBands(point.row)?.plus1), rangeInput, size),
+            sdMinus1: pathFrom(visible, (point) => numeric(sdBands(point.row)?.minus1), rangeInput, size),
+            sdPlus2: pathFrom(visible, (point) => numeric(sdBands(point.row)?.plus2), rangeInput, size),
+            sdMinus2: pathFrom(visible, (point) => numeric(sdBands(point.row)?.minus2), rangeInput, size),
+            wallMarkers,
+            priceDots,
+            labels,
+            activeX
+        };
+    }
+
     function fmt(value, digits = 2) {
         const n = Number(value);
         return Number.isFinite(n) ? n.toFixed(digits) : '-';
     }
 
+    function fmtLevel(value) {
+        const n = Number(value);
+        if (!Number.isFinite(n)) return '-';
+        const digits = Math.abs(n) >= 1000 ? 1 : 2;
+        return n.toLocaleString(undefined, { maximumFractionDigits: digits });
+    }
+
     function fmtInteger(value) {
         const n = Number(value);
         return Number.isFinite(n) ? n.toLocaleString() : '-';
+    }
+
+    function fmtSigned(value, digits = 1) {
+        const n = Number(value);
+        return Number.isFinite(n) ? `${n > 0 ? '+' : ''}${n.toFixed(digits)}` : '-';
     }
 
     function fmtScore(value) {
@@ -123,6 +367,7 @@
         const count = chartData.length;
         if (count <= LATEST_WINDOW) {
             chart.timeScale().fitContent();
+            visibleRange = fallbackRange();
             return;
         }
         chart.timeScale().setVisibleLogicalRange({
@@ -137,6 +382,24 @@
         chart.timeScale().fitContent();
     }
 
+    function setVisibleRange(nextRange) {
+        if (!chart || !chartData.length) return;
+        const maxIndex = Math.max(chartData.length - 1, 0);
+        let from = Number(nextRange.from);
+        let to = Number(nextRange.to);
+        if (!Number.isFinite(from) || !Number.isFinite(to) || to <= from) return;
+        const span = Math.min(Math.max(to - from, 2), Math.max(maxIndex, 2));
+        if (from < 0) {
+            from = 0;
+            to = from + span;
+        }
+        if (to > maxIndex) {
+            to = maxIndex;
+            from = to - span;
+        }
+        chart.timeScale().setVisibleLogicalRange({ from: Math.max(0, from), to: Math.max(1, to) });
+    }
+
     function syncChart(points = chartData) {
         if (!chart || !oiSeries || !volumeSeries) return;
 
@@ -147,8 +410,96 @@
         if (nextKey !== lastDataKey) {
             lastDataKey = nextKey;
             tooltip = null;
+            activeIndex = null;
+            visibleRange = fallbackRange(points);
             showLatest();
         }
+    }
+
+    function tooltipPosition(clientX, clientY) {
+        const rootRect = rootHost?.getBoundingClientRect();
+        const width = rootRect?.width || chartHost?.clientWidth || 320;
+        const tooltipWidth = Math.max(TOOLTIP_MIN_WIDTH, Math.min(TOOLTIP_WIDTH, width - 16));
+        const relX = rootRect ? clientX - rootRect.left : clientX;
+        const relY = rootRect ? clientY - rootRect.top : clientY;
+        const x = relX > width - tooltipWidth - 16 ? relX - tooltipWidth - 12 : relX + 12;
+        const y = relY > 170 ? relY - 150 : relY + 12;
+        return {
+            x: clamp(x, 8, Math.max(width - tooltipWidth - 8, 8)),
+            y: Math.max(8, y),
+            width: tooltipWidth
+        };
+    }
+
+    function setTooltip(point, x, y, width = TOOLTIP_WIDTH) {
+        if (!point) {
+            tooltip = null;
+            activeIndex = null;
+            return;
+        }
+        tooltip = { x, y, width, point };
+        activeIndex = point.index;
+    }
+
+    function updatePriceTooltip(event) {
+        if (!priceHost || !chartData.length) return;
+        const rect = priceHost.getBoundingClientRect();
+        const index = indexFromX(event.clientX - rect.left, currentRange(), rect.width);
+        if (index == null) return;
+        const point = chartData[index];
+        const pos = tooltipPosition(event.clientX, event.clientY);
+        setTooltip(point, pos.x, pos.y, pos.width);
+    }
+
+    function onPricePointerDown(event) {
+        if (!chartData.length) return;
+        const range = currentRange();
+        priceDrag = { id: event.pointerId, x: event.clientX, from: range.from, to: range.to, moved: false };
+        event.currentTarget.setPointerCapture?.(event.pointerId);
+        updatePriceTooltip(event);
+    }
+
+    function onPricePointerMove(event) {
+        if (priceDrag?.id === event.pointerId && priceHost) {
+            const width = Math.max(priceHost.clientWidth, 1);
+            const span = Math.max(priceDrag.to - priceDrag.from, 1);
+            const dx = event.clientX - priceDrag.x;
+            if (Math.abs(dx) > 2) {
+                priceDrag.moved = true;
+                const shift = -(dx / width) * span;
+                setVisibleRange({ from: priceDrag.from + shift, to: priceDrag.to + shift });
+            }
+        }
+        updatePriceTooltip(event);
+    }
+
+    function onPricePointerUp(event) {
+        if (priceDrag?.id === event.pointerId) {
+            event.currentTarget.releasePointerCapture?.(event.pointerId);
+            priceDrag = null;
+        }
+    }
+
+    function onPriceWheel(event) {
+        if (!chart || !chartData.length || !priceHost) return;
+        event.preventDefault();
+        const rect = priceHost.getBoundingClientRect();
+        const range = currentRange();
+        const span = Math.max(range.to - range.from, 2);
+        const ratio = clamp((event.clientX - rect.left) / Math.max(rect.width, 1), 0, 1);
+        const anchor = range.from + ratio * span;
+        const factor = event.deltaY > 0 ? 1.18 : 0.84;
+        const nextSpan = Math.max(2, Math.min(Math.max(chartData.length - 1, 2), span * factor));
+        setVisibleRange({
+            from: anchor - ratio * nextSpan,
+            to: anchor + (1 - ratio) * nextSpan
+        });
+    }
+
+    function hideTooltip() {
+        if (priceDrag) return;
+        tooltip = null;
+        activeIndex = null;
     }
 
     function initChart() {
@@ -162,7 +513,7 @@
         const call = cssColor('--call', '#06b6d4');
 
         chart = createChart(chartHost, {
-            width: Math.max(chartHost.clientWidth, 320),
+            width: Math.max(chartHost.clientWidth, 1),
             height: Math.max(chartHost.clientHeight, 224),
             layout: {
                 background: { type: ColorType.Solid, color: background },
@@ -238,31 +589,43 @@
         chart.subscribeCrosshairMove((param) => {
             if (!param?.point || param.time == null || !chartHost) {
                 tooltip = null;
+                activeIndex = null;
                 return;
             }
             const point = currentPointByTime(chartData, param.time);
             if (!point) {
                 tooltip = null;
+                activeIndex = null;
                 return;
             }
-            const width = chartHost.clientWidth || 320;
-            const x = param.point.x > width - 280 ? param.point.x - 268 : param.point.x + 12;
-            const y = param.point.y > 132 ? param.point.y - 124 : param.point.y + 12;
-            tooltip = {
-                x: Math.max(8, Math.min(width - 260, x)),
-                y: Math.max(8, y),
-                point
-            };
+            const rect = chartHost.getBoundingClientRect();
+            const pos = tooltipPosition(rect.left + param.point.x, rect.top + param.point.y);
+            setTooltip(point, pos.x, pos.y, pos.width);
         });
 
-        resizeObserver = new ResizeObserver(([entry]) => {
-            if (!chart || !entry) return;
-            chart.applyOptions({
-                width: Math.max(Math.floor(entry.contentRect.width), 320),
-                height: Math.max(Math.floor(entry.contentRect.height), 224)
-            });
+        visibleRangeHandler = (range) => {
+            visibleRange = range || fallbackRange();
+        };
+        chart.timeScale().subscribeVisibleLogicalRangeChange(visibleRangeHandler);
+
+        resizeObserver = new ResizeObserver(() => {
+            tooltip = null;
+            activeIndex = null;
+            if (chart && chartHost) {
+                chart.applyOptions({
+                    width: Math.max(Math.floor(chartHost.clientWidth), 1),
+                    height: Math.max(Math.floor(chartHost.clientHeight), 224)
+                });
+            }
+            if (priceHost) {
+                overlaySize = {
+                    width: Math.max(Math.floor(priceHost.clientWidth), 1),
+                    height: PRICE_PANEL_HEIGHT
+                };
+            }
         });
         resizeObserver.observe(chartHost);
+        if (priceHost) resizeObserver.observe(priceHost);
         syncChart(chartData);
     }
 
@@ -277,6 +640,8 @@
             cancelled = true;
             resizeObserver?.disconnect();
             resizeObserver = null;
+            if (visibleRangeHandler && chart) chart.timeScale().unsubscribeVisibleLogicalRangeChange(visibleRangeHandler);
+            visibleRangeHandler = null;
             if (referenceLine && oiSeries) oiSeries.removePriceLine(referenceLine);
             referenceLine = null;
             chart?.remove();
@@ -291,7 +656,7 @@
     });
 </script>
 
-<div class="relative">
+<div bind:this={rootHost} class="relative">
     <div class="absolute right-2 top-2 z-10 flex items-center gap-1 rounded-md border border-border bg-surface p-0.5">
         <button
             type="button"
@@ -309,26 +674,118 @@
         </button>
     </div>
 
-    <div
-        bind:this={chartHost}
-        class="h-64 w-full overflow-hidden rounded-md border border-border bg-background"
-        role="img"
-        aria-label="Interactive put call ratio trend"
-        onpointerleave={() => (tooltip = null)}
-    >
-        {#if !chartData.length}
-            <div class="flex h-full items-center justify-center text-sm text-muted-foreground">
-                No ratio points for this contract yet.
+    <div class="overflow-hidden rounded-md border border-border bg-background">
+        <div
+            bind:this={chartHost}
+            class="h-64 w-full"
+            role="img"
+            aria-label="Interactive put call ratio trend"
+            onpointerleave={hideTooltip}
+        >
+            {#if !chartData.length}
+                <div class="flex h-full items-center justify-center text-sm text-muted-foreground">
+                    No ratio points for this contract yet.
+                </div>
+            {/if}
+        </div>
+
+        <div class="border-t border-border/80 bg-surface/35 px-3 py-2">
+            <div class="mb-1.5 flex flex-wrap items-center justify-between gap-2">
+                <div class="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                    Wall + SD Context
+                </div>
+                <div class="flex flex-wrap items-center gap-3 text-[10px] text-muted-foreground">
+                    <span><span class="mr-1 inline-block h-[2px] w-4 bg-foreground/80 align-middle"></span> Price</span>
+                    <span><span class="mr-1 inline-block h-[2px] w-4 bg-put align-middle"></span> Call Wall</span>
+                    <span><span class="mr-1 inline-block h-[2px] w-4 bg-call align-middle"></span> Put Wall</span>
+                    <span><span class="mr-1 inline-block h-[6px] w-4 rounded-sm bg-primary/25 align-middle"></span> SD</span>
+                </div>
             </div>
-        {/if}
+
+            <div
+                bind:this={priceHost}
+                class="relative h-[164px] w-full touch-none overflow-hidden rounded border border-border/70 bg-background"
+                role="img"
+                aria-label="Synchronized wall and standard deviation price context"
+                onpointerdown={onPricePointerDown}
+                onpointermove={onPricePointerMove}
+                onpointerup={onPricePointerUp}
+                onpointercancel={onPricePointerUp}
+                onpointerleave={hideTooltip}
+                onwheel={onPriceWheel}
+            >
+                <svg class="h-full w-full" viewBox={`0 0 ${priceOverlay.width} ${priceOverlay.height}`} preserveAspectRatio="none" aria-hidden="true">
+                    <rect x="0" y="0" width={priceOverlay.width} height={priceOverlay.height} fill="transparent" />
+                    <line x1="0" x2={priceOverlay.width} y1={priceY(priceRange.max)} y2={priceY(priceRange.max)} stroke="hsl(var(--border))" stroke-width="1" opacity="0.35" vector-effect="non-scaling-stroke" />
+                    <line x1="0" x2={priceOverlay.width} y1={priceY((priceRange.max + priceRange.min) / 2)} y2={priceY((priceRange.max + priceRange.min) / 2)} stroke="hsl(var(--border))" stroke-width="1" opacity="0.45" vector-effect="non-scaling-stroke" />
+                    <line x1="0" x2={priceOverlay.width} y1={priceY(priceRange.min)} y2={priceY(priceRange.min)} stroke="hsl(var(--border))" stroke-width="1" opacity="0.35" vector-effect="non-scaling-stroke" />
+
+                    {#if priceOverlay.sdArea2}
+                        <path d={priceOverlay.sdArea2} fill="hsl(var(--primary))" opacity="0.08" />
+                    {/if}
+                    {#if priceOverlay.sdArea1}
+                        <path d={priceOverlay.sdArea1} fill="hsl(var(--primary))" opacity="0.14" />
+                    {/if}
+                    {#if priceOverlay.sdPlus2}
+                        <path d={priceOverlay.sdPlus2} fill="none" stroke="hsl(var(--primary))" stroke-width="1" stroke-dasharray="2 4" opacity="0.34" vector-effect="non-scaling-stroke" />
+                    {/if}
+                    {#if priceOverlay.sdMinus2}
+                        <path d={priceOverlay.sdMinus2} fill="none" stroke="hsl(var(--primary))" stroke-width="1" stroke-dasharray="2 4" opacity="0.34" vector-effect="non-scaling-stroke" />
+                    {/if}
+                    {#if priceOverlay.sdPlus1}
+                        <path d={priceOverlay.sdPlus1} fill="none" stroke="hsl(var(--primary))" stroke-width="1.2" stroke-dasharray="4 3" opacity="0.55" vector-effect="non-scaling-stroke" />
+                    {/if}
+                    {#if priceOverlay.sdMinus1}
+                        <path d={priceOverlay.sdMinus1} fill="none" stroke="hsl(var(--primary))" stroke-width="1.2" stroke-dasharray="4 3" opacity="0.55" vector-effect="non-scaling-stroke" />
+                    {/if}
+
+                    {#if priceOverlay.pricePath}
+                        <path d={priceOverlay.pricePath} fill="none" stroke="hsl(var(--foreground))" stroke-width="1.8" opacity="0.82" vector-effect="non-scaling-stroke" />
+                    {/if}
+                    {#each priceOverlay.priceDots as dot}
+                        <circle cx={dot.x} cy={dot.y} r="2.4" fill="hsl(var(--foreground))" opacity={activeIndex === dot.point.index ? 0.95 : 0.42} vector-effect="non-scaling-stroke" />
+                    {/each}
+
+                    {#each priceOverlay.wallMarkers as marker}
+                        <line x1={marker.x - 9} x2={marker.x + 9} y1={marker.y} y2={marker.y} stroke={marker.wall.color} stroke-width={marker.wall.key === 'largest_combined_position' ? 1.2 : 2.4} opacity={activeIndex === marker.point.index ? 0.95 : 0.55} vector-effect="non-scaling-stroke" />
+                        <circle cx={marker.x} cy={marker.y} r={marker.wall.key === 'largest_combined_position' ? 2.4 : 3.2} fill={marker.wall.color} opacity={activeIndex === marker.point.index ? 0.95 : 0.62} vector-effect="non-scaling-stroke" />
+                    {/each}
+
+                    {#if priceOverlay.activeX != null}
+                        <line x1={priceOverlay.activeX} x2={priceOverlay.activeX} y1="0" y2={priceOverlay.height} stroke="hsl(var(--muted-foreground))" stroke-width="1" opacity="0.5" vector-effect="non-scaling-stroke" />
+                    {/if}
+
+                    {#each priceOverlay.labels as label}
+                        <g opacity="0.9">
+                            <line x1={Math.min(label.x + 10, priceOverlay.width - 92)} x2={Math.min(label.x + 24, priceOverlay.width - 78)} y1={label.y} y2={label.y} stroke={label.color} stroke-width="1" vector-effect="non-scaling-stroke" />
+                            <text x={Math.min(label.x + 28, priceOverlay.width - 74)} y={label.y + 3} fill={label.color} font-size="10" font-family="ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace">{label.text}</text>
+                        </g>
+                    {/each}
+                </svg>
+
+                <div class="pointer-events-none absolute left-2 top-2 font-mono text-[10px] text-muted-foreground">
+                    {fmtLevel(priceRange.max)}
+                </div>
+                <div class="pointer-events-none absolute bottom-2 left-2 font-mono text-[10px] text-muted-foreground">
+                    {fmtLevel(priceRange.min)}
+                </div>
+                {#if !hasAnySd}
+                    <div class="pointer-events-none absolute bottom-2 right-2 rounded bg-surface/80 px-2 py-1 text-[10px] text-muted-foreground">
+                        SD unavailable for old snapshots
+                    </div>
+                {/if}
+            </div>
+        </div>
     </div>
 
     {#if tooltip}
         {@const point = tooltip.point}
         {@const row = point.row}
+        {@const bands = sdBandRows(row)}
+        {@const walls = wallEntries(row)}
         <div
-            class="pointer-events-none absolute z-20 w-64 rounded-md border border-border bg-surface px-3 py-2 text-[11px] shadow-xl"
-            style={`left:${tooltip.x}px; top:${tooltip.y}px;`}
+            class="pointer-events-none absolute z-20 rounded-md border border-border bg-surface px-3 py-2 text-[11px] shadow-xl"
+            style={`left:${tooltip.x}px; top:${tooltip.y}px; width:${tooltip.width}px;`}
         >
             <div class="flex items-center justify-between gap-2">
                 <div class="font-mono font-semibold text-foreground">{stamp(row)}</div>
@@ -336,7 +793,7 @@
             </div>
             <div class="mt-1 flex items-center justify-between gap-2 text-muted-foreground">
                 <span>{row.contract || row.contract_key}</span>
-                <span class="font-mono text-foreground">{fmt(row.future_price, 1)}</span>
+                <span class="font-mono text-foreground">{fmtLevel(row.future_price)}</span>
             </div>
             <div class="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 font-mono tabular-nums">
                 <span class="text-muted-foreground">OI P/C</span>
@@ -352,12 +809,46 @@
                 <span class="text-muted-foreground">Put Vol</span>
                 <span class="text-right text-put">{fmtInteger(row.totals?.put_volume)}</span>
             </div>
+
+            <div class="mt-2 border-t border-border/70 pt-2">
+                <div class="mb-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Walls</div>
+                {#if walls.length}
+                    <div class="grid grid-cols-2 gap-x-3 gap-y-1 font-mono tabular-nums">
+                        {#each walls as wall}
+                            <span style={`color:${wall.color}`}>{wall.label}</span>
+                            <span class="text-right text-foreground">
+                                {fmtLevel(wall.strike)}
+                                <span class="text-muted-foreground">({fmtSigned(wall.distance_points, 0)})</span>
+                            </span>
+                        {/each}
+                    </div>
+                {:else}
+                    <div class="text-muted-foreground">No wall data for this snapshot.</div>
+                {/if}
+            </div>
+
+            <div class="mt-2 border-t border-border/70 pt-2">
+                <div class="mb-1 flex items-center justify-between gap-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                    <span>SD Bands</span>
+                    {#if row.expected_range?.atm_iv_pct}<span class="font-mono normal-case tracking-normal">{fmt(row.expected_range.atm_iv_pct, 2)}% IV</span>{/if}
+                </div>
+                {#if bands.length}
+                    <div class="grid grid-cols-2 gap-x-3 gap-y-1 font-mono tabular-nums">
+                        {#each bands as band}
+                            <span style={`color:${band.color}`}>{band.label}</span>
+                            <span class="text-right text-foreground">{fmtLevel(band.value)}</span>
+                        {/each}
+                    </div>
+                {:else}
+                    <div class="text-muted-foreground">SD unavailable for this snapshot.</div>
+                {/if}
+            </div>
         </div>
     {/if}
 </div>
 
 <div class="mt-2 flex flex-wrap items-center justify-between gap-2 font-mono text-[10px] text-muted-foreground">
     <span>{firstStamp}</span>
-    <span>{chartData.length} points | range {fmt(valueRange.min)}-{fmt(valueRange.max)}</span>
+    <span>{chartData.length} points | P/C range {fmt(valueRange.min)}-{fmt(valueRange.max)}</span>
     <span>{lastStamp}</span>
 </div>

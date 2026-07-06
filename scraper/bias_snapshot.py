@@ -128,11 +128,51 @@ def _compact_wall(wall):
     }
 
 
-def _compact_contract(asset_id, slot_meta, payload):
+def _compact_expected_range(expected_range, contract_key, contract):
+    if not isinstance(expected_range, dict):
+        return None
+
+    tenor = None
+    for candidate in expected_range.get('tenors') or []:
+        if not isinstance(candidate, dict):
+            continue
+        if candidate.get('contract_key') == contract_key or candidate.get('symbol') == contract:
+            tenor = candidate
+            break
+
+    if tenor is None:
+        basis = expected_range.get('basis_tenor') or {}
+        if basis.get('contract_key') == contract_key or basis.get('symbol') == contract:
+            tenor = basis
+
+    compact = {
+        'expected_move_1d': expected_range.get('expected_move_1d') or expected_range.get('expected_move'),
+        'bands_1d': expected_range.get('bands_1d'),
+        'source_generated_at': expected_range.get('source_generated_at') or expected_range.get('generated_at'),
+    }
+    if isinstance(tenor, dict):
+        compact.update({
+            'expected_move_to_expiry': tenor.get('expected_move_to_expiry'),
+            'bands_to_expiry': tenor.get('bands_to_expiry'),
+            'atm_iv_pct': tenor.get('atm_iv_pct') or expected_range.get('atm_iv_pct_1d_basis'),
+            'dte': tenor.get('dte'),
+        })
+    else:
+        compact.update({
+            'expected_move_to_expiry': expected_range.get('expected_move_to_expiry'),
+            'bands_to_expiry': expected_range.get('bands_to_expiry'),
+            'atm_iv_pct': expected_range.get('atm_iv_pct_1d_basis') or expected_range.get('atm_iv_pct'),
+            'dte': expected_range.get('horizon_days'),
+        })
+
+    return {k: v for k, v in compact.items() if v is not None}
+
+
+def _compact_contract(asset_id, slot_meta, payload, expected_range=None):
     totals = payload.get('totals') or {}
     bias = payload.get('position_bias') or {}
     walls = payload.get('walls') or {}
-    return {
+    record = {
         **slot_meta,
         'asset': asset_id,
         'asset_label': payload.get('asset') or ASSETS[asset_id]['short'],
@@ -164,6 +204,10 @@ def _compact_contract(asset_id, slot_meta, payload):
             'largest_combined_position': _compact_wall(walls.get('largest_combined_position')),
         },
     }
+    compact_er = _compact_expected_range(expected_range, payload.get('contract_key'), payload.get('contract'))
+    if compact_er:
+        record['expected_range'] = compact_er
+    return record
 
 
 def _compact_summary(asset_id, slot_meta, summary):
@@ -252,6 +296,7 @@ def run(data_dir=DATA_DIR, snapshot_dir=SNAPSHOT_DIR, now=None, keep_days=KEEP_D
     copied = 0
     for asset_id in ASSETS:
         asset_dir = _asset_dir(data_dir, asset_id)
+        expected_range = _load_json(os.path.join(asset_dir, 'expected_range.json'))
         summary_path = os.path.join(asset_dir, 'position_bias_summary.json')
         summary = _load_json(summary_path)
         if summary:
@@ -267,7 +312,7 @@ def run(data_dir=DATA_DIR, snapshot_dir=SNAPSHOT_DIR, now=None, keep_days=KEEP_D
             dst = os.path.join(day_dir, f'{asset_id}_{contract_key}_PositionBias.json')
             shutil.copy2(path, dst)
             copied += 1
-            records.append(_compact_contract(asset_id, slot_meta, payload))
+            records.append(_compact_contract(asset_id, slot_meta, payload, expected_range))
 
     if not records:
         print('[BIAS-SNAPSHOT] No PositionBias JSON found - nothing to snapshot.')

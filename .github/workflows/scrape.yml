@@ -114,6 +114,12 @@ jobs:
         cd scraper
         python quikstrike_scraper.py ${{ inputs.mode == 'intraday' && '--intraday-only' || '' }}
 
+    - name: Compute Expected Range from IV smile
+      # Phase 1: ATM IV / SD bands / term structure / skew from the *_OIData.txt
+      # just scraped above (stdlib only, no extra navigation). Runs before
+      # position-bias snapshots so bias_history records can capture fresh SD bands.
+      run: python scraper/expected_range_fetch.py || true
+
     - name: Snapshot position-bias dashboard
       # Keep one Bangkok-time dashboard snapshot per session slot
       # (morning/afternoon/evening/night). Same-slot reruns replace that slot,
@@ -127,11 +133,6 @@ jobs:
       # Light runs don't touch heatmaps, so there is nothing new to snapshot.
       if: inputs.mode != 'intraday'
       run: python scraper/snapshot_history.py || true
-
-    - name: Compute Expected Range from IV smile
-      # Phase 1: ATM IV / SD bands / term structure / skew from the *_OIData.txt
-      # just scraped above (stdlib only, no extra navigation).
-      run: python scraper/expected_range_fetch.py || true
 
     - name: Wall backtest on accumulated history
       # Replays historical OI walls (heatmap matrices + dated snapshots) vs

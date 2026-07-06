@@ -49,6 +49,35 @@ def contract_payload(score=7, generated_at="2026-06-29T10:00:00Z"):
     }
 
 
+def expected_range_payload():
+    return {
+        "generated_at": "2026-06-29T10:15:00Z",
+        "source_generated_at": "2026-06-29T10:00:00Z",
+        "expected_move_1d": 25.5,
+        "bands_1d": {
+            "plus1": 4075.5,
+            "minus1": 4024.5,
+            "plus2": 4101.0,
+            "minus2": 3999.0,
+        },
+        "tenors": [
+            {
+                "contract_key": "current",
+                "symbol": "G5MM6",
+                "dte": 0.3,
+                "atm_iv_pct": 18.25,
+                "expected_move_to_expiry": 14.2,
+                "bands_to_expiry": {
+                    "plus1": 4064.2,
+                    "minus1": 4035.8,
+                    "plus2": 4078.4,
+                    "minus2": 4021.6,
+                },
+            }
+        ],
+    }
+
+
 class BiasSnapshotTests(unittest.TestCase):
     def test_slot_for_uses_bangkok_time(self):
         dt = bias_snapshot._parse_now("2026-06-29T10:30:00Z")
@@ -81,6 +110,28 @@ class BiasSnapshotTests(unittest.TestCase):
             self.assertEqual(gc_current[0]["slot"], "evening")
             self.assertEqual(gc_current[0]["bias"]["score"], 9)
             self.assertTrue((snap_dir / "2026-06-29" / "evening" / "gc_current_PositionBias.json").exists())
+
+    def test_snapshot_compacts_expected_range_for_contract_history(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            data_dir = Path(tmp) / "data"
+            snap_dir = data_dir / "bias_snapshots"
+            write_json(data_dir / "current_PositionBias.json", contract_payload())
+            write_json(data_dir / "expected_range.json", expected_range_payload())
+
+            bias_snapshot.run(str(data_dir), str(snap_dir), now="2026-06-29T10:30:00Z")
+
+            history = json.loads((snap_dir / "bias_history.json").read_text(encoding="utf-8"))
+            gc_current = [
+                r for r in history["records"]
+                if r["asset"] == "gc" and r["contract_key"] == "current"
+            ][0]
+            er = gc_current["expected_range"]
+            self.assertEqual(er["expected_move_1d"], 25.5)
+            self.assertEqual(er["bands_1d"]["plus1"], 4075.5)
+            self.assertEqual(er["expected_move_to_expiry"], 14.2)
+            self.assertEqual(er["bands_to_expiry"]["minus2"], 4021.6)
+            self.assertEqual(er["atm_iv_pct"], 18.25)
+            self.assertEqual(er["source_generated_at"], "2026-06-29T10:00:00Z")
 
 
 if __name__ == "__main__":
