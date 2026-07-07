@@ -11,7 +11,9 @@ def write_json(path, payload):
     path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
 
 
-def contract_payload(score=7, generated_at="2026-06-29T10:00:00Z"):
+def contract_payload(score=7, generated_at="2026-06-29T10:00:00Z", intraday_volume=25):
+    call_volume = 10 if intraday_volume else 0
+    put_volume = max(0, intraday_volume - call_volume)
     return {
         "asset": "GC",
         "contract_key": "current",
@@ -29,11 +31,11 @@ def contract_payload(score=7, generated_at="2026-06-29T10:00:00Z"):
             "call_oi": 40,
             "put_oi": 60,
             "oi_put_call_ratio": 1.5,
-            "intraday_volume": 25,
-            "call_volume": 10,
-            "put_volume": 15,
-            "volume_put_call_ratio": 1.5,
-            "volume_vs_oi": 0.25,
+            "intraday_volume": intraday_volume,
+            "call_volume": call_volume,
+            "put_volume": put_volume,
+            "volume_put_call_ratio": round(put_volume / call_volume, 3) if call_volume else None,
+            "volume_vs_oi": round(intraday_volume / 100, 3),
         },
         "structure": {"support_oi_below_price": 30, "resistance_oi_above_price": 20},
         "walls": {
@@ -85,7 +87,7 @@ class BiasSnapshotTests(unittest.TestCase):
         self.assertEqual(date_bkk, "2026-06-29")
         self.assertEqual(slot, "evening")
 
-    def test_snapshot_replaces_same_slot_history(self):
+    def test_snapshot_keeps_each_capture_in_same_slot_history(self):
         with tempfile.TemporaryDirectory() as tmp:
             data_dir = Path(tmp) / "data"
             snap_dir = data_dir / "bias_snapshots"
@@ -106,10 +108,31 @@ class BiasSnapshotTests(unittest.TestCase):
                 r for r in history["records"]
                 if r["asset"] == "gc" and r["contract_key"] == "current"
             ]
-            self.assertEqual(len(gc_current), 1)
-            self.assertEqual(gc_current[0]["slot"], "evening")
-            self.assertEqual(gc_current[0]["bias"]["score"], 9)
-            self.assertTrue((snap_dir / "2026-06-29" / "evening" / "gc_current_PositionBias.json").exists())
+            self.assertEqual(len(gc_current), 2)
+            self.assertEqual({r["slot"] for r in gc_current}, {"evening"})
+            self.assertEqual([r["bias"]["score"] for r in gc_current], [9, 7])
+            self.assertEqual(gc_current[0]["capture_id"], "2026-06-29T174500+0700")
+            self.assertEqual(gc_current[1]["capture_id"], "2026-06-29T173000+0700")
+            self.assertTrue((snap_dir / "2026-06-29" / "evening" / "174500" / "gc_current_PositionBias.json").exists())
+            self.assertTrue((snap_dir / "2026-06-29" / "evening" / "173000" / "gc_current_PositionBias.json").exists())
+
+    def test_snapshot_marks_missing_intraday_volume(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            data_dir = Path(tmp) / "data"
+            snap_dir = data_dir / "bias_snapshots"
+            write_json(data_dir / "current_PositionBias.json", contract_payload(intraday_volume=0))
+
+            bias_snapshot.run(str(data_dir), str(snap_dir), now="2026-06-29T10:30:00Z")
+
+            history = json.loads((snap_dir / "bias_history.json").read_text(encoding="utf-8"))
+            gc_current = [
+                r for r in history["records"]
+                if r["asset"] == "gc" and r["contract_key"] == "current"
+            ][0]
+            self.assertFalse(gc_current["flow_ready"])
+            self.assertEqual(gc_current["flow_status"], "missing_intraday_volume")
+            self.assertEqual(gc_current["totals"]["intraday_volume"], 0)
+            self.assertIsNone(gc_current["totals"]["volume_put_call_ratio"])
 
     def test_snapshot_compacts_expected_range_for_contract_history(self):
         with tempfile.TemporaryDirectory() as tmp:

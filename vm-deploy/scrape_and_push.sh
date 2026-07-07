@@ -52,7 +52,7 @@ if [ $SCRAPE_EXIT -ne 0 ]; then
     exit $SCRAPE_EXIT
 fi
 
-# Keep one Position Bias dashboard snapshot per Bangkok-time session slot.
+# Keep one Position Bias dashboard snapshot per Bangkok-time scrape.
 cd "$REPO_DIR"
 python scraper/bias_snapshot.py >> "$LOG_FILE" 2>&1 || true
 

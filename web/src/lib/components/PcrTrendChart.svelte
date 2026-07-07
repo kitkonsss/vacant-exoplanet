@@ -94,7 +94,7 @@
         return ordered
             .map((row, sortIndex) => {
                 const oi = Number(row.totals?.oi_put_call_ratio);
-                const volume = Number(row.totals?.volume_put_call_ratio);
+                const volume = isFlowReady(row) ? Number(row.totals?.volume_put_call_ratio) : NaN;
                 const time = toTimestamp(row, sortIndex, previousTime);
                 previousTime = time;
                 return { time, row, oi, volume };
@@ -384,9 +384,23 @@
         return Number.isFinite(n) ? `${n > 0 ? '+' : ''}${n.toFixed(1)}` : '-';
     }
 
+    function isFlowReady(row) {
+        if (!row || row.flow_ready === false) return false;
+        const n = Number(row.totals?.intraday_volume);
+        return Number.isFinite(n) && n > 0;
+    }
+
+    function fmtFlow(row, key, digits = 2) {
+        return isFlowReady(row) ? fmt(row.totals?.[key], digits) : '-';
+    }
+
     function stamp(row) {
         if (!row) return '-';
-        return `${row.date_bangkok || '-'} ${slotLabels[row.slot] || row.slot || ''}`;
+        const raw = row.captured_at_bangkok || row.captured_at_utc || '';
+        const match = String(raw).match(/^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2})/);
+        const dateTime = match ? `${match[1]} ${match[2]}` : (row.date_bangkok || '-');
+        const slot = slotLabels[row.slot] || row.slot || '';
+        return `${dateTime} ${slot}`.trim();
     }
 
     function capturedTime(row) {
@@ -828,16 +842,21 @@
                 <span class="text-muted-foreground">OI P/C</span>
                 <span class="text-right text-put">{fmt(point.oi)}</span>
                 <span class="text-muted-foreground">Vol P/C</span>
-                <span class="text-right text-call">{fmt(point.volume)}</span>
+                <span class="text-right text-call">{fmtFlow(row, 'volume_put_call_ratio')}</span>
                 <span class="text-muted-foreground">Score</span>
                 <span class="text-right text-foreground">{fmtScore(row.bias?.score)}</span>
                 <span class="text-muted-foreground">Bias</span>
                 <span class="text-right text-foreground capitalize">{biasLabel(row)}</span>
                 <span class="text-muted-foreground">Call Vol</span>
-                <span class="text-right text-call">{fmtInteger(row.totals?.call_volume)}</span>
+                <span class="text-right text-call">{fmtFlow(row, 'call_volume', 0)}</span>
                 <span class="text-muted-foreground">Put Vol</span>
-                <span class="text-right text-put">{fmtInteger(row.totals?.put_volume)}</span>
+                <span class="text-right text-put">{fmtFlow(row, 'put_volume', 0)}</span>
             </div>
+            {#if !isFlowReady(row)}
+                <div class="mt-2 rounded border border-border/70 bg-background px-2 py-1 text-[10px] text-muted-foreground">
+                    Intraday volume was not populated for this scrape yet.
+                </div>
+            {/if}
 
             <div class="mt-2 border-t border-border/70 pt-2">
                 <div class="mb-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Walls</div>

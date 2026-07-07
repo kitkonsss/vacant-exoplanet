@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Archive Position Bias dashboard snapshots by Bangkok day/session slot.
+"""Archive Position Bias dashboard snapshots by Bangkok capture time.
 
 Why this exists:
   *_PositionBias.json and position_bias_summary.json are overwritten on every
@@ -8,13 +8,14 @@ Why this exists:
   price kept falling?"
 
 What it produces:
-  data/bias_snapshots/<YYYY-MM-DD>/<slot>/<asset>_position_bias_summary.json
-  data/bias_snapshots/<YYYY-MM-DD>/<slot>/<asset>_<contract>_PositionBias.json
+  data/bias_snapshots/<YYYY-MM-DD>/<slot>/<HHMMSS>/<asset>_position_bias_summary.json
+  data/bias_snapshots/<YYYY-MM-DD>/<slot>/<HHMMSS>/<asset>_<contract>_PositionBias.json
   data/bias_snapshots/bias_history.json
 
-Slots are Bangkok time: morning / afternoon / evening / night. Re-running
-within the same slot overwrites the raw files and replaces that slot's compact
-records, so high-frequency intraday scrapes do not create noisy duplicates.
+Slots are Bangkok time: morning / afternoon / evening / night. Each scrape gets
+its own captured-at record, so scheduled reads inside the same slot are visible.
+Contract records also mark whether intraday volume was present, because the
+early scrape can sometimes produce OI-only data before flow has populated.
 """
 
 import argparse
@@ -128,6 +129,24 @@ def _compact_wall(wall):
     }
 
 
+def _num(value):
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _flow_meta(totals):
+    total = _num((totals or {}).get('intraday_volume'))
+    call = _num((totals or {}).get('call_volume'))
+    put = _num((totals or {}).get('put_volume'))
+    ready = (total or 0) > 0 or (call or 0) > 0 or (put or 0) > 0
+    return {
+        'flow_ready': ready,
+        'flow_status': 'ready' if ready else 'missing_intraday_volume',
+    }
+
+
 def _compact_expected_range(expected_range, contract_key, contract):
     if not isinstance(expected_range, dict):
         return None
@@ -172,8 +191,10 @@ def _compact_contract(asset_id, slot_meta, payload, expected_range=None):
     totals = payload.get('totals') or {}
     bias = payload.get('position_bias') or {}
     walls = payload.get('walls') or {}
+    flow = _flow_meta(totals)
     record = {
         **slot_meta,
+        **flow,
         'asset': asset_id,
         'asset_label': payload.get('asset') or ASSETS[asset_id]['short'],
         'contract_key': payload.get('contract_key'),
@@ -214,6 +235,8 @@ def _compact_summary(asset_id, slot_meta, summary):
     bias = summary.get('position_bias') or {}
     return {
         **slot_meta,
+        'flow_ready': None,
+        'flow_status': 'summary_no_intraday_fields',
         'asset': asset_id,
         'asset_label': summary.get('asset') or ASSETS[asset_id]['short'],
         'contract_key': 'summary',
@@ -234,8 +257,7 @@ def _update_history(records, history_path):
 
     def key(r):
         return (
-            r.get('date_bangkok'),
-            r.get('slot'),
+            r.get('captured_at_utc'),
             r.get('asset'),
             r.get('contract_key'),
         )
@@ -246,15 +268,17 @@ def _update_history(records, history_path):
     rows.sort(key=lambda r: (
         r.get('date_bangkok') or '',
         r.get('slot_order', 0),
+        r.get('captured_at_utc') or '',
         r.get('asset') or '',
         r.get('contract_key') or '',
     ), reverse=True)
 
     payload = {
-        'schema': 1,
-        'description': ('Position Bias dashboard snapshots by Bangkok day/slot. '
+        'schema': 2,
+        'description': ('Position Bias dashboard snapshots by Bangkok capture time. '
                         'Use this to measure persistence: e.g. put-heavy P/C '
-                        'across multiple slots while price trends lower.'),
+                        'across multiple scrapes while price trends lower. '
+                        'flow_ready=false means intraday volume was not populated yet.'),
         'updated_utc': records[0]['captured_at_utc'] if records else None,
         'records': rows,
     }
@@ -264,6 +288,11 @@ def _update_history(records, history_path):
 
 def _slot_order(slot):
     return {'morning': 1, 'afternoon': 2, 'evening': 3, 'night': 4}.get(slot, 0)
+
+
+def _capture_time_slug(captured_bangkok):
+    match = re.search(r'T(\d{2}):(\d{2}):(\d{2})', captured_bangkok or '')
+    return ''.join(match.groups()) if match else '000000'
 
 
 def _prune(snapshot_dir, keep_days):
@@ -281,7 +310,9 @@ def run(data_dir=DATA_DIR, snapshot_dir=SNAPSHOT_DIR, now=None, keep_days=KEEP_D
     now_utc = _parse_now(now) if isinstance(now, str) or now is None else now.astimezone(timezone.utc)
     date_bkk, slot, captured_bkk = slot_for(now_utc)
     captured_utc = now_utc.isoformat(timespec='seconds').replace('+00:00', 'Z')
+    capture_time = _capture_time_slug(captured_bkk)
     slot_meta = {
+        'capture_id': f'{date_bkk}T{capture_time}+0700',
         'date_bangkok': date_bkk,
         'slot': slot,
         'slot_order': _slot_order(slot),
@@ -289,8 +320,8 @@ def run(data_dir=DATA_DIR, snapshot_dir=SNAPSHOT_DIR, now=None, keep_days=KEEP_D
         'captured_at_bangkok': captured_bkk,
     }
 
-    day_dir = os.path.join(snapshot_dir, date_bkk, slot)
-    os.makedirs(day_dir, exist_ok=True)
+    capture_dir = os.path.join(snapshot_dir, date_bkk, slot, capture_time)
+    os.makedirs(capture_dir, exist_ok=True)
 
     records = []
     copied = 0
@@ -300,7 +331,7 @@ def run(data_dir=DATA_DIR, snapshot_dir=SNAPSHOT_DIR, now=None, keep_days=KEEP_D
         summary_path = os.path.join(asset_dir, 'position_bias_summary.json')
         summary = _load_json(summary_path)
         if summary:
-            dst = os.path.join(day_dir, f'{asset_id}_position_bias_summary.json')
+            dst = os.path.join(capture_dir, f'{asset_id}_position_bias_summary.json')
             shutil.copy2(summary_path, dst)
             copied += 1
             records.append(_compact_summary(asset_id, slot_meta, summary))
@@ -309,7 +340,7 @@ def run(data_dir=DATA_DIR, snapshot_dir=SNAPSHOT_DIR, now=None, keep_days=KEEP_D
             payload = _load_json(path)
             if not payload:
                 continue
-            dst = os.path.join(day_dir, f'{asset_id}_{contract_key}_PositionBias.json')
+            dst = os.path.join(capture_dir, f'{asset_id}_{contract_key}_PositionBias.json')
             shutil.copy2(path, dst)
             copied += 1
             records.append(_compact_contract(asset_id, slot_meta, payload, expected_range))

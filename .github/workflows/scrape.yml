@@ -121,9 +121,9 @@ jobs:
       run: python scraper/expected_range_fetch.py || true
 
     - name: Snapshot position-bias dashboard
-      # Keep one Bangkok-time dashboard snapshot per session slot
-      # (morning/afternoon/evening/night). Same-slot reruns replace that slot,
-      # giving us P/C persistence history without noisy 5-min duplicates.
+      # Keep each Bangkok-time dashboard scrape as its own history record.
+      # Records retain the morning/afternoon/evening/night slot label, but
+      # same-slot reruns stay visible and flag whether intraday volume was ready.
       run: python scraper/bias_snapshot.py || true
 
     - name: Snapshot heatmap history

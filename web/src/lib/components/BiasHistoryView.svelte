@@ -33,8 +33,8 @@
         return records
             .filter((record) => record.asset === assetId && record.contract_key === contractKey)
             .sort((a, b) => {
-                const ad = `${a.date_bangkok || ''}-${String(a.slot_order || 0).padStart(2, '0')}`;
-                const bd = `${b.date_bangkok || ''}-${String(b.slot_order || 0).padStart(2, '0')}`;
+                const ad = `${a.date_bangkok || ''}-${String(a.slot_order || 0).padStart(2, '0')}-${a.captured_at_utc || ''}`;
+                const bd = `${b.date_bangkok || ''}-${String(b.slot_order || 0).padStart(2, '0')}-${b.captured_at_utc || ''}`;
                 return ad.localeCompare(bd);
             });
     });
@@ -44,7 +44,9 @@
     const bullishRows = $derived(filtered.filter((row) => toneForBias(row.bias?.label, row.bias?.score) === 'up'));
     const bearishRows = $derived(filtered.filter((row) => toneForBias(row.bias?.label, row.bias?.score) === 'down'));
     const putHeavyRows = $derived(contractRows.filter((row) => Number(row.totals?.oi_put_call_ratio) > 1));
-    const volPutHeavyRows = $derived(contractRows.filter((row) => Number(row.totals?.volume_put_call_ratio) > 1));
+    const flowReadyRows = $derived(contractRows.filter((row) => isFlowReady(row)));
+    const missingFlowRows = $derived(contractRows.filter((row) => !isFlowReady(row)));
+    const volPutHeavyRows = $derived(flowReadyRows.filter((row) => Number(row.totals?.volume_put_call_ratio) > 1));
 
     const latestBiasStreak = $derived.by(() => {
         const tone = toneForBias(latest?.bias?.label, latest?.bias?.score);
@@ -83,6 +85,21 @@
         return 'muted';
     }
 
+    function isFlowReady(row) {
+        if (!row || row.contract_key === 'summary') return false;
+        if (row.flow_ready === false) return false;
+        const n = Number(row.totals?.intraday_volume);
+        return Number.isFinite(n) && n > 0;
+    }
+
+    function flowLabel(row) {
+        return isFlowReady(row) ? 'ready' : 'no flow';
+    }
+
+    function flowClass(row) {
+        return isFlowReady(row) ? 'text-up' : 'text-muted-foreground';
+    }
+
     function fmt(value, digits = 2) {
         const n = Number(value);
         return Number.isFinite(n) ? n.toFixed(digits) : '-';
@@ -93,9 +110,17 @@
         return Number.isFinite(n) ? `${n > 0 ? '+' : ''}${n.toFixed(1)}` : '-';
     }
 
+    function fmtFlow(row, key, digits = 2) {
+        return isFlowReady(row) ? fmt(row.totals?.[key], digits) : '-';
+    }
+
     function stamp(row) {
         if (!row) return '-';
-        return `${row.date_bangkok || '-'} ${slotLabels[row.slot] || row.slot || ''}`;
+        const raw = row.captured_at_bangkok || row.captured_at_utc || '';
+        const match = String(raw).match(/^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2})/);
+        const dateTime = match ? `${match[1]} ${match[2]}` : (row.date_bangkok || '-');
+        const slot = slotLabels[row.slot] || row.slot || '';
+        return `${dateTime} ${slot}`.trim();
     }
 </script>
 
@@ -174,11 +199,11 @@
                     {#if contractKey === 'summary'}
                         <div class="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Bias Streak</div>
                         <div class="mt-1 font-mono text-2xl font-semibold tabular-nums {latestTone === 'up' ? 'text-up' : latestTone === 'down' ? 'text-down' : 'text-muted-foreground'}">{latestBiasStreak}</div>
-                        <div class="text-[10px] text-muted-foreground">same-bias slots</div>
+                        <div class="text-[10px] text-muted-foreground">same-bias reads</div>
                     {:else}
                         <div class="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">OI P/C Streak</div>
                         <div class="mt-1 font-mono text-2xl font-semibold tabular-nums {putHeavyStreak ? 'text-down' : 'text-muted-foreground'}">{putHeavyStreak}</div>
-                        <div class="text-[10px] text-muted-foreground">consecutive put-heavy slots</div>
+                        <div class="text-[10px] text-muted-foreground">consecutive put-heavy reads</div>
                     {/if}
                 </Card>
 
@@ -208,9 +233,11 @@
                     {:else}
                         <div class="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Volume P/C</div>
                         <div class="mt-1 font-mono text-2xl font-semibold tabular-nums text-foreground">
-                            {contractRows.length ? Math.round((volPutHeavyRows.length / contractRows.length) * 100) : 0}%
+                            {flowReadyRows.length ? Math.round((volPutHeavyRows.length / flowReadyRows.length) * 100) : 0}%
                         </div>
-                        <div class="text-[10px] text-muted-foreground">put-heavy volume slots</div>
+                        <div class="text-[10px] text-muted-foreground">
+                            {missingFlowRows.length ? `${missingFlowRows.length} no-flow reads skipped` : 'put-heavy ready-flow reads'}
+                        </div>
                     {/if}
                 </Card>
             </div>
@@ -249,6 +276,7 @@
                                 <th class="px-3 py-2">Bias</th>
                                 <th class="px-3 py-2 text-right">OI P/C</th>
                                 <th class="px-3 py-2 text-right">Vol P/C</th>
+                                <th class="px-3 py-2">Flow</th>
                                 <th class="px-3 py-2 text-right">Call Vol</th>
                                 <th class="px-4 py-2 text-right">Put Vol</th>
                             </tr>
@@ -263,9 +291,10 @@
                                     <td class="px-3 py-2 text-right {tone === 'up' ? 'text-up' : tone === 'down' ? 'text-down' : 'text-muted-foreground'}">{fmtScore(row.bias?.score)}</td>
                                     <td class="px-3 py-2"><Badge variant={tone}>{(row.bias?.label || 'neutral').replaceAll('_', ' ')}</Badge></td>
                                     <td class="px-3 py-2 text-right {pcrTone(row.totals?.oi_put_call_ratio) === 'down' ? 'text-put' : pcrTone(row.totals?.oi_put_call_ratio) === 'up' ? 'text-call' : 'text-muted-foreground'}">{fmt(row.totals?.oi_put_call_ratio)}</td>
-                                    <td class="px-3 py-2 text-right {pcrTone(row.totals?.volume_put_call_ratio) === 'down' ? 'text-put' : pcrTone(row.totals?.volume_put_call_ratio) === 'up' ? 'text-call' : 'text-muted-foreground'}">{fmt(row.totals?.volume_put_call_ratio)}</td>
-                                    <td class="px-3 py-2 text-right text-call">{fmt(row.totals?.call_volume, 0)}</td>
-                                    <td class="px-4 py-2 text-right text-put">{fmt(row.totals?.put_volume, 0)}</td>
+                                    <td class="px-3 py-2 text-right {pcrTone(row.totals?.volume_put_call_ratio) === 'down' && isFlowReady(row) ? 'text-put' : pcrTone(row.totals?.volume_put_call_ratio) === 'up' && isFlowReady(row) ? 'text-call' : 'text-muted-foreground'}">{fmtFlow(row, 'volume_put_call_ratio')}</td>
+                                    <td class="px-3 py-2 whitespace-nowrap font-semibold uppercase tracking-wider {flowClass(row)}">{flowLabel(row)}</td>
+                                    <td class="px-3 py-2 text-right text-call">{fmtFlow(row, 'call_volume', 0)}</td>
+                                    <td class="px-4 py-2 text-right text-put">{fmtFlow(row, 'put_volume', 0)}</td>
                                 </tr>
                             {/each}
                         </tbody>
