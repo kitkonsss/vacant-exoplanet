@@ -707,12 +707,21 @@ def analyze_expected_range(asset_id, price, ohlc_daily):
 
     out = None
     if atr is not None:
+        anchor = price
+        atr_bands = {}
+        for n in (1, 2, 3):
+            atr_bands[f'plus{n}'] = round(anchor + n * atr, 2)
+            atr_bands[f'minus{n}'] = round(anchor - n * atr, 2)
         out = {
             'method': 'ATR(14) daily true-range proxy',
+            'anchor_price': round(anchor, 2),
+            'current_price': round(price, 2),
             'atr': round(atr, 2),
             'expected_move': round(atr, 2),
-            'day_high_est': round(price + atr, 2),
-            'day_low_est': round(price - atr, 2),
+            'day_high_est': round(anchor + atr, 2),
+            'day_low_est': round(anchor - atr, 2),
+            'bands_1d': atr_bands,
+            'price_sd_from_anchor': 0.0,
             'note': 'Typical 1-day travel; a wall beyond ±ATR from price is unlikely to be reached intraday.',
         }
 
@@ -732,18 +741,33 @@ def analyze_expected_range(asset_id, price, ohlc_daily):
 
     if out is None:
         out = {}
+    anchor = (iv or {}).get('anchor_price') or (iv or {}).get('future_price') or price
+    try:
+        anchor = float(anchor)
+    except (TypeError, ValueError):
+        anchor = float(price)
+    bands = iv.get('bands_1d')
+    if not bands:
+        bands = {}
+        for n in (1, 2, 3):
+            bands[f'plus{n}'] = round(anchor + n * move, 1)
+            bands[f'minus{n}'] = round(anchor - n * move, 1)
+    price_sd = round((float(price) - anchor) / float(move), 2) if move else None
     out.update({
         'method': 'ATM IV from Vol2Vol smile (1-day move); ATR(14) kept as cross-check',
+        'anchor_price': round(anchor, 1),
+        'current_price': round(float(price), 1),
         'expected_move': round(move, 1),
-        'day_high_est': round(price + move, 1),
-        'day_low_est': round(price - move, 1),
+        'day_high_est': round(anchor + move, 1),
+        'day_low_est': round(anchor - move, 1),
         'atm_iv_pct': iv.get('atm_iv_pct_1d_basis'),
         'iv_basis_tenor': iv.get('basis_tenor'),
-        'bands_1d': iv.get('bands_1d'),
+        'bands_1d': bands,
+        'price_sd_from_anchor': price_sd,
         'term_structure': iv.get('term_structure'),
         'skew': iv.get('skew'),
-        'note': 'IV-based 1SD daily move (forward-looking). bands_1d are ±1/2/3 SD anchored '
-                'at the scrape-time future price; ATR retained for regime detection.',
+        'note': 'IV-based 1SD daily move (forward-looking). bands_1d are locked to anchor_price '
+                'from the Vol2Vol scrape; live/current price is only compared against that anchor.',
     })
     out.setdefault('atr', round(atr, 2) if atr is not None else None)
     return out

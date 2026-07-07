@@ -108,6 +108,10 @@
         if (!wall || !t) return null;
         return touchProb(Math.abs(wall.price - t.price) / t.em);
     }
+    function sdLoc(n) {
+        if (n == null || !Number.isFinite(n)) return '—';
+        return `${n >= 0 ? '+' : '-'}${fmtNumber(Math.abs(n), 2)}`;
+    }
 </script>
 
 {#if loading}
@@ -247,6 +251,7 @@
                 <div class="pb-1 text-[11px] leading-relaxed text-muted-foreground">
                     {#if usd(t.em)}<div>= {usd(t.em)}{#if t.microPointValueUsd} · ไมโคร ${fmtNumber(t.em * t.microPointValueUsd, 0)}{/if}</div>{/if}
                     <div>กรอบวัน {fmtNumber(t.dayLow, 0)} – {fmtNumber(t.dayHigh, 0)}{#if t.atmIvPct} · IV {fmtNumber(t.atmIvPct, 1)}%{/if}{#if t.atr} · ATR {fmtMove(t.atr)}{/if}</div>
+                    <div>anchor {fmtNumber(t.anchorPrice, 0)} · now {sdLoc(t.currentSd)} SD</div>
                 </div>
             </div>
 
@@ -261,7 +266,7 @@
                             +{uv(up.dist)} → {fmtNumber(up.tpPrice, 0)}
                         </div>
                         <div class="mt-0.5 flex items-center gap-2 text-[11px] text-muted-foreground">
-                            <Badge variant={probTone(up.prob)}>โอกาสแตะ {pct(up.prob)}</Badge>
+                            <Badge variant={up.touched ? 'up' : probTone(up.prob)}>{up.touched ? 'hit' : `โอกาสแตะ ${pct(up.prob)}`}</Badge>
                             {#if usd(up.dist)}<span>{usd(up.dist)}</span>{/if}
                         </div>
                         {#if up.cappedBy}<div class="mt-1 text-[10px] text-warn">⛓ ตัดที่กำแพง {up.cappedBy.label} @ {fmtNumber(up.cappedBy.price, 0)}</div>{/if}
@@ -276,7 +281,7 @@
                             −{uv(down.dist)} → {fmtNumber(down.tpPrice, 0)}
                         </div>
                         <div class="mt-0.5 flex items-center gap-2 text-[11px] text-muted-foreground">
-                            <Badge variant={probTone(down.prob)}>โอกาสแตะ {pct(down.prob)}</Badge>
+                            <Badge variant={down.touched ? 'up' : probTone(down.prob)}>{down.touched ? 'hit' : `โอกาสแตะ ${pct(down.prob)}`}</Badge>
                             {#if usd(down.dist)}<span>{usd(down.dist)}</span>{/if}
                         </div>
                         {#if down.cappedBy}<div class="mt-1 text-[10px] text-warn">⛓ ตัดที่กำแพง {down.cappedBy.label} @ {fmtNumber(down.cappedBy.price, 0)}</div>{/if}

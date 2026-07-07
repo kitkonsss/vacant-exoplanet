@@ -223,12 +223,13 @@ def run_asset(asset_id, cfg):
     short = min(tenors, key=lambda t: t['dte'])
     long_ = max(tenors, key=lambda t: t['dte'])
     f = short['future_price']
+    anchor_price = f
     horizon_days = min(1.0, short['dte'])
-    move_1d = f * short['atm_iv'] * math.sqrt(horizon_days / 365.0)
+    move_1d = anchor_price * short['atm_iv'] * math.sqrt(horizon_days / 365.0)
     bands_1d = {}
     for n in (1, 2, 3):
-        bands_1d[f'plus{n}'] = round(f + n * move_1d, 1)
-        bands_1d[f'minus{n}'] = round(f - n * move_1d, 1)
+        bands_1d[f'plus{n}'] = round(anchor_price + n * move_1d, 1)
+        bands_1d[f'minus{n}'] = round(anchor_price - n * move_1d, 1)
 
     slope = round((short['atm_iv'] - long_['atm_iv']) * 100, 2)
     if slope > 2.0:
@@ -271,14 +272,16 @@ def run_asset(asset_id, cfg):
                   'move = F x IV x sqrt(DTE/365)',
         'skew_mode': cfg['skew_mode'],
         'future_price': f,
+        'anchor_price': anchor_price,
         'atm_iv_pct_1d_basis': short['atm_iv_pct'],
         'basis_tenor': {'contract_key': short['contract_key'], 'symbol': short['symbol'],
                         'dte': short['dte']},
         'horizon_days': horizon_days,
         'expected_move_1d': round(move_1d, 1),
-        'day_high_est': round(f + move_1d, 1),
-        'day_low_est': round(f - move_1d, 1),
+        'day_high_est': round(anchor_price + move_1d, 1),
+        'day_low_est': round(anchor_price - move_1d, 1),
         'bands_1d': bands_1d,
+        'price_sd_from_anchor': 0.0,
         'term_structure': {'slope_volpts_short_minus_monthly': slope, 'shape': shape,
                            'short_tenor': short['symbol'], 'long_tenor': long_['symbol']},
         'skew': skew,
