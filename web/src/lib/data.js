@@ -1,10 +1,12 @@
-import { ASSET_PROFILES, CONTRACT_OPTIONS, biasHistoryApiUrl, biasHistoryUrl, briefUrl, cotUrl, cryptoSnapshotUrl, econCalendarUrl, expectedRangeUrl, gammaHeatmapUrl, heatmapUrl, isCryptoAsset, ivBaselineUrl, macroUrl, oiDataUrl, optionFlowUrl, positionBiasUrl, signalLogUrl, signalScorecardUrl, strategyUrl, wallBacktestUrl } from './config.js';
+import { ASSET_PROFILES, CONTRACT_OPTIONS, biasHistoryApiUrl, biasHistoryUrl, briefUrl, cotUrl, cryptoSnapshotUrl, dataApiUrl, econCalendarUrl, expectedRangeUrl, gammaHeatmapUrl, heatmapUrl, isCryptoAsset, ivBaselineUrl, macroUrl, oiDataUrl, optionFlowUrl, positionBiasUrl, signalLogUrl, signalScorecardUrl, strategyUrl, wallBacktestUrl } from './config.js';
 import { parseOIData } from './vol2vol.js';
 
 const CRYPTO_SNAPSHOT_TTL_MS = 4000;
 const SOFT_FETCH_RETRY_MS = 250;
 /** @type {Map<string, {ts: number, data: any, pending?: Promise<any>}>} */
 const cryptoSnapshotCache = new Map();
+const jsonLastGood = new Map();
+const textLastGood = new Map();
 
 function cacheBust(url) {
     return `${url}${url.includes('?') ? '&' : '?'}t=${Date.now()}`;
@@ -14,12 +16,16 @@ function delay(ms) {
     return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function fetchJsonSoft(url, { retries = 1, cacheBustUrl = true } = {}) {
+async function fetchJsonSoft(url, { retries = 1, cacheBustUrl = true, useLastGood = false } = {}) {
     let lastError = null;
     for (let attempt = 0; attempt <= retries; attempt += 1) {
         try {
             const res = await fetch(cacheBustUrl ? cacheBust(url) : url, { cache: cacheBustUrl ? 'no-store' : 'default' });
-            if (res.ok) return await res.json();
+            if (res.ok) {
+                const data = await res.json();
+                if (useLastGood) jsonLastGood.set(url, data);
+                return data;
+            }
             lastError = new Error(`HTTP ${res.status}`);
         } catch (e) {
             lastError = e;
@@ -31,18 +37,41 @@ async function fetchJsonSoft(url, { retries = 1, cacheBustUrl = true } = {}) {
     }
 
     console.warn(`fetch failed: ${url}`, lastError);
-    return null;
+    return useLastGood ? jsonLastGood.get(url) ?? null : null;
 }
 
-async function fetchTextSoft(url) {
-    try {
-        const res = await fetch(cacheBust(url));
-        if (!res.ok) return null;
-        return await res.text();
-    } catch (e) {
-        console.warn(`fetch failed: ${url}`, e);
-        return null;
+async function fetchTextSoft(url, { retries = 1, cacheBustUrl = true, useLastGood = false } = {}) {
+    let lastError = null;
+    for (let attempt = 0; attempt <= retries; attempt += 1) {
+        try {
+            const res = await fetch(cacheBustUrl ? cacheBust(url) : url, { cache: cacheBustUrl ? 'no-store' : 'default' });
+            if (res.ok) {
+                const text = await res.text();
+                if (useLastGood) textLastGood.set(url, text);
+                return text;
+            }
+            lastError = new Error(`HTTP ${res.status}`);
+        } catch (e) {
+            lastError = e;
+        }
+
+        if (attempt < retries) {
+            await delay(SOFT_FETCH_RETRY_MS * (attempt + 1));
+        }
     }
+
+    console.warn(`fetch failed: ${url}`, lastError);
+    return useLastGood ? textLastGood.get(url) ?? null : null;
+}
+
+async function fetchStaticJson(assetId, fileName, rawUrl) {
+    return await fetchJsonSoft(dataApiUrl(assetId, fileName), { retries: 1, cacheBustUrl: false, useLastGood: true })
+        || await fetchJsonSoft(rawUrl, { retries: 1, cacheBustUrl: false, useLastGood: true });
+}
+
+async function fetchStaticText(assetId, fileName, rawUrl) {
+    return await fetchTextSoft(dataApiUrl(assetId, fileName), { retries: 1, cacheBustUrl: false, useLastGood: true })
+        || await fetchTextSoft(rawUrl, { retries: 1, cacheBustUrl: false, useLastGood: true });
 }
 
 async function fetchCryptoSnapshot(assetId, { force = false } = {}) {
@@ -81,8 +110,11 @@ export async function fetchPositionBias(assetId) {
 
     const keys = CONTRACT_OPTIONS.map(({ key }) => key);
     const [contractResults, expectedRange] = await Promise.all([
-        Promise.all(keys.map((key) => fetchJsonSoft(positionBiasUrl(assetId, `${key}_PositionBias.json`)))),
-        fetchJsonSoft(expectedRangeUrl(assetId))
+        Promise.all(keys.map((key) => {
+            const fileName = `${key}_PositionBias.json`;
+            return fetchStaticJson(assetId, fileName, positionBiasUrl(assetId, fileName));
+        })),
+        fetchStaticJson(assetId, 'expected_range.json', expectedRangeUrl(assetId))
     ]);
     return {
         contracts: contractResults.filter(Boolean),
@@ -125,7 +157,8 @@ export async function fetchHeatmap(assetId, contractKey) {
         const snapshot = await fetchCryptoSnapshot(assetId);
         return snapshot?.heatmaps?.[contractKey] ?? null;
     }
-    return fetchJsonSoft(heatmapUrl(assetId, contractKey));
+    const fileName = `${contractKey}_OIHeatmap.json`;
+    return fetchStaticJson(assetId, fileName, heatmapUrl(assetId, contractKey));
 }
 
 /**
@@ -136,7 +169,8 @@ export async function fetchGammaHeatmap(assetId, contractKey) {
         const snapshot = await fetchCryptoSnapshot(assetId);
         return snapshot?.gamma_heatmaps?.[contractKey] ?? null;
     }
-    return fetchJsonSoft(gammaHeatmapUrl(assetId, contractKey));
+    const fileName = `${contractKey}_GammaHeatmap.json`;
+    return fetchStaticJson(assetId, fileName, gammaHeatmapUrl(assetId, contractKey));
 }
 
 /**
@@ -149,7 +183,8 @@ export async function fetchOIData(assetId, contractKey) {
         const snapshot = await fetchCryptoSnapshot(assetId);
         return snapshot?.oi_data?.[contractKey] ?? null;
     }
-    const text = await fetchTextSoft(oiDataUrl(assetId, contractKey));
+    const fileName = `${contractKey}_OIData.txt`;
+    const text = await fetchStaticText(assetId, fileName, oiDataUrl(assetId, contractKey));
     return parseOIData(text);
 }
 
@@ -168,7 +203,7 @@ export async function fetchMacro() {
  */
 export async function fetchCot(assetId) {
     if (isCryptoAsset(assetId)) return null;
-    return fetchJsonSoft(cotUrl(assetId));
+    return fetchStaticJson(assetId, 'cot.json', cotUrl(assetId));
 }
 
 /**
@@ -180,7 +215,7 @@ export async function fetchStrategy(assetId) {
         const snapshot = await fetchCryptoSnapshot(assetId);
         return snapshot?.strategy ?? null;
     }
-    return fetchJsonSoft(strategyUrl(assetId));
+    return fetchStaticJson(assetId, 'daily_strategy.json', strategyUrl(assetId));
 }
 
 /**
@@ -188,7 +223,7 @@ export async function fetchStrategy(assetId) {
  */
 export async function fetchBrief(assetId) {
     if (isCryptoAsset(assetId)) return null;
-    return fetchTextSoft(briefUrl(assetId));
+    return fetchStaticText(assetId, 'daily_brief.md', briefUrl(assetId));
 }
 
 /**
@@ -210,12 +245,12 @@ export async function fetchSignals(assetId) {
     }
 
     const [expectedRange, log, scorecard, optionFlow, wallBacktest, strategy] = await Promise.all([
-        fetchJsonSoft(expectedRangeUrl(assetId)),
-        fetchJsonSoft(signalLogUrl(assetId)),
-        fetchJsonSoft(signalScorecardUrl(assetId)),
-        fetchJsonSoft(optionFlowUrl(assetId)),
-        fetchJsonSoft(wallBacktestUrl(assetId)),
-        fetchJsonSoft(strategyUrl(assetId))
+        fetchStaticJson(assetId, 'expected_range.json', expectedRangeUrl(assetId)),
+        fetchStaticJson(assetId, 'signal_log.json', signalLogUrl(assetId)),
+        fetchStaticJson(assetId, 'signal_scorecard.json', signalScorecardUrl(assetId)),
+        fetchStaticJson(assetId, 'option_flow.json', optionFlowUrl(assetId)),
+        fetchStaticJson(assetId, 'wall_backtest.json', wallBacktestUrl(assetId)),
+        fetchStaticJson(assetId, 'daily_strategy.json', strategyUrl(assetId))
     ]);
     return {
         expectedRange,
@@ -244,7 +279,7 @@ export async function fetchEconCalendar() {
  */
 export async function fetchIvBaseline(assetId) {
     if (isCryptoAsset(assetId)) return [];
-    const arr = await fetchJsonSoft(ivBaselineUrl(assetId));
+    const arr = await fetchStaticJson(assetId, 'iv_baseline.json', ivBaselineUrl(assetId));
     return Array.isArray(arr) ? arr : [];
 }
 

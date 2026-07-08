@@ -70,10 +70,18 @@ export const CONTRACT_OPTIONS = [
 
 export const DEFAULT_CONTRACT_KEY = CONTRACT_OPTIONS[0].key;
 
-function dataUrl(assetId, fileName) {
+function dataPath(assetId, fileName) {
     const profile = ASSET_PROFILES[assetId];
     const folder = profile?.dataFolder || 'data';
-    return `${DATA_BASE}/${folder}/${fileName}`;
+    return `${folder}/${fileName}`;
+}
+
+function dataUrl(assetId, fileName) {
+    return `${DATA_BASE}/${dataPath(assetId, fileName)}`;
+}
+
+export function dataApiUrl(assetId, fileName) {
+    return `/api/data?path=${encodeURIComponent(dataPath(assetId, fileName))}`;
 }
 
 export function isCryptoAsset(assetId) {

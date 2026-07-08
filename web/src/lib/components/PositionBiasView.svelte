@@ -28,7 +28,7 @@
             const maps = await Promise.all(
                 cs.map(async (c) => {
                     const oi = await fetchOIData(a, c.contract_key);
-                    if (!oi?.strikes) return null;
+                    if (!oi?.strikes) return ivMaps[i] || null;
                     const m = {};
                     for (const s of oi.strikes) {
                         if (Number.isFinite(s.strike) && s.volSettle > 0) m[s.strike] = s.volSettle * 100;
@@ -36,7 +36,7 @@
                     return Object.keys(m).length ? m : null;
                 })
             );
-            if (!stopped) ivMaps = maps;
+            if (!stopped) ivMaps = maps.map((map, i) => map || ivMaps[i] || null);
         })();
         return () => { stopped = true; };
     });

@@ -60,7 +60,7 @@
             const entries = await Promise.all(
                 activeRows.map(async (row) => {
                     const oi = await fetchOIData(row.assetId, key);
-                    if (!oi?.strikes) return [row.assetId, null];
+                    if (!oi?.strikes) return [row.assetId, ivMaps[row.assetId] || null];
                     const map = {};
                     for (const strike of oi.strikes) {
                         if (Number.isFinite(strike.strike) && strike.volSettle > 0) {
@@ -70,7 +70,7 @@
                     return [row.assetId, Object.keys(map).length ? map : null];
                 })
             );
-            if (!stopped) ivMaps = Object.fromEntries(entries);
+            if (!stopped) ivMaps = { ...ivMaps, ...Object.fromEntries(entries) };
         })();
         return () => { stopped = true; };
     });

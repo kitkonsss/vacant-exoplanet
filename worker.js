@@ -112,6 +112,34 @@ async function rawJson(path, { ttl = 30 } = {}) {
     });
 }
 
+function cleanDataPath(path) {
+    const clean = String(path || '').replace(/^\/+/, '');
+    if (!clean.startsWith('data/')) return null;
+    if (clean.includes('..') || clean.includes('\\')) return null;
+    if (!/\.(json|txt|md)$/.test(clean)) return null;
+    return clean;
+}
+
+async function rawData(request) {
+    const url = new URL(request.url);
+    const clean = cleanDataPath(url.searchParams.get('path'));
+    if (!clean) return json({ error: 'bad data path' }, 400);
+    const ttl = clean.endsWith('.json') ? 30 : 60;
+    const upstream = await fetch(`${RAW_DATA_BASE}/${clean}`, {
+        headers: { accept: clean.endsWith('.json') ? 'application/json' : 'text/plain' },
+        cf: { cacheTtl: ttl, cacheEverything: true },
+    });
+    if (!upstream.ok) return new Response('', { status: upstream.status, headers: { 'cache-control': 'no-store' } });
+    const contentType = clean.endsWith('.json') ? 'application/json' : clean.endsWith('.md') ? 'text/markdown; charset=utf-8' : 'text/plain; charset=utf-8';
+    return new Response(upstream.body, {
+        status: 200,
+        headers: {
+            'content-type': contentType,
+            'cache-control': `public, max-age=${ttl}`,
+        },
+    });
+}
+
 function num(v) {
     const n = Number(v);
     return Number.isFinite(n) ? n : null;
@@ -1131,6 +1159,7 @@ export default {
         if (url.pathname === '/api/price') return price(request);
         if (url.pathname === '/api/crypto/snapshot') return cryptoSnapshot(request);
         if (url.pathname === '/api/bias-history') return rawJson('/data/bias_snapshots/bias_history.json');
+        if (url.pathname === '/api/data') return rawData(request);
         // Everything else: serve the static SvelteKit build.
         return env.ASSETS.fetch(request);
     },
