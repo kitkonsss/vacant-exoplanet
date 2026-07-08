@@ -92,6 +92,10 @@ export function biasHistoryUrl() {
     return `${DATA_BASE}/data/bias_snapshots/bias_history.json`;
 }
 
+export function biasHistoryApiUrl() {
+    return '/api/bias-history';
+}
+
 // Per-contract historical OI heatmap (strike × historical day).
 export function heatmapUrl(assetId, contractKey) {
     return dataUrl(assetId, `${contractKey}_OIHeatmap.json`);

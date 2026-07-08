@@ -138,6 +138,11 @@
                 <span class="h-3 w-1 rounded-sm bg-primary"></span>
                 <span class="text-[11px] font-semibold uppercase tracking-[0.16em] text-foreground">Bias History</span>
                 <span class="font-mono text-[10px] text-muted-foreground">{records.length} records</span>
+                {#if history?.load_error}
+                    <span class="rounded border border-warn/40 bg-warn/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-warn">
+                        retry failed
+                    </span>
+                {/if}
                 {#if history?.updated_utc}
                     <span class="font-mono text-[10px] text-muted-foreground">updated {new Date(history.updated_utc).toLocaleString()}</span>
                 {/if}
@@ -175,7 +180,14 @@
             </div>
         </div>
 
-        {#if !filtered.length}
+        {#if history?.load_error && !records.length}
+            <Card class="p-8 text-center">
+                <div class="font-semibold text-foreground">History Load Failed</div>
+                <p class="mt-1 text-sm text-muted-foreground">
+                    The history file did not load this time. Refresh again after the network request completes.
+                </p>
+            </Card>
+        {:else if !filtered.length}
             <Card class="p-8 text-center">
                 <div class="font-semibold text-foreground">No History Yet</div>
                 <p class="mt-1 text-sm text-muted-foreground">

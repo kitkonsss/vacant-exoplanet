@@ -7,7 +7,7 @@
     import PositionBiasDashboard from '$lib/components/PositionBiasDashboard.svelte';
     import PositionBiasView from '$lib/components/PositionBiasView.svelte';
     import HeatmapView from '$lib/components/HeatmapView.svelte';
-    import { fetchBiasHistory, fetchGammaHeatmap, fetchHeatmap, fetchLivePrice, fetchPositionBias, fetchPositionBiasDashboard } from '$lib/data.js';
+    import { fetchBiasHistory, fetchGammaHeatmap, fetchHeatmap, fetchLivePrice, fetchPositionBias } from '$lib/data.js';
     import { ASSET_PROFILES, CONTRACT_OPTIONS, DEFAULT_CONTRACT_KEY } from '$lib/config.js';
     import { LineChart, Grid3X3, Activity, LayoutDashboard, History } from 'lucide-svelte';
 
@@ -39,11 +39,15 @@
     /** @type {Record<string, any>} */
     let dashboardLivePrices = $state({});
     let dashboardLoading = $state(false);
+    let dashboardLiveLoading = $state(false);
+    /** @type {Date | null} */
+    let dashboardLiveLoadedAt = $state(null);
     const dashboardAssetIds = Object.keys(ASSET_PROFILES);
 
     let historyPayload = $state(null);
     let historyLoading = $state(false);
     let historyContract = $state(DEFAULT_CONTRACT_KEY);
+    let historyLastGood = $state(null);
 
     // Live futures price (same-origin /api/price proxy) — ONE source of truth
     // shared by the Header and position-bias cards so they never disagree. Polled
@@ -137,21 +141,34 @@
     }
 
     async function refreshDashboardLivePrices() {
-        const entries = await Promise.all(
-            dashboardAssetIds.map(async (assetId) => {
-                const assetProfile = ASSET_PROFILES[assetId];
-                const data = await fetchLivePrice(assetProfile.liveSymbol, assetId);
-                return [assetId, data && Number.isFinite(data.price) ? data : null];
-            })
-        );
-        dashboardLivePrices = Object.fromEntries(entries);
+        if (dashboardLiveLoading) return;
+        dashboardLiveLoading = true;
+        try {
+            const entries = await Promise.all(
+                dashboardAssetIds.map(async (assetId) => {
+                    const assetProfile = ASSET_PROFILES[assetId];
+                    const data = await fetchLivePrice(assetProfile.liveSymbol, assetId);
+                    return [assetId, data && Number.isFinite(data.price) ? data : null];
+                })
+            );
+            dashboardLivePrices = Object.fromEntries(entries);
+            dashboardLiveLoadedAt = new Date();
+        } finally {
+            dashboardLiveLoading = false;
+        }
     }
 
     async function loadDashboard({ silent = false } = {}) {
         if (!silent) dashboardLoading = true;
         try {
-            dashboardPayloads = await fetchPositionBiasDashboard(dashboardAssetIds);
-            await refreshDashboardLivePrices();
+            if (!silent) dashboardPayloads = {};
+            await Promise.all(
+                dashboardAssetIds.map(async (assetId) => {
+                    const data = await fetchPositionBias(assetId);
+                    dashboardPayloads = { ...dashboardPayloads, [assetId]: data };
+                })
+            );
+            void refreshDashboardLivePrices();
             const stamp = new Date();
             lastUpdate = stamp.toLocaleTimeString();
             lastUpdateAt = stamp;
@@ -163,7 +180,13 @@
     async function loadHistory({ silent = false } = {}) {
         if (!silent) historyLoading = true;
         try {
-            historyPayload = await fetchBiasHistory();
+            const nextHistory = await fetchBiasHistory();
+            if (nextHistory?.load_error && historyLastGood) {
+                historyPayload = { ...historyLastGood, load_error: true };
+            } else {
+                historyPayload = nextHistory;
+                if (!nextHistory?.load_error) historyLastGood = nextHistory;
+            }
             const stamp = new Date();
             lastUpdate = stamp.toLocaleTimeString();
             lastUpdateAt = stamp;
@@ -303,7 +326,8 @@
             if (stopped) return;
             await refreshDashboardLivePrices();
         }
-        tick();
+        const stale = !dashboardLiveLoadedAt || Date.now() - dashboardLiveLoadedAt.getTime() > 5000;
+        if (stale) tick();
         const id = setInterval(tick, 5000);
         return () => { stopped = true; clearInterval(id); };
     });

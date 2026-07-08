@@ -7,6 +7,7 @@
 // invocations hit only API routes and are cached briefly at the edge.
 
 const ALLOWED = new Set(['GC=F', 'NQ=F']);
+const RAW_DATA_BASE = 'https://raw.githubusercontent.com/kitkonsss/vacant-exoplanet/main';
 const CRYPTO_ASSETS = {
     btc: {
         id: 'btc',
@@ -92,6 +93,21 @@ function cryptoJson(obj, status = 200) {
         headers: {
             'content-type': 'application/json',
             'cache-control': status === 200 ? 'public, max-age=5' : 'no-store',
+        },
+    });
+}
+
+async function rawJson(path, { ttl = 30 } = {}) {
+    const upstream = await fetch(`${RAW_DATA_BASE}${path}`, {
+        headers: { accept: 'application/json' },
+        cf: { cacheTtl: ttl, cacheEverything: true },
+    });
+    if (!upstream.ok) return json({ error: 'upstream', status: upstream.status }, 502);
+    return new Response(upstream.body, {
+        status: 200,
+        headers: {
+            'content-type': 'application/json',
+            'cache-control': `public, max-age=${ttl}`,
         },
     });
 }
@@ -1114,6 +1130,7 @@ export default {
         const url = new URL(request.url);
         if (url.pathname === '/api/price') return price(request);
         if (url.pathname === '/api/crypto/snapshot') return cryptoSnapshot(request);
+        if (url.pathname === '/api/bias-history') return rawJson('/data/bias_snapshots/bias_history.json');
         // Everything else: serve the static SvelteKit build.
         return env.ASSETS.fetch(request);
     },

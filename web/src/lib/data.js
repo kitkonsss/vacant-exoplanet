@@ -1,4 +1,4 @@
-import { ASSET_PROFILES, CONTRACT_OPTIONS, biasHistoryUrl, briefUrl, cotUrl, cryptoSnapshotUrl, econCalendarUrl, expectedRangeUrl, gammaHeatmapUrl, heatmapUrl, isCryptoAsset, ivBaselineUrl, macroUrl, oiDataUrl, optionFlowUrl, positionBiasUrl, signalLogUrl, signalScorecardUrl, strategyUrl, wallBacktestUrl } from './config.js';
+import { ASSET_PROFILES, CONTRACT_OPTIONS, biasHistoryApiUrl, biasHistoryUrl, briefUrl, cotUrl, cryptoSnapshotUrl, econCalendarUrl, expectedRangeUrl, gammaHeatmapUrl, heatmapUrl, isCryptoAsset, ivBaselineUrl, macroUrl, oiDataUrl, optionFlowUrl, positionBiasUrl, signalLogUrl, signalScorecardUrl, strategyUrl, wallBacktestUrl } from './config.js';
 import { parseOIData } from './vol2vol.js';
 
 const CRYPTO_SNAPSHOT_TTL_MS = 4000;
@@ -14,11 +14,11 @@ function delay(ms) {
     return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function fetchJsonSoft(url, { retries = 1 } = {}) {
+async function fetchJsonSoft(url, { retries = 1, cacheBustUrl = true } = {}) {
     let lastError = null;
     for (let attempt = 0; attempt <= retries; attempt += 1) {
         try {
-            const res = await fetch(cacheBust(url), { cache: 'no-store' });
+            const res = await fetch(cacheBustUrl ? cacheBust(url) : url, { cache: cacheBustUrl ? 'no-store' : 'default' });
             if (res.ok) return await res.json();
             lastError = new Error(`HTTP ${res.status}`);
         } catch (e) {
@@ -102,7 +102,15 @@ export async function fetchPositionBiasDashboard(assetIds = Object.keys(ASSET_PR
 }
 
 export async function fetchBiasHistory() {
-    const data = await fetchJsonSoft(biasHistoryUrl(), { retries: 2 });
+    const data = await fetchJsonSoft(biasHistoryApiUrl(), { retries: 2, cacheBustUrl: false })
+        || await fetchJsonSoft(biasHistoryUrl(), { retries: 2 });
+    if (!data) {
+        return {
+            load_error: true,
+            error_message: 'Bias history could not be loaded. Keeping the last successful read if available.',
+            records: []
+        };
+    }
     return {
         ...data,
         records: Array.isArray(data?.records) ? data.records : []
