@@ -2,7 +2,9 @@
     import { onMount } from 'svelte';
 
     let {
-        rows = []
+        rows = [],
+        livePrice = null,
+        liveAt = null
     } = $props();
 
     const LATEST_WINDOW = 24;
@@ -49,7 +51,11 @@
     let activeIndex = $state(null);
     let overlaySize = $state({ width: 0, height: PRICE_PANEL_HEIGHT });
 
-    const chartData = $derived.by(() => normalizeRows(rows));
+    const livePriceValue = $derived.by(() => {
+        const n = Number(livePrice);
+        return Number.isFinite(n) && n > 0 ? n : null;
+    });
+    const chartData = $derived.by(() => normalizeRows(rows, livePriceValue));
     const visiblePoints = $derived.by(() => pointsInRange(chartData, visibleRange));
     const valueRange = $derived.by(() => {
         const values = chartData
@@ -63,6 +69,7 @@
     const priceRange = $derived.by(() => buildPriceRange(visiblePoints));
     const priceOverlay = $derived.by(() => buildPriceOverlay(chartData, visibleRange, overlaySize, priceRange));
     const hasAnySd = $derived(chartData.some((point) => Boolean(sdBands(point.row))));
+    const hasLivePrice = $derived(chartData.some((point) => point.isLivePrice));
     const firstStamp = $derived(chartData[0] ? stamp(chartData[0].row) : '-');
     const lastStamp = $derived(chartData[chartData.length - 1] ? stamp(chartData[chartData.length - 1].row) : '-');
 
@@ -84,14 +91,14 @@
         return seconds;
     }
 
-    function normalizeRows(inputRows) {
+    function normalizeRows(inputRows, liveValue = null) {
         const ordered = [...(inputRows || [])].sort((a, b) => {
             const ad = `${a.date_bangkok || ''}-${String(a.slot_order || 0).padStart(2, '0')}-${a.captured_at_utc || ''}`;
             const bd = `${b.date_bangkok || ''}-${String(b.slot_order || 0).padStart(2, '0')}-${b.captured_at_utc || ''}`;
             return ad.localeCompare(bd);
         });
         let previousTime = 0;
-        return ordered
+        const points = ordered
             .map((row, sortIndex) => {
                 const oi = Number(row.totals?.oi_put_call_ratio);
                 const volume = isFlowReady(row) ? Number(row.totals?.volume_put_call_ratio) : NaN;
@@ -101,6 +108,15 @@
             })
             .filter((point) => Number.isFinite(point.oi) || Number.isFinite(point.volume))
             .map((point, index) => ({ ...point, index }));
+        if (liveValue != null && points.length) {
+            const lastIndex = points.length - 1;
+            points[lastIndex] = {
+                ...points[lastIndex],
+                livePrice: liveValue,
+                isLivePrice: true
+            };
+        }
+        return points;
     }
 
     function lineData(points, field) {
@@ -196,6 +212,10 @@
         return Number.isFinite(n) ? n : null;
     }
 
+    function pointPrice(point) {
+        return numeric(point?.livePrice) ?? numeric(point?.row?.future_price);
+    }
+
     function wallEntries(row) {
         const walls = row?.walls || {};
         return wallTypes
@@ -228,7 +248,7 @@
     function priceValues(point) {
         const row = point?.row;
         return [
-            numeric(row?.future_price),
+            pointPrice(point),
             ...wallEntries(row).map((wall) => wall.strike),
             ...sdBandRows(row).map((band) => band.value)
         ].filter(Number.isFinite);
@@ -307,7 +327,7 @@
         const activeRange = sanitizeLogicalRange(range || fallbackRange(points), points);
         const visible = pointsInRange(points, activeRange);
         const latest = visible[visible.length - 1] || null;
-        const pricePath = pathFrom(visible, (point) => numeric(point.row?.future_price), rangeInput, size, activeRange);
+        const pricePath = pathFrom(visible, (point) => pointPrice(point), rangeInput, size, activeRange);
         const wallMarkers = visible.flatMap((point) => wallEntries(point.row).map((wall) => ({
             point,
             wall,
@@ -318,7 +338,8 @@
             .map((point) => ({
                 point,
                 x: logicalX(point.index, activeRange, size.width),
-                y: priceY(point.row?.future_price, rangeInput, size.height)
+                y: priceY(pointPrice(point), rangeInput, size.height),
+                isLivePrice: point.isLivePrice
             }))
             .filter((dot) => Number.isFinite(dot.y));
         const labels = latest
@@ -336,7 +357,13 @@
                         color: band.color,
                         x: logicalX(latest.index, activeRange, size.width),
                         y: priceY(band.value, rangeInput, size.height)
-                    }))
+                    })),
+                ...(latest.isLivePrice ? [{
+                    text: `Live ${fmtLevel(pointPrice(latest))}`,
+                    color: 'hsl(var(--foreground))',
+                    x: logicalX(latest.index, activeRange, size.width),
+                    y: priceY(pointPrice(latest), rangeInput, size.height)
+                }] : [])
             ], size.height)
             : [];
         const activeX = activeIndex == null ? null : logicalX(activeIndex, activeRange, size.width);
@@ -409,6 +436,13 @@
         const date = new Date(raw);
         if (Number.isNaN(date.getTime())) return '-';
         return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Bangkok' });
+    }
+
+    function liveTimeLabel(value = liveAt) {
+        if (!value) return '';
+        const date = value instanceof Date ? value : new Date(value);
+        if (Number.isNaN(date.getTime())) return '';
+        return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', timeZone: 'Asia/Bangkok' });
     }
 
     function biasLabel(row) {
@@ -742,6 +776,9 @@
                     <span><span class="mr-1 inline-block h-[2px] w-4 bg-put align-middle"></span> Call Wall</span>
                     <span><span class="mr-1 inline-block h-[2px] w-4 bg-call align-middle"></span> Put Wall</span>
                     <span><span class="mr-1 inline-block h-[6px] w-4 rounded-sm bg-primary/25 align-middle"></span> SD</span>
+                    {#if hasLivePrice}
+                        <span class="font-mono text-foreground">Live {fmtLevel(livePriceValue)}</span>
+                    {/if}
                 </div>
             </div>
 
@@ -786,7 +823,7 @@
                         <path d={priceOverlay.pricePath} fill="none" stroke="hsl(var(--foreground))" stroke-width="1.8" opacity="0.82" vector-effect="non-scaling-stroke" />
                     {/if}
                     {#each priceOverlay.priceDots as dot}
-                        <circle cx={dot.x} cy={dot.y} r="2.4" fill="hsl(var(--foreground))" opacity={activeIndex === dot.point.index ? 0.95 : 0.42} vector-effect="non-scaling-stroke" />
+                        <circle cx={dot.x} cy={dot.y} r={dot.isLivePrice ? 3.5 : 2.4} fill="hsl(var(--foreground))" opacity={dot.isLivePrice || activeIndex === dot.point.index ? 0.95 : 0.42} vector-effect="non-scaling-stroke" />
                     {/each}
 
                     {#each priceOverlay.wallMarkers as marker}
@@ -836,8 +873,17 @@
             </div>
             <div class="mt-1 flex items-center justify-between gap-2 text-muted-foreground">
                 <span>{row.contract || row.contract_key}</span>
-                <span class="font-mono text-foreground">{fmtLevel(row.future_price)}</span>
+                <span class="font-mono text-foreground">
+                    {fmtLevel(pointPrice(point))}
+                    {#if point.isLivePrice}<span class="ml-1 text-[10px] uppercase tracking-wider text-primary">live</span>{/if}
+                </span>
             </div>
+            {#if point.isLivePrice}
+                <div class="mt-1 flex items-center justify-between gap-2 font-mono text-[10px] text-muted-foreground">
+                    <span>Snapshot {fmtLevel(row.future_price)}</span>
+                    {#if liveTimeLabel()}<span>Live at {liveTimeLabel()}</span>{/if}
+                </div>
+            {/if}
             <div class="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 font-mono tabular-nums">
                 <span class="text-muted-foreground">OI P/C</span>
                 <span class="text-right text-put">{fmt(point.oi)}</span>

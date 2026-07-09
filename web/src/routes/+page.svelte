@@ -391,6 +391,8 @@
                             loading={historyLoading}
                             bind:assetId={asset}
                             bind:contractKey={historyContract}
+                            {livePrice}
+                            {liveAt}
                         />
                     </div>
                 {:else if activeTab === 'analysis'}

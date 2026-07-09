@@ -9,7 +9,9 @@
         history = null,
         loading = false,
         assetId = $bindable('gc'),
-        contractKey = $bindable('current')
+        contractKey = $bindable('current'),
+        livePrice = null,
+        liveAt = null
     } = $props();
 
     const slotLabels = {
@@ -268,7 +270,7 @@
                     </div>
 
                     <div class="mt-3">
-                        <PcrTrendChart rows={contractRows} />
+                        <PcrTrendChart rows={contractRows} {livePrice} {liveAt} />
                     </div>
                 </Card>
             {/if}
