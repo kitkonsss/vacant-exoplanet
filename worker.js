@@ -114,6 +114,25 @@ async function rawJson(path, { ttl = 30 } = {}) {
     });
 }
 
+async function rawJsonPayload(path, { ttl = 30 } = {}) {
+    const upstream = await fetch(`${RAW_DATA_BASE}${path}`, {
+        headers: { accept: 'application/json' },
+        cf: { cacheTtl: ttl, cacheEverything: true },
+    });
+    if (!upstream.ok) return { ok: false, status: upstream.status, payload: null };
+    return { ok: true, status: upstream.status, payload: await upstream.json() };
+}
+
+function jsonWithTtl(obj, { ttl = 30, status = 200 } = {}) {
+    return new Response(JSON.stringify(obj), {
+        status,
+        headers: {
+            'content-type': 'application/json',
+            'cache-control': `public, max-age=${ttl}`,
+        },
+    });
+}
+
 function cleanDataPath(path) {
     const clean = String(path || '').replace(/^\/+/, '');
     if (!clean.startsWith('data/')) return null;
@@ -142,13 +161,39 @@ async function rawData(request) {
     });
 }
 
-function biasHistoryPath(request) {
+function biasHistorySelector(request) {
     const url = new URL(request.url);
     const asset = (url.searchParams.get('asset') || '').toLowerCase();
     const contract = (url.searchParams.get('contract') || '').toLowerCase();
-    if (!asset && !contract) return '/data/bias_snapshots/bias_history.json';
+    if (!asset && !contract) return { path: '/data/bias_snapshots/bias_history.json' };
     if (!HISTORY_ASSETS.has(asset) || !HISTORY_CONTRACTS.has(contract)) return null;
-    return `/data/bias_snapshots/history_${asset}_${contract}.json`;
+    return { asset, contract, path: `/data/bias_snapshots/history_${asset}_${contract}.json` };
+}
+
+async function biasHistory(request) {
+    const selector = biasHistorySelector(request);
+    if (!selector) return json({ error: 'bad history selector' }, 400);
+    if (!selector.asset) return rawJson(selector.path);
+
+    const sliced = await rawJsonPayload(selector.path);
+    if (sliced.ok) return jsonWithTtl(sliced.payload);
+
+    const full = await rawJsonPayload('/data/bias_snapshots/bias_history.json');
+    if (!full.ok) {
+        return json({ error: 'upstream', status: sliced.status, fallback_status: full.status }, 502);
+    }
+
+    const payload = full.payload && typeof full.payload === 'object' ? full.payload : {};
+    const records = Array.isArray(payload.records) ? payload.records : [];
+    const filtered = records.filter((record) => record?.asset === selector.asset && record?.contract_key === selector.contract);
+    const { records: _records, ...meta } = payload;
+    return jsonWithTtl({
+        ...meta,
+        asset: selector.asset,
+        contract_key: selector.contract,
+        fallback_source: 'bias_history.json',
+        records: filtered,
+    });
 }
 
 function num(v) {
@@ -1169,11 +1214,7 @@ export default {
         const url = new URL(request.url);
         if (url.pathname === '/api/price') return price(request);
         if (url.pathname === '/api/crypto/snapshot') return cryptoSnapshot(request);
-        if (url.pathname === '/api/bias-history') {
-            const path = biasHistoryPath(request);
-            if (!path) return json({ error: 'bad history selector' }, 400);
-            return rawJson(path);
-        }
+        if (url.pathname === '/api/bias-history') return biasHistory(request);
         if (url.pathname === '/api/data') return rawData(request);
         // Everything else: serve the static SvelteKit build.
         return env.ASSETS.fetch(request);
