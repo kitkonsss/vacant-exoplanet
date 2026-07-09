@@ -3,11 +3,8 @@
     import Header from '$lib/components/Header.svelte';
     import TabNav from '$lib/components/TabNav.svelte';
     import AppFooter from '$lib/components/AppFooter.svelte';
-    import BiasHistoryView from '$lib/components/BiasHistoryView.svelte';
     import PositionBiasDashboard from '$lib/components/PositionBiasDashboard.svelte';
-    import PositionBiasView from '$lib/components/PositionBiasView.svelte';
-    import HeatmapView from '$lib/components/HeatmapView.svelte';
-    import { fetchBiasHistory, fetchGammaHeatmap, fetchHeatmap, fetchLivePrice, fetchPositionBias } from '$lib/data.js';
+    import { fetchGammaHeatmap, fetchHeatmap, fetchLivePrice, fetchPositionBias } from '$lib/data.js';
     import { ASSET_PROFILES, CONTRACT_OPTIONS, DEFAULT_CONTRACT_KEY } from '$lib/config.js';
     import { LineChart, Grid3X3, Activity, LayoutDashboard, History } from 'lucide-svelte';
 
@@ -47,7 +44,22 @@
     let historyPayload = $state(null);
     let historyLoading = $state(false);
     let historyContract = $state(DEFAULT_CONTRACT_KEY);
-    let historyLastGood = $state(null);
+    /** @type {Record<string, any>} */
+    let historyCache = $state({});
+    /** @type {Record<string, any>} */
+    let historyLastGood = $state({});
+    let historyRequestKey = '';
+
+    /** @type {Record<string, any>} */
+    let lazyComponents = $state({});
+    /** @type {Record<string, boolean>} */
+    let lazyLoading = $state({});
+    const lazyTabsLoading = $derived(Object.values(lazyLoading).some(Boolean));
+    const lazyTabLoaders = {
+        history: () => import('$lib/components/BiasHistoryView.svelte'),
+        analysis: () => import('$lib/components/PositionBiasView.svelte'),
+        heatmap: () => import('$lib/components/HeatmapView.svelte')
+    };
 
     // Live futures price (same-origin /api/price proxy) — ONE source of truth
     // shared by the Header and position-bias cards so they never disagree. Polled
@@ -113,12 +125,47 @@
             ? payload?.provider_label || payload?.provider || 'Crypto aggregate'
             : 'pageth/Vol2VolData'
     );
+    const HistoryComponent = $derived(lazyComponent('history'));
+    const AnalysisComponent = $derived(lazyComponent('analysis'));
+    const HeatmapComponent = $derived(lazyComponent('heatmap'));
+    const GammaHeatmapComponent = $derived(lazyComponent('gamma'));
 
     function resolveContractKey(contractKeys, preferredKey = heatmapContract) {
         if (!contractKeys.length) return null;
         if (contractKeys.includes(preferredKey)) return preferredKey;
         if (contractKeys.includes(DEFAULT_CONTRACT_KEY)) return DEFAULT_CONTRACT_KEY;
         return contractKeys[0];
+    }
+
+    function lazyKeyForTab(key) {
+        return key === 'gamma' ? 'heatmap' : key;
+    }
+
+    function lazyComponent(key) {
+        return lazyComponents[lazyKeyForTab(key)] ?? null;
+    }
+
+    async function ensureTabComponent(key) {
+        const lazyKey = lazyKeyForTab(key);
+        const existing = untrack(() => lazyComponents[lazyKey]);
+        if (existing || !lazyTabLoaders[lazyKey]) return existing ?? null;
+        if (untrack(() => lazyLoading[lazyKey])) return null;
+
+        lazyLoading = { ...untrack(() => lazyLoading), [lazyKey]: true };
+        try {
+            const module = await lazyTabLoaders[lazyKey]();
+            const component = module?.default ?? null;
+            if (component) {
+                lazyComponents = { ...untrack(() => lazyComponents), [lazyKey]: component };
+            }
+            return component;
+        } finally {
+            lazyLoading = { ...untrack(() => lazyLoading), [lazyKey]: false };
+        }
+    }
+
+    function historyKey(assetId = asset, contractKey = historyContract) {
+        return `${assetId}:${contractKey}`;
     }
 
     async function load({ silent = false } = {}) {
@@ -177,15 +224,35 @@
         }
     }
 
-    async function loadHistory({ silent = false } = {}) {
+    async function loadHistory({
+        silent = false,
+        force = false,
+        assetId: targetAsset = asset,
+        contractKey: targetContract = historyContract
+    } = {}) {
+        const key = historyKey(targetAsset, targetContract);
+        const cached = untrack(() => historyCache[key]);
+        if (cached && !force) {
+            historyPayload = cached;
+            return;
+        }
+
         if (!silent) historyLoading = true;
+        historyRequestKey = key;
         try {
-            const nextHistory = await fetchBiasHistory();
-            if (nextHistory?.load_error && historyLastGood) {
-                historyPayload = { ...historyLastGood, load_error: true };
+            const { fetchBiasHistory } = await import('$lib/history-data.js');
+            const nextHistory = await fetchBiasHistory({ assetId: targetAsset, contractKey: targetContract });
+            if (historyRequestKey !== key) return;
+
+            const lastGood = untrack(() => historyLastGood[key]);
+            if (nextHistory?.load_error && lastGood) {
+                historyPayload = { ...lastGood, load_error: true };
             } else {
                 historyPayload = nextHistory;
-                if (!nextHistory?.load_error) historyLastGood = nextHistory;
+                if (!nextHistory?.load_error) {
+                    historyCache = { ...untrack(() => historyCache), [key]: nextHistory };
+                    historyLastGood = { ...untrack(() => historyLastGood), [key]: nextHistory };
+                }
             }
             const stamp = new Date();
             lastUpdate = stamp.toLocaleTimeString();
@@ -232,10 +299,13 @@
             if (activeTab === 'dashboard') {
                 await loadDashboard({ silent });
             } else if (activeTab === 'history') {
-                await loadHistory({ silent });
+                await ensureTabComponent('history');
+                await loadHistory({ silent, force: !silent });
             } else if (activeTab === 'heatmap' && nextKey) {
+                await ensureTabComponent('heatmap');
                 await ensureHeatmap(nextKey, { force: forceLive, silent });
             } else if (activeTab === 'gamma' && nextKey) {
+                await ensureTabComponent('gamma');
                 await ensureGamma(nextKey, { force: forceLive, silent });
             }
         } finally {
@@ -272,13 +342,17 @@
         if (key === 'dashboard') {
             void loadDashboard();
         } else if (key === 'history') {
-            void loadHistory();
+            void ensureTabComponent('history');
+        } else if (key === 'analysis') {
+            void ensureTabComponent('analysis');
         } else if (key === 'heatmap') {
+            void ensureTabComponent('heatmap');
             const nextKey = resolveContractKey(availableContractKeys);
             if (!nextKey) return;
             if (nextKey !== heatmapContract) heatmapContract = nextKey;
             void ensureHeatmap(nextKey);
         } else if (key === 'gamma') {
+            void ensureTabComponent('gamma');
             const nextKey = resolveContractKey(availableContractKeys, gammaContract);
             if (!nextKey) return;
             if (nextKey !== gammaContract) gammaContract = nextKey;
@@ -308,14 +382,26 @@
             void load().then((nextKey) => {
                 if (activeTab === 'dashboard') {
                     void loadDashboard();
-                } else if (activeTab === 'history') {
-                    void loadHistory();
+                } else if (activeTab === 'analysis') {
+                    void ensureTabComponent('analysis');
                 } else if (activeTab === 'heatmap' && nextKey) {
+                    void ensureTabComponent('heatmap');
                     void ensureHeatmap(nextKey);
                 } else if (activeTab === 'gamma' && nextKey) {
+                    void ensureTabComponent('gamma');
                     void ensureGamma(nextKey);
                 }
             });
+        });
+    });
+
+    $effect(() => {
+        const selectedAsset = asset;
+        const selectedContract = historyContract;
+        if (activeTab !== 'history') return;
+        untrack(() => {
+            void ensureTabComponent('history');
+            void loadHistory({ assetId: selectedAsset, contractKey: selectedContract });
         });
     });
 
@@ -365,7 +451,7 @@
         dte={activeTab === 'dashboard' || activeTab === 'history' ? null : visibleContract?.dte}
         {lastUpdate}
         {lastUpdateAt}
-        refreshing={refreshing || loading || dashboardLoading || historyLoading}
+        refreshing={refreshing || loading || dashboardLoading || historyLoading || lazyTabsLoading}
         onRefresh={refresh}
     />
 
@@ -386,42 +472,69 @@
                     </div>
                 {:else if activeTab === 'history'}
                     <div class="flex flex-col gap-4 overflow-y-auto">
-                        <BiasHistoryView
-                            history={historyPayload}
-                            loading={historyLoading}
-                            bind:assetId={asset}
-                            bind:contractKey={historyContract}
-                            {livePrice}
-                            {liveAt}
-                        />
+                        {#if HistoryComponent}
+                            <HistoryComponent
+                                history={historyPayload}
+                                loading={historyLoading}
+                                bind:assetId={asset}
+                                bind:contractKey={historyContract}
+                                {livePrice}
+                                {liveAt}
+                            />
+                        {:else}
+                            <div class="flex h-64 items-center justify-center text-muted-foreground">
+                                <div class="flex items-center gap-3">
+                                    <div class="h-4 w-4 animate-spin rounded-full border-2 border-border border-t-primary"></div>
+                                    <span class="text-sm">Loading history view...</span>
+                                </div>
+                            </div>
+                        {/if}
                     </div>
                 {:else if activeTab === 'analysis'}
                     <div class="flex flex-col gap-4 overflow-y-auto">
-                        <PositionBiasView {payload} {loading} {livePrice} assetId={asset} />
+                        {#if AnalysisComponent}
+                            <AnalysisComponent {payload} {loading} {livePrice} assetId={asset} />
+                        {:else}
+                            <div class="flex h-64 items-center justify-center text-muted-foreground">
+                                <div class="h-4 w-4 animate-spin rounded-full border-2 border-border border-t-primary"></div>
+                            </div>
+                        {/if}
                     </div>
                 {:else if activeTab === 'heatmap'}
-                    <HeatmapView
-                        assetId={asset}
-                        bind:contractKey={heatmapContract}
-                        availableContracts={availableContractKeys}
-                        data={currentHeatmap}
-                        loading={heatmapLoading}
-                        onChangeContract={onHeatmapContract}
-                        showChangeToggle={true}
-                    />
+                    {#if HeatmapComponent}
+                        <HeatmapComponent
+                            assetId={asset}
+                            bind:contractKey={heatmapContract}
+                            availableContracts={availableContractKeys}
+                            data={currentHeatmap}
+                            loading={heatmapLoading}
+                            onChangeContract={onHeatmapContract}
+                            showChangeToggle={true}
+                        />
+                    {:else}
+                        <div class="flex h-64 items-center justify-center text-muted-foreground">
+                            <div class="h-4 w-4 animate-spin rounded-full border-2 border-border border-t-primary"></div>
+                        </div>
+                    {/if}
                 {:else if activeTab === 'gamma'}
-                    <HeatmapView
-                        assetId={asset}
-                        bind:contractKey={gammaContract}
-                        availableContracts={availableContractKeys}
-                        data={currentGamma}
-                        loading={gammaLoading}
-                        onChangeContract={onGammaContract}
-                        title="Gamma Heatmap (1 Pct, Call+Put)"
-                        valueDecimals={0}
-                        heatScale="log"
-                        emptyFile="_GammaHeatmap.json"
-                    />
+                    {#if GammaHeatmapComponent}
+                        <GammaHeatmapComponent
+                            assetId={asset}
+                            bind:contractKey={gammaContract}
+                            availableContracts={availableContractKeys}
+                            data={currentGamma}
+                            loading={gammaLoading}
+                            onChangeContract={onGammaContract}
+                            title="Gamma Heatmap (1 Pct, Call+Put)"
+                            valueDecimals={0}
+                            heatScale="log"
+                            emptyFile="_GammaHeatmap.json"
+                        />
+                    {:else}
+                        <div class="flex h-64 items-center justify-center text-muted-foreground">
+                            <div class="h-4 w-4 animate-spin rounded-full border-2 border-border border-t-primary"></div>
+                        </div>
+                    {/if}
                 {/if}
             </div>
         {/key}

@@ -115,6 +115,10 @@ class BiasSnapshotTests(unittest.TestCase):
             self.assertEqual(gc_current[1]["capture_id"], "2026-06-29T173000+0700")
             self.assertTrue((snap_dir / "2026-06-29" / "evening" / "174500" / "gc_current_PositionBias.json").exists())
             self.assertTrue((snap_dir / "2026-06-29" / "evening" / "173000" / "gc_current_PositionBias.json").exists())
+            sliced = json.loads((snap_dir / "history_gc_current.json").read_text(encoding="utf-8"))
+            self.assertEqual(len(sliced["records"]), 2)
+            self.assertEqual(sliced["asset"], "gc")
+            self.assertEqual(sliced["contract_key"], "current")
 
     def test_snapshot_marks_missing_intraday_volume(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -155,6 +159,33 @@ class BiasSnapshotTests(unittest.TestCase):
             self.assertEqual(er["bands_to_expiry"]["minus2"], 4021.6)
             self.assertEqual(er["atm_iv_pct"], 18.25)
             self.assertEqual(er["source_generated_at"], "2026-06-29T10:00:00Z")
+
+    def test_history_retention_prunes_full_and_slice_payloads(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            data_dir = Path(tmp) / "data"
+            snap_dir = data_dir / "bias_snapshots"
+            write_json(data_dir / "current_PositionBias.json", contract_payload(score=1))
+
+            for day, score in [
+                ("2026-06-27", 1),
+                ("2026-06-28", 2),
+                ("2026-06-29", 3),
+            ]:
+                write_json(data_dir / "current_PositionBias.json", contract_payload(score=score))
+                bias_snapshot.run(
+                    str(data_dir),
+                    str(snap_dir),
+                    now=f"{day}T10:30:00Z",
+                    history_keep_days=2,
+                )
+
+            history = json.loads((snap_dir / "bias_history.json").read_text(encoding="utf-8"))
+            dates = {r["date_bangkok"] for r in history["records"]}
+            self.assertEqual(dates, {"2026-06-28", "2026-06-29"})
+
+            sliced = json.loads((snap_dir / "history_gc_current.json").read_text(encoding="utf-8"))
+            self.assertEqual({r["date_bangkok"] for r in sliced["records"]}, dates)
+            self.assertEqual([r["bias"]["score"] for r in sliced["records"]], [3, 2])
 
 
 if __name__ == "__main__":

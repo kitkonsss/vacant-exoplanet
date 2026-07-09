@@ -8,6 +8,8 @@
 
 const ALLOWED = new Set(['GC=F', 'NQ=F']);
 const RAW_DATA_BASE = 'https://raw.githubusercontent.com/kitkonsss/vacant-exoplanet/main';
+const HISTORY_ASSETS = new Set(['gc', 'nq']);
+const HISTORY_CONTRACTS = new Set(['summary', 'current', 'tomorrow', 'friday', 'monthly']);
 const CRYPTO_ASSETS = {
     btc: {
         id: 'btc',
@@ -138,6 +140,15 @@ async function rawData(request) {
             'cache-control': `public, max-age=${ttl}`,
         },
     });
+}
+
+function biasHistoryPath(request) {
+    const url = new URL(request.url);
+    const asset = (url.searchParams.get('asset') || '').toLowerCase();
+    const contract = (url.searchParams.get('contract') || '').toLowerCase();
+    if (!asset && !contract) return '/data/bias_snapshots/bias_history.json';
+    if (!HISTORY_ASSETS.has(asset) || !HISTORY_CONTRACTS.has(contract)) return null;
+    return `/data/bias_snapshots/history_${asset}_${contract}.json`;
 }
 
 function num(v) {
@@ -1158,7 +1169,11 @@ export default {
         const url = new URL(request.url);
         if (url.pathname === '/api/price') return price(request);
         if (url.pathname === '/api/crypto/snapshot') return cryptoSnapshot(request);
-        if (url.pathname === '/api/bias-history') return rawJson('/data/bias_snapshots/bias_history.json');
+        if (url.pathname === '/api/bias-history') {
+            const path = biasHistoryPath(request);
+            if (!path) return json({ error: 'bad history selector' }, 400);
+            return rawJson(path);
+        }
         if (url.pathname === '/api/data') return rawData(request);
         // Everything else: serve the static SvelteKit build.
         return env.ASSETS.fetch(request);

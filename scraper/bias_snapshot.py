@@ -11,6 +11,7 @@ What it produces:
   data/bias_snapshots/<YYYY-MM-DD>/<slot>/<HHMMSS>/<asset>_position_bias_summary.json
   data/bias_snapshots/<YYYY-MM-DD>/<slot>/<HHMMSS>/<asset>_<contract>_PositionBias.json
   data/bias_snapshots/bias_history.json
+  data/bias_snapshots/history_<asset>_<contract>.json
 
 Slots are Bangkok time: morning / afternoon / evening / night. Each scrape gets
 its own captured-at record, so scheduled reads inside the same slot are visible.
@@ -43,6 +44,8 @@ CONTRACT_RE = re.compile(r'^(?P<key>.+)_PositionBias\.json$')
 DATE_RE = re.compile(r'^\d{4}-\d{2}-\d{2}$')
 BANGKOK_TZ = timezone(timedelta(hours=7))
 KEEP_DAYS = max(10, int(os.environ.get('BIAS_SNAPSHOT_KEEP_DAYS', '60') or '60'))
+HISTORY_KEEP_DAYS = max(10, int(os.environ.get('BIAS_HISTORY_KEEP_DAYS', '30') or '30'))
+HISTORY_CONTRACT_KEYS = ['summary', 'current', 'tomorrow', 'friday', 'monthly']
 
 
 def _load_json(path):
@@ -61,6 +64,10 @@ def _write_json(path, payload):
     with open(path, 'w', encoding='utf-8') as f:
         json.dump(payload, f, indent=2, ensure_ascii=False)
         f.write('\n')
+
+
+def _history_slice_name(asset_id, contract_key):
+    return f'history_{asset_id}_{contract_key}.json'
 
 
 def _parse_now(value):
@@ -250,7 +257,42 @@ def _compact_summary(asset_id, slot_meta, summary):
     }
 
 
-def _update_history(records, history_path):
+def _retain_history_days(rows, keep_days):
+    days = sorted({
+        r.get('date_bangkok')
+        for r in rows
+        if isinstance(r.get('date_bangkok'), str) and DATE_RE.match(r['date_bangkok'])
+    }, reverse=True)
+    if not days:
+        return rows
+    allowed = set(days[:max(1, keep_days)])
+    return [
+        r for r in rows
+        if not (isinstance(r.get('date_bangkok'), str) and DATE_RE.match(r['date_bangkok']))
+        or r['date_bangkok'] in allowed
+    ]
+
+
+def _write_history_slices(snapshot_dir, payload):
+    rows = payload.get('records') if isinstance(payload, dict) else []
+    rows = rows if isinstance(rows, list) else []
+    by_key = {}
+    for row in rows:
+        key = (row.get('asset'), row.get('contract_key'))
+        by_key.setdefault(key, []).append(row)
+
+    meta = {k: v for k, v in payload.items() if k != 'records'}
+    for asset_id in ASSETS:
+        for contract_key in HISTORY_CONTRACT_KEYS:
+            _write_json(os.path.join(snapshot_dir, _history_slice_name(asset_id, contract_key)), {
+                **meta,
+                'asset': asset_id,
+                'contract_key': contract_key,
+                'records': by_key.get((asset_id, contract_key), []),
+            })
+
+
+def _update_history(records, history_path, history_keep_days=HISTORY_KEEP_DAYS):
     existing = _load_json(history_path)
     rows = existing.get('records') if isinstance(existing, dict) else []
     rows = rows if isinstance(rows, list) else []
@@ -265,6 +307,7 @@ def _update_history(records, history_path):
     new_keys = {key(r) for r in records}
     rows = [r for r in rows if key(r) not in new_keys]
     rows.extend(records)
+    rows = _retain_history_days(rows, history_keep_days)
     rows.sort(key=lambda r: (
         r.get('date_bangkok') or '',
         r.get('slot_order', 0),
@@ -279,10 +322,12 @@ def _update_history(records, history_path):
                         'Use this to measure persistence: e.g. put-heavy P/C '
                         'across multiple scrapes while price trends lower. '
                         'flow_ready=false means intraday volume was not populated yet.'),
+        'records_retention_days': history_keep_days,
         'updated_utc': records[0]['captured_at_utc'] if records else None,
         'records': rows,
     }
     _write_json(history_path, payload)
+    _write_history_slices(os.path.dirname(history_path), payload)
     return len(rows)
 
 
@@ -306,7 +351,8 @@ def _prune(snapshot_dir, keep_days):
         print(f'[BIAS-SNAPSHOT] Pruned old bias snapshot {d}')
 
 
-def run(data_dir=DATA_DIR, snapshot_dir=SNAPSHOT_DIR, now=None, keep_days=KEEP_DAYS):
+def run(data_dir=DATA_DIR, snapshot_dir=SNAPSHOT_DIR, now=None, keep_days=KEEP_DAYS,
+        history_keep_days=HISTORY_KEEP_DAYS):
     now_utc = _parse_now(now) if isinstance(now, str) or now is None else now.astimezone(timezone.utc)
     date_bkk, slot, captured_bkk = slot_for(now_utc)
     captured_utc = now_utc.isoformat(timespec='seconds').replace('+00:00', 'Z')
@@ -350,12 +396,13 @@ def run(data_dir=DATA_DIR, snapshot_dir=SNAPSHOT_DIR, now=None, keep_days=KEEP_D
         return 0
 
     history_path = os.path.join(snapshot_dir, 'bias_history.json')
-    total = _update_history(records, history_path)
+    total = _update_history(records, history_path, history_keep_days)
     _prune(snapshot_dir, keep_days)
 
     assets = ', '.join(sorted({r['asset'] for r in records}))
     print(f'[BIAS-SNAPSHOT] {date_bkk} {slot}: archived {copied} file(s) for {assets}')
-    print(f'[BIAS-SNAPSHOT] bias_history.json now holds {total} record(s)')
+    print(f'[BIAS-SNAPSHOT] bias_history.json now holds {total} record(s), '
+          f'keeping {history_keep_days} history day(s)')
     return 0
 
 
@@ -365,9 +412,11 @@ def main(argv=None):
     parser.add_argument('--snapshot-dir', default=SNAPSHOT_DIR)
     parser.add_argument('--now', default=None, help='Override current time, ISO-8601. Useful for tests/backfills.')
     parser.add_argument('--keep-days', type=int, default=KEEP_DAYS)
+    parser.add_argument('--history-keep-days', type=int, default=HISTORY_KEEP_DAYS)
     args = parser.parse_args(argv)
     return run(data_dir=args.data_dir, snapshot_dir=args.snapshot_dir,
-               now=args.now, keep_days=max(10, args.keep_days))
+               now=args.now, keep_days=max(10, args.keep_days),
+               history_keep_days=max(10, args.history_keep_days))
 
 
 if __name__ == '__main__':

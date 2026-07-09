@@ -20,6 +20,8 @@
         evening: 'Evening',
         night: 'Night'
     };
+    const MAX_CHART_ROWS = 120;
+    const MAX_TABLE_ROWS = 80;
 
     const contractOptions = [
         { key: 'summary', label: 'Summary' },
@@ -32,8 +34,9 @@
 
     const records = $derived(history?.records || []);
     const filtered = $derived.by(() => {
+        const sliced = history?.asset === assetId && history?.contract_key === contractKey;
         return records
-            .filter((record) => record.asset === assetId && record.contract_key === contractKey)
+            .filter((record) => sliced || (record.asset === assetId && record.contract_key === contractKey))
             .sort((a, b) => {
                 const ad = `${a.date_bangkok || ''}-${String(a.slot_order || 0).padStart(2, '0')}-${a.captured_at_utc || ''}`;
                 const bd = `${b.date_bangkok || ''}-${String(b.slot_order || 0).padStart(2, '0')}-${b.captured_at_utc || ''}`;
@@ -43,6 +46,8 @@
 
     const latest = $derived(filtered[filtered.length - 1] || null);
     const contractRows = $derived(filtered.filter((row) => row.contract_key !== 'summary'));
+    const chartRows = $derived(contractRows.slice(-MAX_CHART_ROWS));
+    const tableRows = $derived(filtered.slice(-MAX_TABLE_ROWS));
     const bullishRows = $derived(filtered.filter((row) => toneForBias(row.bias?.label, row.bias?.score) === 'up'));
     const bearishRows = $derived(filtered.filter((row) => toneForBias(row.bias?.label, row.bias?.score) === 'down'));
     const putHeavyRows = $derived(contractRows.filter((row) => Number(row.totals?.oi_put_call_ratio) > 1));
@@ -270,7 +275,7 @@
                     </div>
 
                     <div class="mt-3">
-                        <PcrTrendChart rows={contractRows} {livePrice} {liveAt} />
+                        <PcrTrendChart rows={chartRows} {livePrice} {liveAt} />
                     </div>
                 </Card>
             {/if}
@@ -296,7 +301,7 @@
                             </tr>
                         </thead>
                         <tbody class="font-mono tabular-nums">
-                            {#each [...filtered].reverse() as row}
+                            {#each [...tableRows].reverse() as row}
                                 {@const tone = toneForBias(row.bias?.label, row.bias?.score)}
                                 <tr class="border-b border-border/50">
                                     <td class="px-4 py-2 whitespace-nowrap text-muted-foreground">{stamp(row)}</td>

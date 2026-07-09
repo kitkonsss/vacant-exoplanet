@@ -100,8 +100,16 @@ export function biasHistoryUrl() {
     return `${DATA_BASE}/data/bias_snapshots/bias_history.json`;
 }
 
-export function biasHistoryApiUrl() {
-    return '/api/bias-history';
+export function biasHistoryFileName(assetId = 'gc', contractKey = 'current') {
+    return `history_${assetId}_${contractKey}.json`;
+}
+
+export function biasHistorySliceUrl(assetId = 'gc', contractKey = 'current') {
+    return `${DATA_BASE}/data/bias_snapshots/${biasHistoryFileName(assetId, contractKey)}`;
+}
+
+export function biasHistoryApiUrl(assetId = 'gc', contractKey = 'current') {
+    return `/api/bias-history?asset=${encodeURIComponent(assetId)}&contract=${encodeURIComponent(contractKey)}`;
 }
 
 // Per-contract historical OI heatmap (strike × historical day).
