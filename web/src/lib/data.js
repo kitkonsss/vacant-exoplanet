@@ -2,11 +2,19 @@ import { ASSET_PROFILES, CONTRACT_OPTIONS, briefUrl, cotUrl, cryptoSnapshotUrl, 
 import { parseOIData } from './vol2vol.js';
 
 const CRYPTO_SNAPSHOT_TTL_MS = 4000;
+const POSITION_BIAS_TTL_MS = 15000;
+const OI_DATA_TTL_MS = 60000;
 const SOFT_FETCH_RETRY_MS = 250;
 /** @type {Map<string, {ts: number, data: any, pending?: Promise<any>}>} */
 const cryptoSnapshotCache = new Map();
+/** @type {Map<string, {ts: number, data: any, pending?: Promise<any>}>} */
+const positionBiasCache = new Map();
+/** @type {Map<string, {ts: number, data: any, pending?: Promise<any>}>} */
+const oiDataCache = new Map();
 const jsonLastGood = new Map();
 const textLastGood = new Map();
+const staticJsonPending = new Map();
+const staticTextPending = new Map();
 
 function cacheBust(url) {
     return `${url}${url.includes('?') ? '&' : '?'}t=${Date.now()}`;
@@ -16,7 +24,13 @@ function delay(ms) {
     return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function fetchJsonSoft(url, { retries = 1, cacheBustUrl = true, useLastGood = false } = {}) {
+async function fetchJsonSoft(url, {
+    retries = 1,
+    cacheBustUrl = true,
+    useLastGood = false,
+    stopRetryStatuses = [400, 404, 502],
+    warn = true
+} = {}) {
     let lastError = null;
     for (let attempt = 0; attempt <= retries; attempt += 1) {
         try {
@@ -27,6 +41,7 @@ async function fetchJsonSoft(url, { retries = 1, cacheBustUrl = true, useLastGoo
                 return data;
             }
             lastError = new Error(`HTTP ${res.status}`);
+            if (stopRetryStatuses.includes(res.status)) break;
         } catch (e) {
             lastError = e;
         }
@@ -36,11 +51,17 @@ async function fetchJsonSoft(url, { retries = 1, cacheBustUrl = true, useLastGoo
         }
     }
 
-    console.warn(`fetch failed: ${url}`, lastError);
+    if (warn) console.warn(`fetch failed: ${url}`, lastError);
     return useLastGood ? jsonLastGood.get(url) ?? null : null;
 }
 
-async function fetchTextSoft(url, { retries = 1, cacheBustUrl = true, useLastGood = false } = {}) {
+async function fetchTextSoft(url, {
+    retries = 1,
+    cacheBustUrl = true,
+    useLastGood = false,
+    stopRetryStatuses = [400, 404, 502],
+    warn = true
+} = {}) {
     let lastError = null;
     for (let attempt = 0; attempt <= retries; attempt += 1) {
         try {
@@ -51,6 +72,7 @@ async function fetchTextSoft(url, { retries = 1, cacheBustUrl = true, useLastGoo
                 return text;
             }
             lastError = new Error(`HTTP ${res.status}`);
+            if (stopRetryStatuses.includes(res.status)) break;
         } catch (e) {
             lastError = e;
         }
@@ -60,18 +82,54 @@ async function fetchTextSoft(url, { retries = 1, cacheBustUrl = true, useLastGoo
         }
     }
 
-    console.warn(`fetch failed: ${url}`, lastError);
+    if (warn) console.warn(`fetch failed: ${url}`, lastError);
     return useLastGood ? textLastGood.get(url) ?? null : null;
 }
 
 async function fetchStaticJson(assetId, fileName, rawUrl) {
-    return await fetchJsonSoft(dataApiUrl(assetId, fileName), { retries: 1, cacheBustUrl: false, useLastGood: true })
-        || await fetchJsonSoft(rawUrl, { retries: 1, cacheBustUrl: false, useLastGood: true });
+    const key = `${assetId}:${fileName}`;
+    const existing = staticJsonPending.get(key);
+    if (existing) return existing;
+
+    const pending = (async () => (
+        await fetchJsonSoft(dataApiUrl(assetId, fileName), {
+            retries: 1,
+            cacheBustUrl: false,
+            useLastGood: true,
+            warn: false
+        }) || await fetchJsonSoft(rawUrl, {
+            retries: 1,
+            cacheBustUrl: false,
+            useLastGood: true
+        })
+    ))().finally(() => {
+        if (staticJsonPending.get(key) === pending) staticJsonPending.delete(key);
+    });
+    staticJsonPending.set(key, pending);
+    return pending;
 }
 
 async function fetchStaticText(assetId, fileName, rawUrl) {
-    return await fetchTextSoft(dataApiUrl(assetId, fileName), { retries: 1, cacheBustUrl: false, useLastGood: true })
-        || await fetchTextSoft(rawUrl, { retries: 1, cacheBustUrl: false, useLastGood: true });
+    const key = `${assetId}:${fileName}`;
+    const existing = staticTextPending.get(key);
+    if (existing) return existing;
+
+    const pending = (async () => (
+        await fetchTextSoft(dataApiUrl(assetId, fileName), {
+            retries: 1,
+            cacheBustUrl: false,
+            useLastGood: true,
+            warn: false
+        }) || await fetchTextSoft(rawUrl, {
+            retries: 1,
+            cacheBustUrl: false,
+            useLastGood: true
+        })
+    ))().finally(() => {
+        if (staticTextPending.get(key) === pending) staticTextPending.delete(key);
+    });
+    staticTextPending.set(key, pending);
+    return pending;
 }
 
 async function fetchCryptoSnapshot(assetId, { force = false } = {}) {
@@ -80,7 +138,7 @@ async function fetchCryptoSnapshot(assetId, { force = false } = {}) {
     if (!force && cached?.data && now - cached.ts < CRYPTO_SNAPSHOT_TTL_MS) {
         return cached.data;
     }
-    if (!force && cached?.pending) return cached.pending;
+    if (cached?.pending) return cached.pending;
 
     const pending = fetchJsonSoft(cryptoSnapshotUrl(assetId)).then((data) => {
         cryptoSnapshotCache.set(assetId, { ts: Date.now(), data });
@@ -98,28 +156,57 @@ async function fetchCryptoSnapshot(assetId, { force = false } = {}) {
  * Fetches position bias summary + per-contract files for an asset.
  * Returns `{ summary, contracts }` with contracts filtered to those that loaded.
  */
-export async function fetchPositionBias(assetId) {
+export async function fetchPositionBias(assetId, { force = false } = {}) {
+    const now = Date.now();
+    const cached = positionBiasCache.get(assetId);
+    if (!force && cached?.data && now - cached.ts < POSITION_BIAS_TTL_MS) {
+        return cached.data;
+    }
+    if (cached?.pending) return cached.pending;
+
     if (isCryptoAsset(assetId)) {
-        const snapshot = await fetchCryptoSnapshot(assetId);
-        return {
-            ...snapshot,
-            contracts: snapshot?.contracts || [],
-            expectedRange: snapshot?.expected_range || null
-        };
+        const pending = fetchCryptoSnapshot(assetId, { force }).then((snapshot) => {
+            const next = {
+                ...snapshot,
+                contracts: snapshot?.contracts || cached?.data?.contracts || [],
+                expectedRange: snapshot?.expected_range || cached?.data?.expectedRange || null
+            };
+            positionBiasCache.set(assetId, { ts: Date.now(), data: next });
+            return next;
+        }).catch((error) => {
+            console.warn(`position bias failed: ${assetId}`, error);
+            const fallback = cached?.data ?? { contracts: [], expectedRange: null };
+            positionBiasCache.set(assetId, { ts: cached?.ts ?? 0, data: fallback });
+            return fallback;
+        });
+        positionBiasCache.set(assetId, { ts: cached?.ts ?? 0, data: cached?.data ?? null, pending });
+        return pending;
     }
 
-    const keys = CONTRACT_OPTIONS.map(({ key }) => key);
-    const [contractResults, expectedRange] = await Promise.all([
-        Promise.all(keys.map((key) => {
-            const fileName = `${key}_PositionBias.json`;
-            return fetchStaticJson(assetId, fileName, positionBiasUrl(assetId, fileName));
-        })),
-        fetchStaticJson(assetId, 'expected_range.json', expectedRangeUrl(assetId))
-    ]);
-    return {
-        contracts: contractResults.filter(Boolean),
-        expectedRange
-    };
+    const pending = (async () => {
+        const keys = CONTRACT_OPTIONS.map(({ key }) => key);
+        const [contractResults, expectedRange] = await Promise.all([
+            Promise.all(keys.map((key) => {
+                const fileName = `${key}_PositionBias.json`;
+                return fetchStaticJson(assetId, fileName, positionBiasUrl(assetId, fileName));
+            })),
+            fetchStaticJson(assetId, 'expected_range.json', expectedRangeUrl(assetId))
+        ]);
+        const contracts = contractResults.filter(Boolean);
+        const next = {
+            contracts: contracts.length ? contracts : cached?.data?.contracts || [],
+            expectedRange: expectedRange || cached?.data?.expectedRange || null
+        };
+        positionBiasCache.set(assetId, { ts: Date.now(), data: next });
+        return next;
+    })().catch((error) => {
+        console.warn(`position bias failed: ${assetId}`, error);
+        const fallback = cached?.data ?? { contracts: [], expectedRange: null };
+        positionBiasCache.set(assetId, { ts: cached?.ts ?? 0, data: fallback });
+        return fallback;
+    });
+    positionBiasCache.set(assetId, { ts: cached?.ts ?? 0, data: cached?.data ?? null, pending });
+    return pending;
 }
 
 /**
@@ -162,14 +249,41 @@ export async function fetchGammaHeatmap(assetId, contractKey) {
  * Returns the structured shape from `parseOIData`
  * ({ contract, futPrc, futureChg, vol, dte, settle, strikes:[...] }) or null.
  */
-export async function fetchOIData(assetId, contractKey) {
+export async function fetchOIData(assetId, contractKey, { force = false } = {}) {
+    const key = `${assetId}:${contractKey}`;
+    const now = Date.now();
+    const cached = oiDataCache.get(key);
+    if (!force && cached?.data && now - cached.ts < OI_DATA_TTL_MS) return cached.data;
+    if (cached?.pending) return cached.pending;
+
     if (isCryptoAsset(assetId)) {
-        const snapshot = await fetchCryptoSnapshot(assetId);
-        return snapshot?.oi_data?.[contractKey] ?? null;
+        const pending = fetchCryptoSnapshot(assetId, { force }).then((snapshot) => {
+            const next = snapshot?.oi_data?.[contractKey] ?? cached?.data ?? null;
+            oiDataCache.set(key, { ts: Date.now(), data: next });
+            return next;
+        }).catch((error) => {
+            console.warn(`OI data failed: ${key}`, error);
+            const fallback = cached?.data ?? null;
+            oiDataCache.set(key, { ts: cached?.ts ?? 0, data: fallback });
+            return fallback;
+        });
+        oiDataCache.set(key, { ts: cached?.ts ?? 0, data: cached?.data ?? null, pending });
+        return pending;
     }
-    const fileName = `${contractKey}_OIData.txt`;
-    const text = await fetchStaticText(assetId, fileName, oiDataUrl(assetId, contractKey));
-    return parseOIData(text);
+    const pending = (async () => {
+        const fileName = `${contractKey}_OIData.txt`;
+        const text = await fetchStaticText(assetId, fileName, oiDataUrl(assetId, contractKey));
+        const next = parseOIData(text) || cached?.data || null;
+        oiDataCache.set(key, { ts: Date.now(), data: next });
+        return next;
+    })().catch((error) => {
+        console.warn(`OI data failed: ${key}`, error);
+        const fallback = cached?.data ?? null;
+        oiDataCache.set(key, { ts: cached?.ts ?? 0, data: fallback });
+        return fallback;
+    });
+    oiDataCache.set(key, { ts: cached?.ts ?? 0, data: cached?.data ?? null, pending });
+    return pending;
 }
 
 /**
@@ -278,7 +392,10 @@ export async function fetchIvBaseline(assetId) {
  */
 export async function fetchLivePrice(sym, assetId = null) {
     if (assetId && isCryptoAsset(assetId)) {
-        const snapshot = await fetchCryptoSnapshot(assetId, { force: true });
+        // The 5-second callers already outlive the 4-second snapshot TTL. Reuse a
+        // just-fetched dashboard snapshot so startup does not immediately issue a
+        // second identical crypto request.
+        const snapshot = await fetchCryptoSnapshot(assetId);
         const live = snapshot?.live_price;
         return live && Number.isFinite(live.price) ? live : null;
     }

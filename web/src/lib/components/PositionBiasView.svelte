@@ -3,6 +3,7 @@
     import ContractCard from './ContractCard.svelte';
     import { fetchOIData } from '$lib/data.js';
     import { cn } from '$lib/utils.js';
+    import { untrack } from 'svelte';
 
     let { payload = null, loading = false, livePrice = null, assetId = 'gc' } = $props();
 
@@ -23,20 +24,26 @@
     $effect(() => {
         const cs = contracts;
         const a = assetId;
+        const previousMaps = untrack(() => ivMaps);
         let stopped = false;
         (async () => {
             const maps = await Promise.all(
-                cs.map(async (c) => {
-                    const oi = await fetchOIData(a, c.contract_key);
-                    if (!oi?.strikes) return ivMaps[i] || null;
-                    const m = {};
-                    for (const s of oi.strikes) {
-                        if (Number.isFinite(s.strike) && s.volSettle > 0) m[s.strike] = s.volSettle * 100;
+                cs.map(async (c, i) => {
+                    try {
+                        const oi = await fetchOIData(a, c.contract_key);
+                        if (!oi?.strikes) return previousMaps[i] || null;
+                        const m = {};
+                        for (const s of oi.strikes) {
+                            if (Number.isFinite(s.strike) && s.volSettle > 0) m[s.strike] = s.volSettle * 100;
+                        }
+                        return Object.keys(m).length ? m : previousMaps[i] || null;
+                    } catch (error) {
+                        console.warn(`IV smile load failed: ${a}:${c.contract_key}`, error);
+                        return previousMaps[i] || null;
                     }
-                    return Object.keys(m).length ? m : null;
                 })
             );
-            if (!stopped) ivMaps = maps.map((map, i) => map || ivMaps[i] || null);
+            if (!stopped) ivMaps = maps.map((map, i) => map || previousMaps[i] || null);
         })();
         return () => { stopped = true; };
     });

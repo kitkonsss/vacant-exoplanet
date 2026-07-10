@@ -49,11 +49,16 @@
     /** @type {Record<string, any>} */
     let historyLastGood = $state({});
     let historyRequestKey = '';
+    let payloadRequestId = 0;
+    let dashboardRequestId = 0;
 
     /** @type {Record<string, any>} */
     let lazyComponents = $state({});
     /** @type {Record<string, boolean>} */
     let lazyLoading = $state({});
+    /** @type {Record<string, boolean>} */
+    let lazyErrors = $state({});
+    const lazyPromises = new Map();
     const lazyTabsLoading = $derived(Object.values(lazyLoading).some(Boolean));
     const lazyTabLoaders = {
         history: () => import('$lib/components/BiasHistoryView.svelte'),
@@ -70,6 +75,8 @@
     const isLive = $derived(Number.isFinite(livePrice) && livePrice > 0);
     $effect(() => {
         const activeAsset = asset;
+        const tab = activeTab;
+        if (tab === 'dashboard') return;
         const activeProfile = ASSET_PROFILES[activeAsset];
         const sym = activeProfile?.liveSymbol || (activeAsset === 'nq' ? 'NQ=F' : 'GC=F');
         const pollMs = activeProfile?.source === 'crypto' ? 5000 : 20000;
@@ -149,29 +156,40 @@
         const lazyKey = lazyKeyForTab(key);
         const existing = untrack(() => lazyComponents[lazyKey]);
         if (existing || !lazyTabLoaders[lazyKey]) return existing ?? null;
-        if (untrack(() => lazyLoading[lazyKey])) return null;
+        const pending = lazyPromises.get(lazyKey);
+        if (pending) return pending;
 
         lazyLoading = { ...untrack(() => lazyLoading), [lazyKey]: true };
-        try {
+        lazyErrors = { ...untrack(() => lazyErrors), [lazyKey]: false };
+        const promise = (async () => {
             const module = await lazyTabLoaders[lazyKey]();
             const component = module?.default ?? null;
             if (component) {
                 lazyComponents = { ...untrack(() => lazyComponents), [lazyKey]: component };
             }
             return component;
-        } finally {
+        })().catch((error) => {
+            console.warn(`tab component failed to load: ${lazyKey}`, error);
+            lazyErrors = { ...untrack(() => lazyErrors), [lazyKey]: true };
+            return null;
+        }).finally(() => {
+            if (lazyPromises.get(lazyKey) === promise) lazyPromises.delete(lazyKey);
             lazyLoading = { ...untrack(() => lazyLoading), [lazyKey]: false };
-        }
+        });
+        lazyPromises.set(lazyKey, promise);
+        return promise;
     }
 
     function historyKey(assetId = asset, contractKey = historyContract) {
         return `${assetId}:${contractKey}`;
     }
 
-    async function load({ silent = false } = {}) {
+    async function load({ silent = false, force = false, assetId: targetAsset = asset } = {}) {
+        const requestId = ++payloadRequestId;
         if (!silent) loading = true;
         try {
-            const nextPayload = await fetchPositionBias(asset);
+            const nextPayload = await fetchPositionBias(targetAsset, { force });
+            if (requestId !== payloadRequestId || targetAsset !== asset) return null;
             const nextContractKeys = (nextPayload?.contracts || []).map((contract) => contract.contract_key);
             const nextKey = resolveContractKey(nextContractKeys);
 
@@ -183,7 +201,7 @@
             lastUpdateAt = stamp;
             return nextKey;
         } finally {
-            if (!silent) loading = false;
+            if (!silent && requestId === payloadRequestId) loading = false;
         }
     }
 
@@ -199,28 +217,43 @@
                 })
             );
             dashboardLivePrices = Object.fromEntries(entries);
+            const cryptoEntries = await Promise.all(
+                dashboardAssetIds
+                    .filter((assetId) => ASSET_PROFILES[assetId]?.source === 'crypto')
+                    .map(async (assetId) => [assetId, await fetchPositionBias(assetId)])
+            );
+            dashboardPayloads = { ...dashboardPayloads, ...Object.fromEntries(cryptoEntries) };
             dashboardLiveLoadedAt = new Date();
         } finally {
             dashboardLiveLoading = false;
         }
     }
 
-    async function loadDashboard({ silent = false } = {}) {
+    async function loadDashboard({ silent = false, force = false } = {}) {
+        const requestId = ++dashboardRequestId;
         if (!silent) dashboardLoading = true;
         try {
-            if (!silent) dashboardPayloads = {};
-            await Promise.all(
+            const previous = untrack(() => dashboardPayloads);
+            const entries = await Promise.all(
                 dashboardAssetIds.map(async (assetId) => {
-                    const data = await fetchPositionBias(assetId);
-                    dashboardPayloads = { ...dashboardPayloads, [assetId]: data };
+                    try {
+                        return [assetId, await fetchPositionBias(assetId, { force })];
+                    } catch (error) {
+                        console.warn(`dashboard load failed: ${assetId}`, error);
+                        return [assetId, previous[assetId] || null];
+                    }
                 })
             );
+            if (requestId !== dashboardRequestId) return;
+            dashboardPayloads = Object.fromEntries(entries);
+            const selectedPayload = dashboardPayloads[asset];
+            if (selectedPayload) payload = selectedPayload;
             void refreshDashboardLivePrices();
             const stamp = new Date();
             lastUpdate = stamp.toLocaleTimeString();
             lastUpdateAt = stamp;
         } finally {
-            if (!silent) dashboardLoading = false;
+            if (!silent && requestId === dashboardRequestId) dashboardLoading = false;
         }
     }
 
@@ -294,19 +327,23 @@
                 heatmapCache = {};
                 gammaCache = {};
             }
-            const nextKey = await load({ silent });
             const forceLive = silent && ASSET_PROFILES[asset]?.source === 'crypto';
             if (activeTab === 'dashboard') {
-                await loadDashboard({ silent });
+                await loadDashboard({ silent, force: !silent });
             } else if (activeTab === 'history') {
                 await ensureTabComponent('history');
                 await loadHistory({ silent, force: !silent });
-            } else if (activeTab === 'heatmap' && nextKey) {
-                await ensureTabComponent('heatmap');
-                await ensureHeatmap(nextKey, { force: forceLive, silent });
-            } else if (activeTab === 'gamma' && nextKey) {
-                await ensureTabComponent('gamma');
-                await ensureGamma(nextKey, { force: forceLive, silent });
+            } else {
+                const nextKey = await load({ silent, force: !silent || forceLive });
+                if (activeTab === 'analysis') {
+                    await ensureTabComponent('analysis');
+                } else if (activeTab === 'heatmap' && nextKey) {
+                    await ensureTabComponent('heatmap');
+                    await ensureHeatmap(nextKey, { force: forceLive, silent });
+                } else if (activeTab === 'gamma' && nextKey) {
+                    await ensureTabComponent('gamma');
+                    await ensureGamma(nextKey, { force: forceLive, silent });
+                }
             }
         } finally {
             if (!silent) refreshing = false;
@@ -342,21 +379,28 @@
         if (key === 'dashboard') {
             void loadDashboard();
         } else if (key === 'history') {
+            if (ASSET_PROFILES[asset]?.source === 'crypto') {
+                asset = 'gc';
+                return;
+            }
             void ensureTabComponent('history');
         } else if (key === 'analysis') {
             void ensureTabComponent('analysis');
+            void load();
         } else if (key === 'heatmap') {
             void ensureTabComponent('heatmap');
-            const nextKey = resolveContractKey(availableContractKeys);
-            if (!nextKey) return;
-            if (nextKey !== heatmapContract) heatmapContract = nextKey;
-            void ensureHeatmap(nextKey);
+            void load().then((nextKey) => {
+                if (activeTab !== 'heatmap' || !nextKey) return;
+                if (nextKey !== heatmapContract) heatmapContract = nextKey;
+                void ensureHeatmap(nextKey);
+            });
         } else if (key === 'gamma') {
             void ensureTabComponent('gamma');
-            const nextKey = resolveContractKey(availableContractKeys, gammaContract);
-            if (!nextKey) return;
-            if (nextKey !== gammaContract) gammaContract = nextKey;
-            void ensureGamma(nextKey);
+            void load().then((nextKey) => {
+                if (activeTab !== 'gamma' || !nextKey) return;
+                if (nextKey !== gammaContract) gammaContract = nextKey;
+                void ensureGamma(nextKey);
+            });
         }
     }
 
@@ -375,23 +419,28 @@
     }
 
     $effect(() => {
-        asset; // dep
+        const selectedAsset = asset;
         untrack(() => {
             heatmapCache = {};
             gammaCache = {};
-            void load().then((nextKey) => {
-                if (activeTab === 'dashboard') {
-                    void loadDashboard();
-                } else if (activeTab === 'analysis') {
-                    void ensureTabComponent('analysis');
-                } else if (activeTab === 'heatmap' && nextKey) {
-                    void ensureTabComponent('heatmap');
-                    void ensureHeatmap(nextKey);
-                } else if (activeTab === 'gamma' && nextKey) {
-                    void ensureTabComponent('gamma');
-                    void ensureGamma(nextKey);
-                }
-            });
+            if (activeTab === 'dashboard') {
+                void loadDashboard();
+            } else if (activeTab === 'history') {
+                if (ASSET_PROFILES[selectedAsset]?.source === 'crypto') asset = 'gc';
+            } else {
+                void load({ assetId: selectedAsset }).then((nextKey) => {
+                    if (asset !== selectedAsset) return;
+                    if (activeTab === 'analysis') {
+                        void ensureTabComponent('analysis');
+                    } else if (activeTab === 'heatmap' && nextKey) {
+                        void ensureTabComponent('heatmap');
+                        void ensureHeatmap(nextKey);
+                    } else if (activeTab === 'gamma' && nextKey) {
+                        void ensureTabComponent('gamma');
+                        void ensureGamma(nextKey);
+                    }
+                });
+            }
         });
     });
 
@@ -399,6 +448,10 @@
         const selectedAsset = asset;
         const selectedContract = historyContract;
         if (activeTab !== 'history') return;
+        if (ASSET_PROFILES[selectedAsset]?.source === 'crypto') {
+            asset = 'gc';
+            return;
+        }
         untrack(() => {
             void ensureTabComponent('history');
             void loadHistory({ assetId: selectedAsset, contractKey: selectedContract });
@@ -420,7 +473,8 @@
 
     $effect(() => {
         const activeAsset = asset;
-        if (ASSET_PROFILES[activeAsset]?.source !== 'crypto') return;
+        const tab = activeTab;
+        if (ASSET_PROFILES[activeAsset]?.source !== 'crypto' || tab === 'dashboard' || tab === 'history') return;
         let stopped = false;
         async function tick() {
             if (stopped || loading || refreshing) return;
@@ -483,10 +537,14 @@
                             />
                         {:else}
                             <div class="flex h-64 items-center justify-center text-muted-foreground">
-                                <div class="flex items-center gap-3">
-                                    <div class="h-4 w-4 animate-spin rounded-full border-2 border-border border-t-primary"></div>
-                                    <span class="text-sm">Loading history view...</span>
-                                </div>
+                                {#if lazyErrors.history}
+                                    <button type="button" class="rounded border border-border px-3 py-1.5 text-sm text-foreground" onclick={() => ensureTabComponent('history')}>Retry history view</button>
+                                {:else}
+                                    <div class="flex items-center gap-3">
+                                        <div class="h-4 w-4 animate-spin rounded-full border-2 border-border border-t-primary"></div>
+                                        <span class="text-sm">Loading history view...</span>
+                                    </div>
+                                {/if}
                             </div>
                         {/if}
                     </div>
@@ -496,7 +554,11 @@
                             <AnalysisComponent {payload} {loading} {livePrice} assetId={asset} />
                         {:else}
                             <div class="flex h-64 items-center justify-center text-muted-foreground">
-                                <div class="h-4 w-4 animate-spin rounded-full border-2 border-border border-t-primary"></div>
+                                {#if lazyErrors.analysis}
+                                    <button type="button" class="rounded border border-border px-3 py-1.5 text-sm text-foreground" onclick={() => ensureTabComponent('analysis')}>Retry position bias</button>
+                                {:else}
+                                    <div class="h-4 w-4 animate-spin rounded-full border-2 border-border border-t-primary"></div>
+                                {/if}
                             </div>
                         {/if}
                     </div>
@@ -513,7 +575,11 @@
                         />
                     {:else}
                         <div class="flex h-64 items-center justify-center text-muted-foreground">
-                            <div class="h-4 w-4 animate-spin rounded-full border-2 border-border border-t-primary"></div>
+                            {#if lazyErrors.heatmap}
+                                <button type="button" class="rounded border border-border px-3 py-1.5 text-sm text-foreground" onclick={() => ensureTabComponent('heatmap')}>Retry heatmap</button>
+                            {:else}
+                                <div class="h-4 w-4 animate-spin rounded-full border-2 border-border border-t-primary"></div>
+                            {/if}
                         </div>
                     {/if}
                 {:else if activeTab === 'gamma'}
@@ -532,7 +598,11 @@
                         />
                     {:else}
                         <div class="flex h-64 items-center justify-center text-muted-foreground">
-                            <div class="h-4 w-4 animate-spin rounded-full border-2 border-border border-t-primary"></div>
+                            {#if lazyErrors.heatmap}
+                                <button type="button" class="rounded border border-border px-3 py-1.5 text-sm text-foreground" onclick={() => ensureTabComponent('gamma')}>Retry gamma heatmap</button>
+                            {:else}
+                                <div class="h-4 w-4 animate-spin rounded-full border-2 border-border border-t-primary"></div>
+                            {/if}
                         </div>
                     {/if}
                 {/if}

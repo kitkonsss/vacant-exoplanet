@@ -1,7 +1,8 @@
-import { biasHistoryApiUrl, biasHistoryLegacyApiUrl, biasHistorySliceUrl, biasHistoryUrl } from './config.js';
+import { biasHistoryApiUrl, biasHistorySliceUrl } from './config.js';
 
 const SOFT_FETCH_RETRY_MS = 150;
 const jsonLastGood = new Map();
+const historyPending = new Map();
 
 function delay(ms) {
     return new Promise((resolve) => setTimeout(resolve, ms));
@@ -48,30 +49,41 @@ async function fetchJsonSoft(url, {
 }
 
 export async function fetchBiasHistory({ assetId = 'gc', contractKey = 'current' } = {}) {
+    const key = `${assetId}:${contractKey}`;
+    const existing = historyPending.get(key);
+    if (existing) return existing;
+
     const candidates = [
         biasHistoryApiUrl(assetId, contractKey),
-        biasHistorySliceUrl(assetId, contractKey),
-        biasHistoryLegacyApiUrl(),
-        biasHistoryUrl()
+        biasHistorySliceUrl(assetId, contractKey)
     ];
-    let data = null;
-    for (const url of candidates) {
-        data = await fetchJsonSoft(url, {
-            retries: 1,
-            useLastGood: true,
-            cacheBust: url !== biasHistoryLegacyApiUrl()
-        });
-        if (data) break;
-    }
-    if (!data) {
+    const pending = (async () => {
+        let data = null;
+        for (const url of candidates) {
+            data = await fetchJsonSoft(url, {
+                retries: 1,
+                useLastGood: true,
+                cacheBust: false,
+                cache: 'default'
+            });
+            if (data) break;
+        }
+        if (!data) {
+            return {
+                load_error: true,
+                error_message: 'Bias history could not be loaded. Keeping the last successful read if available.',
+                records: []
+            };
+        }
         return {
-            load_error: true,
-            error_message: 'Bias history could not be loaded. Keeping the last successful read if available.',
-            records: []
+            ...data,
+            asset: data.asset || assetId,
+            contract_key: data.contract_key || contractKey,
+            records: Array.isArray(data?.records) ? data.records : []
         };
-    }
-    return {
-        ...data,
-        records: Array.isArray(data?.records) ? data.records : []
-    };
+    })().finally(() => {
+        if (historyPending.get(key) === pending) historyPending.delete(key);
+    });
+    historyPending.set(key, pending);
+    return pending;
 }

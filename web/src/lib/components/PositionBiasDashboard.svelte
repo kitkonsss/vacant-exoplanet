@@ -4,6 +4,7 @@
     import { ASSET_PROFILES, CONTRACT_OPTIONS } from '$lib/config.js';
     import { fetchOIData } from '$lib/data.js';
     import { cn } from '$lib/utils.js';
+    import { untrack } from 'svelte';
 
     let {
         payloads = {},
@@ -55,22 +56,28 @@
     $effect(() => {
         const key = contractKey;
         const activeRows = rows.filter((row) => row.contract);
+        const previousMaps = untrack(() => ivMaps);
         let stopped = false;
         (async () => {
             const entries = await Promise.all(
                 activeRows.map(async (row) => {
-                    const oi = await fetchOIData(row.assetId, key);
-                    if (!oi?.strikes) return [row.assetId, ivMaps[row.assetId] || null];
-                    const map = {};
-                    for (const strike of oi.strikes) {
-                        if (Number.isFinite(strike.strike) && strike.volSettle > 0) {
-                            map[strike.strike] = strike.volSettle * 100;
+                    try {
+                        const oi = await fetchOIData(row.assetId, key);
+                        if (!oi?.strikes) return [row.assetId, previousMaps[row.assetId] || null];
+                        const map = {};
+                        for (const strike of oi.strikes) {
+                            if (Number.isFinite(strike.strike) && strike.volSettle > 0) {
+                                map[strike.strike] = strike.volSettle * 100;
+                            }
                         }
+                        return [row.assetId, Object.keys(map).length ? map : previousMaps[row.assetId] || null];
+                    } catch (error) {
+                        console.warn(`IV smile load failed: ${row.assetId}:${key}`, error);
+                        return [row.assetId, previousMaps[row.assetId] || null];
                     }
-                    return [row.assetId, Object.keys(map).length ? map : null];
                 })
             );
-            if (!stopped) ivMaps = { ...ivMaps, ...Object.fromEntries(entries) };
+            if (!stopped) ivMaps = { ...previousMaps, ...Object.fromEntries(entries) };
         })();
         return () => { stopped = true; };
     });

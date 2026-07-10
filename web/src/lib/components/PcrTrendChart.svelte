@@ -42,6 +42,8 @@
     let referenceLine = null;
     let resizeObserver = null;
     let chartModule = null;
+    let chartLoadError = $state(false);
+    let mounted = false;
     let visibleRangeHandler = null;
     let lastDataKey = '';
     let priceDrag = null;
@@ -685,36 +687,56 @@
         };
         chart.timeScale().subscribeVisibleLogicalRangeChange(visibleRangeHandler);
 
-        resizeObserver = new ResizeObserver(() => {
-            tooltip = null;
-            activeIndex = null;
-            if (chart && chartHost) {
-                chart.applyOptions({
-                    width: Math.max(Math.floor(chartHost.clientWidth), 1),
-                    height: Math.max(Math.floor(chartHost.clientHeight), 224)
-                });
-            }
-            if (priceHost) {
-                overlaySize = {
-                    width: Math.max(Math.floor(priceHost.clientWidth), 1),
-                    height: PRICE_PANEL_HEIGHT
-                };
-            }
-        });
-        resizeObserver.observe(chartHost);
-        if (priceHost) resizeObserver.observe(priceHost);
         syncChart(chartData);
     }
 
+    function syncSizes() {
+        tooltip = null;
+        activeIndex = null;
+        if (chart && chartHost) {
+            chart.applyOptions({
+                width: Math.max(Math.floor(chartHost.clientWidth), 1),
+                height: Math.max(Math.floor(chartHost.clientHeight), 224)
+            });
+        }
+        if (priceHost) {
+            overlaySize = {
+                width: Math.max(Math.floor(priceHost.clientWidth), 1),
+                height: PRICE_PANEL_HEIGHT
+            };
+        }
+    }
+
+    async function loadChartModule() {
+        if (!mounted) return;
+        chartLoadError = false;
+        let lastError = null;
+        for (let attempt = 0; attempt < 3; attempt += 1) {
+            try {
+                chartModule = await import('lightweight-charts');
+                if (!mounted) return;
+                initChart();
+                return;
+            } catch (error) {
+                lastError = error;
+                if (attempt < 2) await new Promise((resolve) => setTimeout(resolve, 250 * (attempt + 1)));
+            }
+        }
+        if (mounted) {
+            console.warn('PCR chart library failed to load', lastError);
+            chartLoadError = true;
+        }
+    }
+
     onMount(() => {
-        let cancelled = false;
-        import('lightweight-charts').then((module) => {
-            if (cancelled) return;
-            chartModule = module;
-            initChart();
-        });
+        mounted = true;
+        resizeObserver = new ResizeObserver(syncSizes);
+        if (chartHost) resizeObserver.observe(chartHost);
+        if (priceHost) resizeObserver.observe(priceHost);
+        syncSizes();
+        void loadChartModule();
         return () => {
-            cancelled = true;
+            mounted = false;
             resizeObserver?.disconnect();
             resizeObserver = null;
             if (visibleRangeHandler && chart) chart.timeScale().unsubscribeVisibleLogicalRangeChange(visibleRangeHandler);
@@ -725,6 +747,7 @@
             chart = null;
             oiSeries = null;
             volumeSeries = null;
+            chartModule = null;
         };
     });
 
@@ -762,6 +785,11 @@
             {#if !chartData.length}
                 <div class="flex h-full items-center justify-center text-sm text-muted-foreground">
                     No ratio points for this contract yet.
+                </div>
+            {:else if chartLoadError}
+                <div class="flex h-full flex-col items-center justify-center gap-2 text-sm text-muted-foreground">
+                    <span>Ratio chart failed to load.</span>
+                    <button type="button" class="rounded border border-border px-3 py-1 text-xs text-foreground" onclick={loadChartModule}>Retry chart</button>
                 </div>
             {/if}
         </div>
