@@ -59,7 +59,6 @@
     /** @type {Record<string, boolean>} */
     let lazyErrors = $state({});
     const lazyPromises = new Map();
-    const lazyTabsLoading = $derived(Object.values(lazyLoading).some(Boolean));
     const lazyTabLoaders = {
         history: () => import('$lib/components/BiasHistoryView.svelte'),
         analysis: () => import('$lib/components/PositionBiasView.svelte'),
@@ -136,6 +135,14 @@
     const AnalysisComponent = $derived(lazyComponent('analysis'));
     const HeatmapComponent = $derived(lazyComponent('heatmap'));
     const GammaHeatmapComponent = $derived(lazyComponent('gamma'));
+    const headerRefreshing = $derived(
+        refreshing
+        || (activeTab === 'dashboard' && dashboardLoading)
+        || (activeTab === 'history' && (historyLoading || lazyLoading.history))
+        || (activeTab === 'analysis' && (loading || lazyLoading.analysis))
+        || (activeTab === 'heatmap' && (loading || heatmapLoading || lazyLoading.heatmap))
+        || (activeTab === 'gamma' && (loading || gammaLoading || lazyLoading.heatmap))
+    );
 
     function resolveContractKey(contractKeys, preferredKey = heatmapContract) {
         if (!contractKeys.length) return null;
@@ -505,7 +512,7 @@
         dte={activeTab === 'dashboard' || activeTab === 'history' ? null : visibleContract?.dte}
         {lastUpdate}
         {lastUpdateAt}
-        refreshing={refreshing || loading || dashboardLoading || historyLoading || lazyTabsLoading}
+        refreshing={headerRefreshing}
         onRefresh={refresh}
     />
 

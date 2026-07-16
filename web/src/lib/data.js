@@ -5,6 +5,7 @@ const CRYPTO_SNAPSHOT_TTL_MS = 4000;
 const POSITION_BIAS_TTL_MS = 15000;
 const OI_DATA_TTL_MS = 60000;
 const SOFT_FETCH_RETRY_MS = 250;
+const FETCH_TIMEOUT_MS = 8000;
 /** @type {Map<string, {ts: number, data: any, pending?: Promise<any>}>} */
 const cryptoSnapshotCache = new Map();
 /** @type {Map<string, {ts: number, data: any, pending?: Promise<any>}>} */
@@ -34,7 +35,10 @@ async function fetchJsonSoft(url, {
     let lastError = null;
     for (let attempt = 0; attempt <= retries; attempt += 1) {
         try {
-            const res = await fetch(cacheBustUrl ? cacheBust(url) : url, { cache: cacheBustUrl ? 'no-store' : 'default' });
+            const res = await fetch(cacheBustUrl ? cacheBust(url) : url, {
+                cache: cacheBustUrl ? 'no-store' : 'default',
+                signal: AbortSignal.timeout(FETCH_TIMEOUT_MS)
+            });
             if (res.ok) {
                 const data = await res.json();
                 if (useLastGood) jsonLastGood.set(url, data);
@@ -65,7 +69,10 @@ async function fetchTextSoft(url, {
     let lastError = null;
     for (let attempt = 0; attempt <= retries; attempt += 1) {
         try {
-            const res = await fetch(cacheBustUrl ? cacheBust(url) : url, { cache: cacheBustUrl ? 'no-store' : 'default' });
+            const res = await fetch(cacheBustUrl ? cacheBust(url) : url, {
+                cache: cacheBustUrl ? 'no-store' : 'default',
+                signal: AbortSignal.timeout(FETCH_TIMEOUT_MS)
+            });
             if (res.ok) {
                 const text = await res.text();
                 if (useLastGood) textLastGood.set(url, text);
@@ -401,7 +408,9 @@ export async function fetchLivePrice(sym, assetId = null) {
     }
 
     try {
-        const res = await fetch(`/api/price?sym=${encodeURIComponent(sym)}`);
+        const res = await fetch(`/api/price?sym=${encodeURIComponent(sym)}`, {
+            signal: AbortSignal.timeout(FETCH_TIMEOUT_MS)
+        });
         if (!res.ok) return null;
         const j = await res.json();
         return j && Number.isFinite(j.price) ? j : null;
