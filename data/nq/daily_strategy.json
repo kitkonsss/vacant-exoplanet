@@ -1,16 +1,16 @@
 {
   "version": 2,
   "asset": "NQ",
-  "generated_at": "2026-08-02T23:26:26+00:00",
-  "future_price": 28556.8,
+  "generated_at": "2026-08-03T02:26:02+00:00",
+  "future_price": 28658.2,
   "directional_bias": {
-    "label": "neutral",
-    "score": -6.0,
-    "confidence": "low"
+    "label": "lean_bearish",
+    "score": -10.6,
+    "confidence": "high"
   },
   "components": {
     "positioning": {
-      "score": -2.8,
+      "score": -10.4,
       "label": "neutral",
       "weight": 0.45
     },
@@ -35,9 +35,9 @@
   },
   "agreement": {
     "bullish_layers": 0,
-    "bearish_layers": 1,
-    "aligned": 1,
-    "total": 1
+    "bearish_layers": 3,
+    "aligned": 3,
+    "total": 3
   },
   "regime": {
     "regime": "mixed",
@@ -49,66 +49,112 @@
   },
   "expected_range": {
     "method": "ATM IV from Vol2Vol smile (1-day move); ATR(14) kept as cross-check",
-    "anchor_price": 28556.8,
-    "current_price": 28556.8,
-    "atr": 688.05,
-    "expected_move": 210.6,
-    "day_high_est": 28767.4,
-    "day_low_est": 28346.2,
+    "anchor_price": 28658.2,
+    "current_price": 28658.2,
+    "atr": 690.02,
+    "expected_move": 184.2,
+    "day_high_est": 28842.4,
+    "day_low_est": 28474.0,
     "bands_1d": {
-      "plus1": 28767.4,
-      "minus1": 28346.2,
-      "plus2": 28977.9,
-      "minus2": 28135.7,
-      "plus3": 29188.5,
-      "minus3": 27925.1
+      "plus1": 28842.4,
+      "minus1": 28474.0,
+      "plus2": 29026.5,
+      "minus2": 28289.9,
+      "plus3": 29210.7,
+      "minus3": 28105.7
     },
     "price_sd_from_anchor": 0.0,
     "note": "IV-based 1SD daily move (forward-looking). bands_1d are locked to anchor_price from the Vol2Vol scrape; live/current price is only compared against that anchor.",
-    "atm_iv_pct": 15.19,
+    "atm_iv_pct": 14.37,
     "iv_basis_tenor": {
       "contract_key": "current",
       "symbol": "Q1AQ6",
-      "dte": 0.86
+      "dte": 0.73
     },
     "term_structure": {
-      "slope_volpts_short_minus_monthly": -7.03,
+      "slope_volpts_short_minus_monthly": -7.62,
       "shape": "contango (calm front, risk priced later)",
       "short_tenor": "Q1AQ6",
       "long_tenor": "NEQ6"
     },
     "skew": {
       "measured_at_pct": 2.0,
-      "put_skew_volpts": 3.7,
-      "call_skew_volpts": -2.96,
-      "read": "normal_for_asset (z=-0.5 \u2014 typical hedging skew)",
-      "skew_spread_volpts": 6.66,
-      "baseline_n": 45,
-      "skew_z_vs_baseline": -0.49
+      "put_skew_volpts": 4.05,
+      "call_skew_volpts": -2.36,
+      "read": "normal_for_asset (z=-0.6 \u2014 typical hedging skew)",
+      "skew_spread_volpts": 6.41,
+      "baseline_n": 46,
+      "skew_z_vs_baseline": -0.57
     }
   },
   "option_flow": {
-    "generated_at": "2026-08-02T23:26:26+00:00",
+    "generated_at": "2026-08-03T02:26:02+00:00",
     "imbalance_1h": {
-      "score": 0,
-      "label": "thin",
-      "note": "only 0 contracts in window"
+      "score": -7.8,
+      "label": "downside_flow",
+      "above_share": 0.31,
+      "below_share": 0.69
     },
-    "flow_magnet_1h": null,
-    "wall_activity_1h": [],
+    "flow_magnet_1h": {
+      "strike": 28482.0,
+      "side": "below",
+      "distance_points": -176.2,
+      "total_volume": 4234
+    },
+    "wall_activity_1h": [
+      {
+        "strike": 28600.0,
+        "added": 285,
+        "share_pct": 6.7,
+        "side": "below",
+        "distance_points": -58.2,
+        "confluence": 3,
+        "sources": [
+          "gamma_wall",
+          "oi_build",
+          "round_100"
+        ]
+      },
+      {
+        "strike": 28700.0,
+        "added": 224,
+        "share_pct": 5.3,
+        "side": "above",
+        "distance_points": 41.8,
+        "confluence": 2,
+        "sources": [
+          "gamma_wall",
+          "round_100"
+        ]
+      },
+      {
+        "strike": 28100.0,
+        "added": 207,
+        "share_pct": 4.9,
+        "side": "below",
+        "distance_points": -558.2,
+        "confluence": 4,
+        "sources": [
+          "gamma_wall",
+          "oi_build",
+          "oi_wall",
+          "round_100"
+        ]
+      }
+    ],
     "note": "Successive Vol2Vol intraday-volume snapshot deltas (~10 min cadence). Volume is unsigned \u2014 reads describe location/intensity of flow, not aggressor side."
   },
   "vwap": null,
   "contrarian_flag": "none",
   "momentum": {
-    "direction": "up",
-    "bias": "neutral",
+    "direction": "down",
+    "bias": "lean_bearish",
     "aligned_with_regime": false,
-    "trigger": "break above 28600 (confluence \u00d73)",
+    "trigger": "break below 28600 (confluence \u00d73)",
     "targets": [
-      "28700"
+      "28500"
     ],
-    "invalidation": "28500",
+    "invalidation": "28700",
     "rationale": "macro neutral; upside magnet"
   },
   "mean_reversion": {
@@ -127,8 +173,8 @@
       {
         "setup": "momentum",
         "entry": 28600.0,
-        "stop": 28500.0,
-        "target": 28700.0,
+        "stop": 28700.0,
+        "target": 28500.0,
         "risk_points": 100.0,
         "rr": 1.0,
         "mgc_contracts": 0,
@@ -139,11 +185,11 @@
       "max_losses_per_day": 2,
       "note": "2 stop-outs = -$1000; stop trading for the day. Size from the stop distance, never from conviction."
     },
-    "expected_move_context": 210.6
+    "expected_move_context": 184.2
   },
   "data_freshness": {
-    "strategy": "2026-08-02T23:26:26+00:00",
-    "positioning": "2026-08-02T23:26:23Z",
+    "strategy": "2026-08-03T02:26:02+00:00",
+    "positioning": "2026-08-03T02:26:00Z",
     "macro": "2026-07-05T23:41:55+00:00",
     "cot_report_date": "2026-06-02",
     "vwap": null
@@ -156,12 +202,12 @@
       26000.0
     ],
     "resistances": [
-      28700.0,
       28750.0,
       29000.0,
+      29200.0,
       30000.0
     ],
-    "magnet": 28100.0
+    "magnet": 29200.0
   },
   "confluence_levels": [
     {
@@ -174,10 +220,10 @@
       ],
       "confluence": 4,
       "side": "above",
-      "distance_points": 443.2,
+      "distance_points": 341.8,
       "detail": [
-        "gamma_wall:\u03b365",
-        "gamma_wall:\u03b355",
+        "gamma_wall:\u03b366",
+        "gamma_wall:\u03b356",
         "oi_wall:1067OI/call_wall",
         "oi_wall:507OI/call_wall",
         "oi_build:+178/call",
@@ -194,9 +240,9 @@
       ],
       "confluence": 4,
       "side": "below",
-      "distance_points": -456.8,
+      "distance_points": -558.2,
       "detail": [
-        "gamma_wall:\u03b3113",
+        "gamma_wall:\u03b3115",
         "oi_wall:578OI/put_wall",
         "oi_build:+455/put",
         "round_100:\u00d7100"
@@ -210,10 +256,10 @@
         "round_100"
       ],
       "confluence": 3,
-      "side": "above",
-      "distance_points": 43.2,
+      "side": "below",
+      "distance_points": -58.2,
       "detail": [
-        "gamma_wall:\u03b355",
+        "gamma_wall:\u03b356",
         "oi_build:+151/call",
         "round_100:\u00d7100"
       ]
@@ -227,26 +273,10 @@
       ],
       "confluence": 3,
       "side": "below",
-      "distance_points": -56.8,
+      "distance_points": -158.2,
       "detail": [
-        "gamma_wall:\u03b381",
+        "gamma_wall:\u03b382",
         "oi_wall:631OI/call_wall",
-        "round_500:\u00d7500"
-      ]
-    },
-    {
-      "level": 27500.0,
-      "sources": [
-        "oi_build",
-        "oi_wall",
-        "round_500"
-      ],
-      "confluence": 3,
-      "side": "below",
-      "distance_points": -1056.8,
-      "detail": [
-        "oi_wall:501OI/put_wall",
-        "oi_build:+279/put",
         "round_500:\u00d7500"
       ]
     },
@@ -259,7 +289,7 @@
       ],
       "confluence": 3,
       "side": "below",
-      "distance_points": -1256.8,
+      "distance_points": -1358.2,
       "detail": [
         "oi_wall:520OI/put_wall",
         "oi_build:+486/put",
@@ -274,7 +304,7 @@
       ],
       "confluence": 2,
       "side": "above",
-      "distance_points": 143.2,
+      "distance_points": 41.8,
       "detail": [
         "gamma_wall:\u03b352",
         "round_100:\u00d7100"
@@ -288,9 +318,23 @@
       ],
       "confluence": 2,
       "side": "above",
-      "distance_points": 243.2,
+      "distance_points": 141.8,
       "detail": [
         "oi_build:+137/call",
+        "round_100:\u00d7100"
+      ]
+    },
+    {
+      "level": 29100.0,
+      "sources": [
+        "oi_wall",
+        "round_100"
+      ],
+      "confluence": 2,
+      "side": "above",
+      "distance_points": 441.8,
+      "detail": [
+        "oi_wall:543OI/call_wall",
         "round_100:\u00d7100"
       ]
     }
@@ -298,243 +342,243 @@
   "round_numbers": {
     "levels": [
       {
-        "level": 26600.0,
-        "tag": "round_100",
-        "distance_points": -1956.8,
-        "side": "below"
-      },
-      {
         "level": 26700.0,
         "tag": "round_100",
-        "distance_points": -1856.8,
+        "distance_points": -1958.2,
         "side": "below"
       },
       {
         "level": 26800.0,
         "tag": "round_100",
-        "distance_points": -1756.8,
+        "distance_points": -1858.2,
         "side": "below"
       },
       {
         "level": 26900.0,
         "tag": "round_100",
-        "distance_points": -1656.8,
+        "distance_points": -1758.2,
         "side": "below"
       },
       {
         "level": 27000.0,
         "tag": "round_500",
-        "distance_points": -1556.8,
+        "distance_points": -1658.2,
         "side": "below"
       },
       {
         "level": 27100.0,
         "tag": "round_100",
-        "distance_points": -1456.8,
+        "distance_points": -1558.2,
         "side": "below"
       },
       {
         "level": 27200.0,
         "tag": "round_100",
-        "distance_points": -1356.8,
+        "distance_points": -1458.2,
         "side": "below"
       },
       {
         "level": 27300.0,
         "tag": "round_100",
-        "distance_points": -1256.8,
+        "distance_points": -1358.2,
         "side": "below"
       },
       {
         "level": 27400.0,
         "tag": "round_100",
-        "distance_points": -1156.8,
+        "distance_points": -1258.2,
         "side": "below"
       },
       {
         "level": 27500.0,
         "tag": "round_500",
-        "distance_points": -1056.8,
+        "distance_points": -1158.2,
         "side": "below"
       },
       {
         "level": 27600.0,
         "tag": "round_100",
-        "distance_points": -956.8,
+        "distance_points": -1058.2,
         "side": "below"
       },
       {
         "level": 27700.0,
         "tag": "round_100",
-        "distance_points": -856.8,
+        "distance_points": -958.2,
         "side": "below"
       },
       {
         "level": 27800.0,
         "tag": "round_100",
-        "distance_points": -756.8,
+        "distance_points": -858.2,
         "side": "below"
       },
       {
         "level": 27900.0,
         "tag": "round_100",
-        "distance_points": -656.8,
+        "distance_points": -758.2,
         "side": "below"
       },
       {
         "level": 28000.0,
         "tag": "round_500",
-        "distance_points": -556.8,
+        "distance_points": -658.2,
         "side": "below"
       },
       {
         "level": 28100.0,
         "tag": "round_100",
-        "distance_points": -456.8,
+        "distance_points": -558.2,
         "side": "below"
       },
       {
         "level": 28200.0,
         "tag": "round_100",
-        "distance_points": -356.8,
+        "distance_points": -458.2,
         "side": "below"
       },
       {
         "level": 28300.0,
         "tag": "round_100",
-        "distance_points": -256.8,
+        "distance_points": -358.2,
         "side": "below"
       },
       {
         "level": 28400.0,
         "tag": "round_100",
-        "distance_points": -156.8,
+        "distance_points": -258.2,
         "side": "below"
       },
       {
         "level": 28500.0,
         "tag": "round_500",
-        "distance_points": -56.8,
+        "distance_points": -158.2,
         "side": "below"
       },
       {
         "level": 28600.0,
         "tag": "round_100",
-        "distance_points": 43.2,
-        "side": "above"
+        "distance_points": -58.2,
+        "side": "below"
       },
       {
         "level": 28700.0,
         "tag": "round_100",
-        "distance_points": 143.2,
+        "distance_points": 41.8,
         "side": "above"
       },
       {
         "level": 28800.0,
         "tag": "round_100",
-        "distance_points": 243.2,
+        "distance_points": 141.8,
         "side": "above"
       },
       {
         "level": 28900.0,
         "tag": "round_100",
-        "distance_points": 343.2,
+        "distance_points": 241.8,
         "side": "above"
       },
       {
         "level": 29000.0,
         "tag": "round_500",
-        "distance_points": 443.2,
+        "distance_points": 341.8,
         "side": "above"
       },
       {
         "level": 29100.0,
         "tag": "round_100",
-        "distance_points": 543.2,
+        "distance_points": 441.8,
         "side": "above"
       },
       {
         "level": 29200.0,
         "tag": "round_100",
-        "distance_points": 643.2,
+        "distance_points": 541.8,
         "side": "above"
       },
       {
         "level": 29300.0,
         "tag": "round_100",
-        "distance_points": 743.2,
+        "distance_points": 641.8,
         "side": "above"
       },
       {
         "level": 29400.0,
         "tag": "round_100",
-        "distance_points": 843.2,
+        "distance_points": 741.8,
         "side": "above"
       },
       {
         "level": 29500.0,
         "tag": "round_500",
-        "distance_points": 943.2,
+        "distance_points": 841.8,
         "side": "above"
       },
       {
         "level": 29600.0,
         "tag": "round_100",
-        "distance_points": 1043.2,
+        "distance_points": 941.8,
         "side": "above"
       },
       {
         "level": 29700.0,
         "tag": "round_100",
-        "distance_points": 1143.2,
+        "distance_points": 1041.8,
         "side": "above"
       },
       {
         "level": 29800.0,
         "tag": "round_100",
-        "distance_points": 1243.2,
+        "distance_points": 1141.8,
         "side": "above"
       },
       {
         "level": 29900.0,
         "tag": "round_100",
-        "distance_points": 1343.2,
+        "distance_points": 1241.8,
         "side": "above"
       },
       {
         "level": 30000.0,
         "tag": "round_500",
-        "distance_points": 1443.2,
+        "distance_points": 1341.8,
         "side": "above"
       },
       {
         "level": 30100.0,
         "tag": "round_100",
-        "distance_points": 1543.2,
+        "distance_points": 1441.8,
         "side": "above"
       },
       {
         "level": 30200.0,
         "tag": "round_100",
-        "distance_points": 1643.2,
+        "distance_points": 1541.8,
         "side": "above"
       },
       {
         "level": 30300.0,
         "tag": "round_100",
-        "distance_points": 1743.2,
+        "distance_points": 1641.8,
         "side": "above"
       },
       {
         "level": 30400.0,
         "tag": "round_100",
-        "distance_points": 1843.2,
+        "distance_points": 1741.8,
         "side": "above"
       },
       {
         "level": 30500.0,
         "tag": "round_500",
-        "distance_points": 1943.2,
+        "distance_points": 1841.8,
+        "side": "above"
+      },
+      {
+        "level": 30600.0,
+        "tag": "round_100",
+        "distance_points": 1941.8,
         "side": "above"
       }
     ],
@@ -549,571 +593,622 @@
       50.0,
       100.0
     ],
-    "sl_points": 52.6,
-    "oi_threshold_p75": 600,
+    "sl_points": 50.0,
+    "oi_threshold_p75": 668,
     "levels": [
       {
-        "level": 28600.0,
-        "is_major": false,
-        "side": "above",
-        "distance_points": 43.2,
-        "oi": 600,
-        "oi_pctile": 0.76,
-        "thick": true,
-        "oi_type": "call",
-        "role": "resistance",
-        "action": "fade short",
-        "target": 28500.0,
-        "invalidation": 28652.65,
-        "sl_points": 52.6,
-        "rr": 1.9,
-        "aligned": true
-      },
-      {
         "level": 29000.0,
         "is_major": true,
         "side": "above",
-        "distance_points": 443.2,
-        "oi": 1636,
+        "distance_points": 341.8,
+        "oi": 1784,
         "oi_pctile": 1.0,
         "thick": true,
         "oi_type": "call",
         "role": "resistance",
         "action": "fade short",
         "target": 28900.0,
-        "invalidation": 29052.65,
-        "sl_points": 52.6,
-        "rr": 1.9,
-        "aligned": true
-      },
-      {
-        "level": 29500.0,
-        "is_major": true,
-        "side": "above",
-        "distance_points": 943.2,
-        "oi": 615,
-        "oi_pctile": 0.78,
-        "thick": true,
-        "oi_type": "call",
-        "role": "resistance",
-        "action": "fade short",
-        "target": 29400.0,
-        "invalidation": 29552.65,
-        "sl_points": 52.6,
-        "rr": 1.9,
-        "aligned": true
-      },
-      {
-        "level": 28500.0,
-        "is_major": true,
-        "side": "below",
-        "distance_points": -56.8,
-        "oi": 1134,
-        "oi_pctile": 0.92,
-        "thick": true,
-        "oi_type": "call",
-        "role": "resistance",
-        "action": "fade long",
-        "target": 28600.0,
-        "invalidation": 28447.35,
-        "sl_points": 52.6,
-        "rr": 1.9,
-        "aligned": true
-      },
-      {
-        "level": 28100.0,
-        "is_major": false,
-        "side": "below",
-        "distance_points": -456.8,
-        "oi": 841,
-        "oi_pctile": 0.86,
-        "thick": true,
-        "oi_type": "mixed",
-        "role": "magnet",
-        "action": "fade long",
-        "target": 28200.0,
-        "invalidation": 28047.35,
-        "sl_points": 52.6,
-        "rr": 1.9,
-        "aligned": true
-      },
-      {
-        "level": 28000.0,
-        "is_major": true,
-        "side": "below",
-        "distance_points": -556.8,
-        "oi": 1472,
-        "oi_pctile": 0.95,
-        "thick": true,
-        "oi_type": "call",
-        "role": "resistance",
-        "action": "fade long",
-        "target": 28100.0,
-        "invalidation": 27947.35,
-        "sl_points": 52.6,
-        "rr": 1.9,
-        "aligned": true
-      }
-    ],
-    "all_round_levels": [
-      {
-        "level": 27000.0,
-        "is_major": true,
-        "side": "below",
-        "distance_points": -1556.8,
-        "oi": 714,
-        "oi_pctile": 0.84,
-        "thick": true,
-        "oi_type": "put",
-        "role": "support",
-        "action": "fade long",
-        "target": 27100.0,
-        "invalidation": 26947.35,
-        "sl_points": 52.6,
-        "rr": 1.9,
-        "aligned": true
-      },
-      {
-        "level": 27300.0,
-        "is_major": false,
-        "side": "below",
-        "distance_points": -1256.8,
-        "oi": 520,
-        "oi_pctile": 0.73,
-        "thick": false,
-        "oi_type": "put",
-        "role": "support",
-        "action": "fade long",
-        "target": 27400.0,
-        "invalidation": 27247.35,
-        "sl_points": 52.6,
-        "rr": 1.9,
-        "aligned": true
-      },
-      {
-        "level": 27500.0,
-        "is_major": true,
-        "side": "below",
-        "distance_points": -1056.8,
-        "oi": 857,
-        "oi_pctile": 0.89,
-        "thick": true,
-        "oi_type": "put",
-        "role": "support",
-        "action": "fade long",
-        "target": 27600.0,
-        "invalidation": 27447.35,
-        "sl_points": 52.6,
-        "rr": 1.9,
-        "aligned": true
-      },
-      {
-        "level": 27700.0,
-        "is_major": false,
-        "side": "below",
-        "distance_points": -856.8,
-        "oi": 382,
-        "oi_pctile": 0.54,
-        "thick": false,
-        "oi_type": "put",
-        "role": "support",
-        "action": "fade long",
-        "target": 27800.0,
-        "invalidation": 27647.35,
-        "sl_points": 52.6,
-        "rr": 1.9,
-        "aligned": true
-      },
-      {
-        "level": 27800.0,
-        "is_major": false,
-        "side": "below",
-        "distance_points": -756.8,
-        "oi": 169,
-        "oi_pctile": 0.3,
-        "thick": false,
-        "oi_type": "put",
-        "role": "support",
-        "action": "fade long",
-        "target": 27900.0,
-        "invalidation": 27747.35,
-        "sl_points": 52.6,
-        "rr": 1.9,
-        "aligned": true
-      },
-      {
-        "level": 27900.0,
-        "is_major": false,
-        "side": "below",
-        "distance_points": -656.8,
-        "oi": 455,
-        "oi_pctile": 0.68,
-        "thick": false,
-        "oi_type": "put",
-        "role": "support",
-        "action": "fade long",
-        "target": 28000.0,
-        "invalidation": 27847.35,
-        "sl_points": 52.6,
-        "rr": 1.9,
-        "aligned": true
-      },
-      {
-        "level": 28000.0,
-        "is_major": true,
-        "side": "below",
-        "distance_points": -556.8,
-        "oi": 1472,
-        "oi_pctile": 0.95,
-        "thick": true,
-        "oi_type": "call",
-        "role": "resistance",
-        "action": "fade long",
-        "target": 28100.0,
-        "invalidation": 27947.35,
-        "sl_points": 52.6,
-        "rr": 1.9,
-        "aligned": true
-      },
-      {
-        "level": 28100.0,
-        "is_major": false,
-        "side": "below",
-        "distance_points": -456.8,
-        "oi": 841,
-        "oi_pctile": 0.86,
-        "thick": true,
-        "oi_type": "mixed",
-        "role": "magnet",
-        "action": "fade long",
-        "target": 28200.0,
-        "invalidation": 28047.35,
-        "sl_points": 52.6,
-        "rr": 1.9,
-        "aligned": true
-      },
-      {
-        "level": 28200.0,
-        "is_major": false,
-        "side": "below",
-        "distance_points": -356.8,
-        "oi": 112,
-        "oi_pctile": 0.19,
-        "thick": false,
-        "oi_type": "put",
-        "role": "support",
-        "action": "fade long",
-        "target": 28300.0,
-        "invalidation": 28147.35,
-        "sl_points": 52.6,
-        "rr": 1.9,
-        "aligned": true
-      },
-      {
-        "level": 28300.0,
-        "is_major": false,
-        "side": "below",
-        "distance_points": -256.8,
-        "oi": 158,
-        "oi_pctile": 0.27,
-        "thick": false,
-        "oi_type": "call",
-        "role": "resistance",
-        "action": "fade long",
-        "target": 28400.0,
-        "invalidation": 28247.35,
-        "sl_points": 52.6,
-        "rr": 1.9,
-        "aligned": true
-      },
-      {
-        "level": 28400.0,
-        "is_major": false,
-        "side": "below",
-        "distance_points": -156.8,
-        "oi": 417,
-        "oi_pctile": 0.62,
-        "thick": false,
-        "oi_type": "call",
-        "role": "resistance",
-        "action": "fade long",
-        "target": 28500.0,
-        "invalidation": 28347.35,
-        "sl_points": 52.6,
-        "rr": 1.9,
-        "aligned": true
-      },
-      {
-        "level": 28500.0,
-        "is_major": true,
-        "side": "below",
-        "distance_points": -56.8,
-        "oi": 1134,
-        "oi_pctile": 0.92,
-        "thick": true,
-        "oi_type": "call",
-        "role": "resistance",
-        "action": "fade long",
-        "target": 28600.0,
-        "invalidation": 28447.35,
-        "sl_points": 52.6,
-        "rr": 1.9,
-        "aligned": true
-      },
-      {
-        "level": 28600.0,
-        "is_major": false,
-        "side": "above",
-        "distance_points": 43.2,
-        "oi": 600,
-        "oi_pctile": 0.76,
-        "thick": true,
-        "oi_type": "call",
-        "role": "resistance",
-        "action": "fade short",
-        "target": 28500.0,
-        "invalidation": 28652.65,
-        "sl_points": 52.6,
-        "rr": 1.9,
-        "aligned": true
-      },
-      {
-        "level": 28700.0,
-        "is_major": false,
-        "side": "above",
-        "distance_points": 143.2,
-        "oi": 315,
-        "oi_pctile": 0.43,
-        "thick": false,
-        "oi_type": "call",
-        "role": "resistance",
-        "action": "fade short",
-        "target": 28600.0,
-        "invalidation": 28752.65,
-        "sl_points": 52.6,
-        "rr": 1.9,
-        "aligned": true
-      },
-      {
-        "level": 28800.0,
-        "is_major": false,
-        "side": "above",
-        "distance_points": 243.2,
-        "oi": 401,
-        "oi_pctile": 0.57,
-        "thick": false,
-        "oi_type": "call",
-        "role": "resistance",
-        "action": "fade short",
-        "target": 28700.0,
-        "invalidation": 28852.65,
-        "sl_points": 52.6,
-        "rr": 1.9,
-        "aligned": true
-      },
-      {
-        "level": 28900.0,
-        "is_major": false,
-        "side": "above",
-        "distance_points": 343.2,
-        "oi": 281,
-        "oi_pctile": 0.38,
-        "thick": false,
-        "oi_type": "call",
-        "role": "resistance",
-        "action": "fade short",
-        "target": 28800.0,
-        "invalidation": 28952.65,
-        "sl_points": 52.6,
-        "rr": 1.9,
-        "aligned": true
-      },
-      {
-        "level": 29000.0,
-        "is_major": true,
-        "side": "above",
-        "distance_points": 443.2,
-        "oi": 1636,
-        "oi_pctile": 1.0,
-        "thick": true,
-        "oi_type": "call",
-        "role": "resistance",
-        "action": "fade short",
-        "target": 28900.0,
-        "invalidation": 29052.65,
-        "sl_points": 52.6,
-        "rr": 1.9,
-        "aligned": true
-      },
-      {
-        "level": 29100.0,
-        "is_major": false,
-        "side": "above",
-        "distance_points": 543.2,
-        "oi": 52,
-        "oi_pctile": 0.03,
-        "thick": false,
-        "oi_type": "call",
-        "role": "resistance",
-        "action": "fade short",
-        "target": 29000.0,
-        "invalidation": 29152.65,
-        "sl_points": 52.6,
-        "rr": 1.9,
+        "invalidation": 29050.0,
+        "sl_points": 50.0,
+        "rr": 2.0,
         "aligned": true
       },
       {
         "level": 29200.0,
         "is_major": false,
         "side": "above",
-        "distance_points": 643.2,
-        "oi": 70,
-        "oi_pctile": 0.11,
-        "thick": false,
+        "distance_points": 541.8,
+        "oi": 672,
+        "oi_pctile": 0.77,
+        "thick": true,
         "oi_type": "call",
         "role": "resistance",
         "action": "fade short",
         "target": 29100.0,
-        "invalidation": 29252.65,
-        "sl_points": 52.6,
-        "rr": 1.9,
-        "aligned": true
-      },
-      {
-        "level": 29300.0,
-        "is_major": false,
-        "side": "above",
-        "distance_points": 743.2,
-        "oi": 84,
-        "oi_pctile": 0.14,
-        "thick": false,
-        "oi_type": "call",
-        "role": "resistance",
-        "action": "fade short",
-        "target": 29200.0,
-        "invalidation": 29352.65,
-        "sl_points": 52.6,
-        "rr": 1.9,
-        "aligned": true
-      },
-      {
-        "level": 29400.0,
-        "is_major": false,
-        "side": "above",
-        "distance_points": 843.2,
-        "oi": 434,
-        "oi_pctile": 0.65,
-        "thick": false,
-        "oi_type": "call",
-        "role": "resistance",
-        "action": "fade short",
-        "target": 29300.0,
-        "invalidation": 29452.65,
-        "sl_points": 52.6,
-        "rr": 1.9,
+        "invalidation": 29250.0,
+        "sl_points": 50.0,
+        "rr": 2.0,
         "aligned": true
       },
       {
         "level": 29500.0,
         "is_major": true,
         "side": "above",
-        "distance_points": 943.2,
-        "oi": 615,
-        "oi_pctile": 0.78,
+        "distance_points": 841.8,
+        "oi": 668,
+        "oi_pctile": 0.74,
         "thick": true,
         "oi_type": "call",
         "role": "resistance",
         "action": "fade short",
         "target": 29400.0,
-        "invalidation": 29552.65,
-        "sl_points": 52.6,
-        "rr": 1.9,
+        "invalidation": 29550.0,
+        "sl_points": 50.0,
+        "rr": 2.0,
+        "aligned": true
+      },
+      {
+        "level": 28600.0,
+        "is_major": false,
+        "side": "below",
+        "distance_points": -58.2,
+        "oi": 719,
+        "oi_pctile": 0.83,
+        "thick": true,
+        "oi_type": "call",
+        "role": "resistance",
+        "action": "fade long",
+        "target": 28700.0,
+        "invalidation": 28550.0,
+        "sl_points": 50.0,
+        "rr": 2.0,
+        "aligned": true
+      },
+      {
+        "level": 28500.0,
+        "is_major": true,
+        "side": "below",
+        "distance_points": -158.2,
+        "oi": 1159,
+        "oi_pctile": 0.94,
+        "thick": true,
+        "oi_type": "call",
+        "role": "resistance",
+        "action": "fade long",
+        "target": 28600.0,
+        "invalidation": 28450.0,
+        "sl_points": 50.0,
+        "rr": 2.0,
+        "aligned": true
+      },
+      {
+        "level": 28100.0,
+        "is_major": false,
+        "side": "below",
+        "distance_points": -558.2,
+        "oi": 866,
+        "oi_pctile": 0.87,
+        "thick": true,
+        "oi_type": "mixed",
+        "role": "magnet",
+        "action": "fade long",
+        "target": 28200.0,
+        "invalidation": 28050.0,
+        "sl_points": 50.0,
+        "rr": 2.0,
+        "aligned": true
+      }
+    ],
+    "all_round_levels": [
+      {
+        "level": 26700.0,
+        "is_major": false,
+        "side": "below",
+        "distance_points": -1958.2,
+        "oi": 104,
+        "oi_pctile": 0.13,
+        "thick": false,
+        "oi_type": "put",
+        "role": "support",
+        "action": "fade long",
+        "target": 26800.0,
+        "invalidation": 26650.0,
+        "sl_points": 50.0,
+        "rr": 2.0,
+        "aligned": true
+      },
+      {
+        "level": 26800.0,
+        "is_major": false,
+        "side": "below",
+        "distance_points": -1858.2,
+        "oi": 35,
+        "oi_pctile": 0.06,
+        "thick": false,
+        "oi_type": "put",
+        "role": "support",
+        "action": "fade long",
+        "target": 26900.0,
+        "invalidation": 26750.0,
+        "sl_points": 50.0,
+        "rr": 2.0,
+        "aligned": true
+      },
+      {
+        "level": 27000.0,
+        "is_major": true,
+        "side": "below",
+        "distance_points": -1658.2,
+        "oi": 714,
+        "oi_pctile": 0.81,
+        "thick": true,
+        "oi_type": "put",
+        "role": "support",
+        "action": "fade long",
+        "target": 27100.0,
+        "invalidation": 26950.0,
+        "sl_points": 50.0,
+        "rr": 2.0,
+        "aligned": true
+      },
+      {
+        "level": 27100.0,
+        "is_major": false,
+        "side": "below",
+        "distance_points": -1558.2,
+        "oi": 25,
+        "oi_pctile": 0.02,
+        "thick": false,
+        "oi_type": "put",
+        "role": "support",
+        "action": "fade long",
+        "target": 27200.0,
+        "invalidation": 27050.0,
+        "sl_points": 50.0,
+        "rr": 2.0,
+        "aligned": true
+      },
+      {
+        "level": 27300.0,
+        "is_major": false,
+        "side": "below",
+        "distance_points": -1358.2,
+        "oi": 520,
+        "oi_pctile": 0.68,
+        "thick": false,
+        "oi_type": "put",
+        "role": "support",
+        "action": "fade long",
+        "target": 27400.0,
+        "invalidation": 27250.0,
+        "sl_points": 50.0,
+        "rr": 2.0,
+        "aligned": true
+      },
+      {
+        "level": 27500.0,
+        "is_major": true,
+        "side": "below",
+        "distance_points": -1158.2,
+        "oi": 757,
+        "oi_pctile": 0.85,
+        "thick": true,
+        "oi_type": "put",
+        "role": "support",
+        "action": "fade long",
+        "target": 27600.0,
+        "invalidation": 27450.0,
+        "sl_points": 50.0,
+        "rr": 2.0,
+        "aligned": true
+      },
+      {
+        "level": 27700.0,
+        "is_major": false,
+        "side": "below",
+        "distance_points": -958.2,
+        "oi": 391,
+        "oi_pctile": 0.53,
+        "thick": false,
+        "oi_type": "put",
+        "role": "support",
+        "action": "fade long",
+        "target": 27800.0,
+        "invalidation": 27650.0,
+        "sl_points": 50.0,
+        "rr": 2.0,
+        "aligned": true
+      },
+      {
+        "level": 27800.0,
+        "is_major": false,
+        "side": "below",
+        "distance_points": -858.2,
+        "oi": 240,
+        "oi_pctile": 0.36,
+        "thick": false,
+        "oi_type": "put",
+        "role": "support",
+        "action": "fade long",
+        "target": 27900.0,
+        "invalidation": 27750.0,
+        "sl_points": 50.0,
+        "rr": 2.0,
+        "aligned": true
+      },
+      {
+        "level": 27900.0,
+        "is_major": false,
+        "side": "below",
+        "distance_points": -758.2,
+        "oi": 217,
+        "oi_pctile": 0.32,
+        "thick": false,
+        "oi_type": "mixed",
+        "role": "magnet",
+        "action": "fade long",
+        "target": 28000.0,
+        "invalidation": 27850.0,
+        "sl_points": 50.0,
+        "rr": 2.0,
+        "aligned": true
+      },
+      {
+        "level": 28000.0,
+        "is_major": true,
+        "side": "below",
+        "distance_points": -658.2,
+        "oi": 1237,
+        "oi_pctile": 0.96,
+        "thick": true,
+        "oi_type": "call",
+        "role": "resistance",
+        "action": "fade long",
+        "target": 28100.0,
+        "invalidation": 27950.0,
+        "sl_points": 50.0,
+        "rr": 2.0,
+        "aligned": true
+      },
+      {
+        "level": 28100.0,
+        "is_major": false,
+        "side": "below",
+        "distance_points": -558.2,
+        "oi": 866,
+        "oi_pctile": 0.87,
+        "thick": true,
+        "oi_type": "mixed",
+        "role": "magnet",
+        "action": "fade long",
+        "target": 28200.0,
+        "invalidation": 28050.0,
+        "sl_points": 50.0,
+        "rr": 2.0,
+        "aligned": true
+      },
+      {
+        "level": 28200.0,
+        "is_major": false,
+        "side": "below",
+        "distance_points": -458.2,
+        "oi": 112,
+        "oi_pctile": 0.17,
+        "thick": false,
+        "oi_type": "put",
+        "role": "support",
+        "action": "fade long",
+        "target": 28300.0,
+        "invalidation": 28150.0,
+        "sl_points": 50.0,
+        "rr": 2.0,
+        "aligned": true
+      },
+      {
+        "level": 28300.0,
+        "is_major": false,
+        "side": "below",
+        "distance_points": -358.2,
+        "oi": 315,
+        "oi_pctile": 0.45,
+        "thick": false,
+        "oi_type": "mixed",
+        "role": "magnet",
+        "action": "fade long",
+        "target": 28400.0,
+        "invalidation": 28250.0,
+        "sl_points": 50.0,
+        "rr": 2.0,
+        "aligned": true
+      },
+      {
+        "level": 28400.0,
+        "is_major": false,
+        "side": "below",
+        "distance_points": -258.2,
+        "oi": 455,
+        "oi_pctile": 0.64,
+        "thick": false,
+        "oi_type": "call",
+        "role": "resistance",
+        "action": "fade long",
+        "target": 28500.0,
+        "invalidation": 28350.0,
+        "sl_points": 50.0,
+        "rr": 2.0,
+        "aligned": true
+      },
+      {
+        "level": 28500.0,
+        "is_major": true,
+        "side": "below",
+        "distance_points": -158.2,
+        "oi": 1159,
+        "oi_pctile": 0.94,
+        "thick": true,
+        "oi_type": "call",
+        "role": "resistance",
+        "action": "fade long",
+        "target": 28600.0,
+        "invalidation": 28450.0,
+        "sl_points": 50.0,
+        "rr": 2.0,
+        "aligned": true
+      },
+      {
+        "level": 28600.0,
+        "is_major": false,
+        "side": "below",
+        "distance_points": -58.2,
+        "oi": 719,
+        "oi_pctile": 0.83,
+        "thick": true,
+        "oi_type": "call",
+        "role": "resistance",
+        "action": "fade long",
+        "target": 28700.0,
+        "invalidation": 28550.0,
+        "sl_points": 50.0,
+        "rr": 2.0,
+        "aligned": true
+      },
+      {
+        "level": 28700.0,
+        "is_major": false,
+        "side": "above",
+        "distance_points": 41.8,
+        "oi": 315,
+        "oi_pctile": 0.45,
+        "thick": false,
+        "oi_type": "call",
+        "role": "resistance",
+        "action": "fade short",
+        "target": 28600.0,
+        "invalidation": 28750.0,
+        "sl_points": 50.0,
+        "rr": 2.0,
+        "aligned": true
+      },
+      {
+        "level": 28800.0,
+        "is_major": false,
+        "side": "above",
+        "distance_points": 141.8,
+        "oi": 401,
+        "oi_pctile": 0.55,
+        "thick": false,
+        "oi_type": "call",
+        "role": "resistance",
+        "action": "fade short",
+        "target": 28700.0,
+        "invalidation": 28850.0,
+        "sl_points": 50.0,
+        "rr": 2.0,
+        "aligned": true
+      },
+      {
+        "level": 28900.0,
+        "is_major": false,
+        "side": "above",
+        "distance_points": 241.8,
+        "oi": 357,
+        "oi_pctile": 0.51,
+        "thick": false,
+        "oi_type": "call",
+        "role": "resistance",
+        "action": "fade short",
+        "target": 28800.0,
+        "invalidation": 28950.0,
+        "sl_points": 50.0,
+        "rr": 2.0,
+        "aligned": true
+      },
+      {
+        "level": 29000.0,
+        "is_major": true,
+        "side": "above",
+        "distance_points": 341.8,
+        "oi": 1784,
+        "oi_pctile": 1.0,
+        "thick": true,
+        "oi_type": "call",
+        "role": "resistance",
+        "action": "fade short",
+        "target": 28900.0,
+        "invalidation": 29050.0,
+        "sl_points": 50.0,
+        "rr": 2.0,
+        "aligned": true
+      },
+      {
+        "level": 29100.0,
+        "is_major": false,
+        "side": "above",
+        "distance_points": 441.8,
+        "oi": 595,
+        "oi_pctile": 0.7,
+        "thick": false,
+        "oi_type": "call",
+        "role": "resistance",
+        "action": "fade short",
+        "target": 29000.0,
+        "invalidation": 29150.0,
+        "sl_points": 50.0,
+        "rr": 2.0,
+        "aligned": true
+      },
+      {
+        "level": 29200.0,
+        "is_major": false,
+        "side": "above",
+        "distance_points": 541.8,
+        "oi": 672,
+        "oi_pctile": 0.77,
+        "thick": true,
+        "oi_type": "call",
+        "role": "resistance",
+        "action": "fade short",
+        "target": 29100.0,
+        "invalidation": 29250.0,
+        "sl_points": 50.0,
+        "rr": 2.0,
+        "aligned": true
+      },
+      {
+        "level": 29300.0,
+        "is_major": false,
+        "side": "above",
+        "distance_points": 641.8,
+        "oi": 233,
+        "oi_pctile": 0.34,
+        "thick": false,
+        "oi_type": "call",
+        "role": "resistance",
+        "action": "fade short",
+        "target": 29200.0,
+        "invalidation": 29350.0,
+        "sl_points": 50.0,
+        "rr": 2.0,
+        "aligned": true
+      },
+      {
+        "level": 29400.0,
+        "is_major": false,
+        "side": "above",
+        "distance_points": 741.8,
+        "oi": 434,
+        "oi_pctile": 0.6,
+        "thick": false,
+        "oi_type": "call",
+        "role": "resistance",
+        "action": "fade short",
+        "target": 29300.0,
+        "invalidation": 29450.0,
+        "sl_points": 50.0,
+        "rr": 2.0,
+        "aligned": true
+      },
+      {
+        "level": 29500.0,
+        "is_major": true,
+        "side": "above",
+        "distance_points": 841.8,
+        "oi": 668,
+        "oi_pctile": 0.74,
+        "thick": true,
+        "oi_type": "call",
+        "role": "resistance",
+        "action": "fade short",
+        "target": 29400.0,
+        "invalidation": 29550.0,
+        "sl_points": 50.0,
+        "rr": 2.0,
         "aligned": true
       },
       {
         "level": 29800.0,
         "is_major": false,
         "side": "above",
-        "distance_points": 1243.2,
+        "distance_points": 1141.8,
         "oi": 216,
-        "oi_pctile": 0.35,
+        "oi_pctile": 0.3,
         "thick": false,
         "oi_type": "call",
         "role": "resistance",
         "action": "fade short",
         "target": 29700.0,
-        "invalidation": 29852.65,
-        "sl_points": 52.6,
-        "rr": 1.9,
+        "invalidation": 29850.0,
+        "sl_points": 50.0,
+        "rr": 2.0,
         "aligned": true
       },
       {
         "level": 29900.0,
         "is_major": false,
         "side": "above",
-        "distance_points": 1343.2,
+        "distance_points": 1241.8,
         "oi": 183,
-        "oi_pctile": 0.32,
+        "oi_pctile": 0.28,
         "thick": false,
         "oi_type": "call",
         "role": "resistance",
         "action": "fade short",
         "target": 29800.0,
-        "invalidation": 29952.65,
-        "sl_points": 52.6,
-        "rr": 1.9,
+        "invalidation": 29950.0,
+        "sl_points": 50.0,
+        "rr": 2.0,
         "aligned": true
       },
       {
         "level": 30000.0,
         "is_major": true,
         "side": "above",
-        "distance_points": 1443.2,
+        "distance_points": 1341.8,
         "oi": 1584,
-        "oi_pctile": 0.97,
+        "oi_pctile": 0.98,
         "thick": true,
         "oi_type": "call",
         "role": "resistance",
         "action": "fade short",
         "target": 29900.0,
-        "invalidation": 30052.65,
-        "sl_points": 52.6,
-        "rr": 1.9,
+        "invalidation": 30050.0,
+        "sl_points": 50.0,
+        "rr": 2.0,
         "aligned": true
       },
       {
         "level": 30500.0,
         "is_major": true,
         "side": "above",
-        "distance_points": 1943.2,
+        "distance_points": 1841.8,
         "oi": 302,
-        "oi_pctile": 0.41,
+        "oi_pctile": 0.4,
         "thick": false,
         "oi_type": "call",
         "role": "resistance",
         "action": "fade short",
         "target": 30400.0,
-        "invalidation": 30552.65,
-        "sl_points": 52.6,
-        "rr": 1.9,
+        "invalidation": 30550.0,
+        "sl_points": 50.0,
+        "rr": 2.0,
         "aligned": true
       }
     ],
-    "note": "Round levels every 100 pts whose \u00b125-pt OI window is in the top quartile of all strike windows in range. Fade at touch, target the next round (100 pts), SL 53 pts (0.25x expected move clamped to 50-100). Edge is unproven until the round_wall scorecard verdict says otherwise."
+    "note": "Round levels every 100 pts whose \u00b125-pt OI window is in the top quartile of all strike windows in range. Fade at touch, target the next round (100 pts), SL 50 pts (0.25x expected move clamped to 50-100). Edge is unproven until the round_wall scorecard verdict says otherwise."
   },
   "heatmap_contract_flow": {
     "method": "latest OI heatmap build-up: newest non-null date minus previous non-null date",
     "bias": "upside_magnet",
-    "added_above_price": 2537.0,
-    "added_below_price": 3959.0,
-    "support_build": 1366.0,
-    "resistance_build": 1125.0,
+    "added_above_price": 2167.0,
+    "added_below_price": 4329.0,
+    "support_build": 1423.0,
+    "resistance_build": 995.0,
     "magnet": {
       "strike": 30000.0,
       "latest_oi": 848.0,
       "oi_type": "call",
       "side": "above",
-      "distance_points": 1443.2
+      "distance_points": 1341.8
     },
     "top_additions": [
       {
@@ -1122,7 +1217,7 @@
         "strike": 27300.0,
         "latest_oi": 520.0,
         "change_1d": 486.0,
-        "distance_points": -1256.8,
+        "distance_points": -1358.2,
         "side": "below",
         "oi_type": "put",
         "wall_role": "support"
@@ -1133,7 +1228,7 @@
         "strike": 28100.0,
         "latest_oi": 578.0,
         "change_1d": 455.0,
-        "distance_points": -456.8,
+        "distance_points": -558.2,
         "side": "below",
         "oi_type": "put",
         "wall_role": "support"
@@ -1144,7 +1239,7 @@
         "strike": 27500.0,
         "latest_oi": 501.0,
         "change_1d": 279.0,
-        "distance_points": -1056.8,
+        "distance_points": -1158.2,
         "side": "below",
         "oi_type": "put",
         "wall_role": "support"
@@ -1155,7 +1250,7 @@
         "strike": 29000.0,
         "latest_oi": 507.0,
         "change_1d": 178.0,
-        "distance_points": 443.2,
+        "distance_points": 341.8,
         "side": "above",
         "oi_type": "call",
         "wall_role": "resistance"
@@ -1166,8 +1261,8 @@
         "strike": 28600.0,
         "latest_oi": 169.0,
         "change_1d": 151.0,
-        "distance_points": 43.2,
-        "side": "above",
+        "distance_points": -58.2,
+        "side": "below",
         "oi_type": "call",
         "wall_role": "resistance"
       },
@@ -1177,7 +1272,7 @@
         "strike": 31250.0,
         "latest_oi": 182.0,
         "change_1d": 141.0,
-        "distance_points": 2693.2,
+        "distance_points": 2591.8,
         "side": "above",
         "oi_type": null,
         "wall_role": null
@@ -1188,7 +1283,7 @@
         "strike": 30100.0,
         "latest_oi": 153.0,
         "change_1d": 139.0,
-        "distance_points": 1543.2,
+        "distance_points": 1441.8,
         "side": "above",
         "oi_type": null,
         "wall_role": null
@@ -1199,7 +1294,7 @@
         "strike": 28800.0,
         "latest_oi": 246.0,
         "change_1d": 137.0,
-        "distance_points": 243.2,
+        "distance_points": 141.8,
         "side": "above",
         "oi_type": "call",
         "wall_role": "resistance"
@@ -1209,12 +1304,12 @@
       {
         "contract_key": "current",
         "contract": "Q1AQ6",
-        "underlying": 28556.8,
+        "underlying": 28658.2,
         "latest_date": "7/31/2026",
         "prev_date": "7/30/2026",
-        "added_above_price": 774.0,
-        "added_below_price": 1827.0,
-        "net_added_above_minus_below": -1053.0,
+        "added_above_price": 536.0,
+        "added_below_price": 2065.0,
+        "net_added_above_minus_below": -1529.0,
         "top_additions": [
           {
             "contract_key": "current",
@@ -1222,7 +1317,7 @@
             "strike": 28100.0,
             "latest_oi": 578.0,
             "change_1d": 455.0,
-            "distance_points": -456.8,
+            "distance_points": -558.2,
             "side": "below",
             "oi_type": "put",
             "wall_role": "support"
@@ -1233,8 +1328,8 @@
             "strike": 28600.0,
             "latest_oi": 169.0,
             "change_1d": 151.0,
-            "distance_points": 43.2,
-            "side": "above",
+            "distance_points": -58.2,
+            "side": "below",
             "oi_type": "call",
             "wall_role": "resistance"
           },
@@ -1244,10 +1339,10 @@
             "strike": 28000.0,
             "latest_oi": 235.0,
             "change_1d": 134.0,
-            "distance_points": -556.8,
+            "distance_points": -658.2,
             "side": "below",
-            "oi_type": "mixed",
-            "wall_role": "magnet"
+            "oi_type": null,
+            "wall_role": null
           },
           {
             "contract_key": "current",
@@ -1255,7 +1350,7 @@
             "strike": 28700.0,
             "latest_oi": 228.0,
             "change_1d": 121.0,
-            "distance_points": 143.2,
+            "distance_points": 41.8,
             "side": "above",
             "oi_type": "call",
             "wall_role": "resistance"
@@ -1266,7 +1361,7 @@
             "strike": 28250.0,
             "latest_oi": 136.0,
             "change_1d": 105.0,
-            "distance_points": -306.8,
+            "distance_points": -408.2,
             "side": "below",
             "oi_type": "call",
             "wall_role": "resistance"
@@ -1276,12 +1371,12 @@
       {
         "contract_key": "tomorrow",
         "contract": "Q1BQ6",
-        "underlying": 28556.8,
+        "underlying": 28658.2,
         "latest_date": "7/31/2026",
         "prev_date": "7/30/2026",
-        "added_above_price": 85.0,
-        "added_below_price": 171.0,
-        "net_added_above_minus_below": -86.0,
+        "added_above_price": 53.0,
+        "added_below_price": 203.0,
+        "net_added_above_minus_below": -150.0,
         "top_additions": [
           {
             "contract_key": "tomorrow",
@@ -1289,7 +1384,7 @@
             "strike": 28500.0,
             "latest_oi": 61.0,
             "change_1d": 38.0,
-            "distance_points": -56.8,
+            "distance_points": -158.2,
             "side": "below",
             "oi_type": "call",
             "wall_role": "resistance"
@@ -1300,7 +1395,7 @@
             "strike": 28350.0,
             "latest_oi": 44.0,
             "change_1d": 28.0,
-            "distance_points": -206.8,
+            "distance_points": -308.2,
             "side": "below",
             "oi_type": null,
             "wall_role": null
@@ -1311,10 +1406,10 @@
             "strike": 28475.0,
             "latest_oi": 25.0,
             "change_1d": 23.0,
-            "distance_points": -81.8,
+            "distance_points": -183.2,
             "side": "below",
-            "oi_type": null,
-            "wall_role": null
+            "oi_type": "call",
+            "wall_role": "resistance"
           },
           {
             "contract_key": "tomorrow",
@@ -1322,7 +1417,7 @@
             "strike": 28750.0,
             "latest_oi": 102.0,
             "change_1d": 22.0,
-            "distance_points": 193.2,
+            "distance_points": 91.8,
             "side": "above",
             "oi_type": "call",
             "wall_role": "resistance"
@@ -1333,7 +1428,7 @@
             "strike": 28700.0,
             "latest_oi": 87.0,
             "change_1d": 19.0,
-            "distance_points": 143.2,
+            "distance_points": 41.8,
             "side": "above",
             "oi_type": "call",
             "wall_role": "resistance"
@@ -1343,12 +1438,12 @@
       {
         "contract_key": "friday",
         "contract": "QN1Q6",
-        "underlying": 28556.8,
+        "underlying": 28658.2,
         "latest_date": "7/31/2026",
         "prev_date": "7/30/2026",
-        "added_above_price": 737.0,
-        "added_below_price": 1669.0,
-        "net_added_above_minus_below": -932.0,
+        "added_above_price": 637.0,
+        "added_below_price": 1769.0,
+        "net_added_above_minus_below": -1132.0,
         "top_additions": [
           {
             "contract_key": "friday",
@@ -1356,7 +1451,7 @@
             "strike": 27300.0,
             "latest_oi": 520.0,
             "change_1d": 486.0,
-            "distance_points": -1256.8,
+            "distance_points": -1358.2,
             "side": "below",
             "oi_type": "put",
             "wall_role": "support"
@@ -1367,7 +1462,7 @@
             "strike": 27500.0,
             "latest_oi": 501.0,
             "change_1d": 279.0,
-            "distance_points": -1056.8,
+            "distance_points": -1158.2,
             "side": "below",
             "oi_type": "put",
             "wall_role": "support"
@@ -1378,7 +1473,7 @@
             "strike": 29000.0,
             "latest_oi": 507.0,
             "change_1d": 178.0,
-            "distance_points": 443.2,
+            "distance_points": 341.8,
             "side": "above",
             "oi_type": "call",
             "wall_role": "resistance"
@@ -1389,7 +1484,7 @@
             "strike": 28500.0,
             "latest_oi": 631.0,
             "change_1d": 123.0,
-            "distance_points": -56.8,
+            "distance_points": -158.2,
             "side": "below",
             "oi_type": "call",
             "wall_role": "resistance"
@@ -1400,7 +1495,7 @@
             "strike": 28900.0,
             "latest_oi": 215.0,
             "change_1d": 107.0,
-            "distance_points": 343.2,
+            "distance_points": 241.8,
             "side": "above",
             "oi_type": "call",
             "wall_role": "resistance"
@@ -1410,7 +1505,7 @@
       {
         "contract_key": "monthly",
         "contract": "NEQ6",
-        "underlying": 28556.8,
+        "underlying": 28658.2,
         "latest_date": "7/31/2026",
         "prev_date": "7/30/2026",
         "added_above_price": 941.0,
@@ -1423,7 +1518,7 @@
             "strike": 31250.0,
             "latest_oi": 182.0,
             "change_1d": 141.0,
-            "distance_points": 2693.2,
+            "distance_points": 2591.8,
             "side": "above",
             "oi_type": null,
             "wall_role": null
@@ -1434,7 +1529,7 @@
             "strike": 30100.0,
             "latest_oi": 153.0,
             "change_1d": 139.0,
-            "distance_points": 1543.2,
+            "distance_points": 1441.8,
             "side": "above",
             "oi_type": null,
             "wall_role": null
@@ -1445,7 +1540,7 @@
             "strike": 28800.0,
             "latest_oi": 246.0,
             "change_1d": 137.0,
-            "distance_points": 243.2,
+            "distance_points": 141.8,
             "side": "above",
             "oi_type": "call",
             "wall_role": "resistance"
@@ -1456,7 +1551,7 @@
             "strike": 30750.0,
             "latest_oi": 171.0,
             "change_1d": 129.0,
-            "distance_points": 2193.2,
+            "distance_points": 2091.8,
             "side": "above",
             "oi_type": null,
             "wall_role": null
@@ -1467,7 +1562,7 @@
             "strike": 29900.0,
             "latest_oi": 138.0,
             "change_1d": 117.0,
-            "distance_points": 1343.2,
+            "distance_points": 1241.8,
             "side": "above",
             "oi_type": null,
             "wall_role": null
@@ -1481,43 +1576,43 @@
     "method": "Gamma (1 Pct) heatmap latest non-null value by strike",
     "significant_floor": 50,
     "nearest_upside_wall": {
-      "contract_key": "friday",
-      "contract": "QN1Q6",
-      "strike": 28600.0,
-      "gamma_1pct": 55.0,
-      "distance_points": 43.2,
+      "contract_key": "current",
+      "contract": "Q1AQ6",
+      "strike": 28700.0,
+      "gamma_1pct": 52.0,
+      "distance_points": 41.8,
       "side": "above"
     },
     "nearest_downside_wall": {
       "contract_key": "friday",
       "contract": "QN1Q6",
-      "strike": 28500.0,
-      "gamma_1pct": 81.0,
-      "distance_points": -56.8,
+      "strike": 28600.0,
+      "gamma_1pct": 56.0,
+      "distance_points": -58.2,
       "side": "below"
     },
     "major_upside_wall": {
-      "contract_key": "friday",
-      "contract": "QN1Q6",
-      "strike": 28600.0,
-      "gamma_1pct": 55.0,
-      "distance_points": 43.2,
+      "contract_key": "current",
+      "contract": "Q1AQ6",
+      "strike": 28700.0,
+      "gamma_1pct": 52.0,
+      "distance_points": 41.8,
       "side": "above"
     },
     "major_downside_wall": {
       "contract_key": "friday",
       "contract": "QN1Q6",
       "strike": 28500.0,
-      "gamma_1pct": 81.0,
-      "distance_points": -56.8,
+      "gamma_1pct": 82.0,
+      "distance_points": -158.2,
       "side": "below"
     },
     "gamma_magnet": {
       "contract_key": "current",
       "contract": "Q1AQ6",
       "strike": 28100.0,
-      "gamma_1pct": 113.0,
-      "distance_points": -456.8,
+      "gamma_1pct": 115.0,
+      "distance_points": -558.2,
       "side": "below"
     },
     "top_walls": [
@@ -1525,40 +1620,40 @@
         "contract_key": "current",
         "contract": "Q1AQ6",
         "strike": 28100.0,
-        "gamma_1pct": 113.0,
-        "distance_points": -456.8,
+        "gamma_1pct": 115.0,
+        "distance_points": -558.2,
         "side": "below"
       },
       {
         "contract_key": "friday",
         "contract": "QN1Q6",
         "strike": 28500.0,
-        "gamma_1pct": 81.0,
-        "distance_points": -56.8,
+        "gamma_1pct": 82.0,
+        "distance_points": -158.2,
         "side": "below"
       },
       {
         "contract_key": "monthly",
         "contract": "NEQ6",
         "strike": 29000.0,
-        "gamma_1pct": 65.0,
-        "distance_points": 443.2,
+        "gamma_1pct": 66.0,
+        "distance_points": 341.8,
         "side": "above"
       },
       {
         "contract_key": "friday",
         "contract": "QN1Q6",
         "strike": 28600.0,
-        "gamma_1pct": 55.0,
-        "distance_points": 43.2,
-        "side": "above"
+        "gamma_1pct": 56.0,
+        "distance_points": -58.2,
+        "side": "below"
       },
       {
         "contract_key": "friday",
         "contract": "QN1Q6",
         "strike": 29000.0,
-        "gamma_1pct": 55.0,
-        "distance_points": 443.2,
+        "gamma_1pct": 56.0,
+        "distance_points": 341.8,
         "side": "above"
       },
       {
@@ -1566,31 +1661,31 @@
         "contract": "Q1AQ6",
         "strike": 28700.0,
         "gamma_1pct": 52.0,
-        "distance_points": 143.2,
+        "distance_points": 41.8,
         "side": "above"
       },
       {
         "contract_key": "friday",
         "contract": "QN1Q6",
         "strike": 28000.0,
-        "gamma_1pct": 46.0,
-        "distance_points": -556.8,
+        "gamma_1pct": 47.0,
+        "distance_points": -658.2,
         "side": "below"
       },
       {
         "contract_key": "current",
         "contract": "Q1AQ6",
         "strike": 28600.0,
-        "gamma_1pct": 45.0,
-        "distance_points": 43.2,
-        "side": "above"
+        "gamma_1pct": 46.0,
+        "distance_points": -58.2,
+        "side": "below"
       },
       {
         "contract_key": "monthly",
         "contract": "NEQ6",
         "strike": 28000.0,
         "gamma_1pct": 42.0,
-        "distance_points": -556.8,
+        "distance_points": -658.2,
         "side": "below"
       },
       {
@@ -1598,7 +1693,7 @@
         "contract": "Q1AQ6",
         "strike": 28300.0,
         "gamma_1pct": 40.0,
-        "distance_points": -256.8,
+        "distance_points": -358.2,
         "side": "below"
       }
     ],
@@ -1607,40 +1702,40 @@
         "contract_key": "current",
         "contract": "Q1AQ6",
         "strike": 28100.0,
-        "gamma_1pct": 113.0,
-        "distance_points": -456.8,
+        "gamma_1pct": 115.0,
+        "distance_points": -558.2,
         "side": "below"
       },
       {
         "contract_key": "friday",
         "contract": "QN1Q6",
         "strike": 28500.0,
-        "gamma_1pct": 81.0,
-        "distance_points": -56.8,
+        "gamma_1pct": 82.0,
+        "distance_points": -158.2,
         "side": "below"
       },
       {
         "contract_key": "monthly",
         "contract": "NEQ6",
         "strike": 29000.0,
-        "gamma_1pct": 65.0,
-        "distance_points": 443.2,
+        "gamma_1pct": 66.0,
+        "distance_points": 341.8,
         "side": "above"
       },
       {
         "contract_key": "friday",
         "contract": "QN1Q6",
         "strike": 28600.0,
-        "gamma_1pct": 55.0,
-        "distance_points": 43.2,
-        "side": "above"
+        "gamma_1pct": 56.0,
+        "distance_points": -58.2,
+        "side": "below"
       },
       {
         "contract_key": "friday",
         "contract": "QN1Q6",
         "strike": 29000.0,
-        "gamma_1pct": 55.0,
-        "distance_points": 443.2,
+        "gamma_1pct": 56.0,
+        "distance_points": 341.8,
         "side": "above"
       },
       {
@@ -1648,44 +1743,44 @@
         "contract": "Q1AQ6",
         "strike": 28700.0,
         "gamma_1pct": 52.0,
-        "distance_points": 143.2,
+        "distance_points": 41.8,
         "side": "above"
       }
     ],
-    "upside_room_points": 43.2,
-    "downside_room_points": 56.8,
-    "upside_room_to_major": 43.2,
-    "downside_room_to_major": 56.8,
+    "upside_room_points": 41.8,
+    "downside_room_points": 58.2,
+    "upside_room_to_major": 41.8,
+    "downside_room_to_major": 158.2,
     "note": "Nearest wall = first speed bump (by distance); major wall = biggest gamma (the real cap); magnet = single largest-gamma strike price gravitates to."
   },
   "vol2vol_walls": {
     "method": "Vol2Vol position_map total OI + intraday activity by strike and tenor",
     "nearest_resistance": {
-      "contract_key": "friday",
-      "contract": "QN1Q6",
-      "strike": 28600.0,
-      "side": "put_wall",
-      "total_oi": 431,
-      "call_oi": 159,
-      "put_oi": 272,
-      "intraday_volume": 0,
-      "activity_vs_oi": 0,
-      "distance_points": 43.2,
-      "distance_pct": 0.151,
+      "contract_key": "current",
+      "contract": "Q1AQ6",
+      "strike": 28700.0,
+      "side": "call_wall",
+      "total_oi": 228,
+      "call_oi": 211,
+      "put_oi": 17,
+      "intraday_volume": 215,
+      "activity_vs_oi": 0.943,
+      "distance_points": 41.8,
+      "distance_pct": 0.146,
       "location": "above"
     },
     "nearest_support": {
-      "contract_key": "friday",
-      "contract": "QN1Q6",
-      "strike": 28550.0,
-      "side": "put_wall",
-      "total_oi": 255,
-      "call_oi": 44,
-      "put_oi": 211,
-      "intraday_volume": 0,
-      "activity_vs_oi": 0,
-      "distance_points": -6.8,
-      "distance_pct": -0.024,
+      "contract_key": "current",
+      "contract": "Q1AQ6",
+      "strike": 28650.0,
+      "side": "call_wall",
+      "total_oi": 64,
+      "call_oi": 60,
+      "put_oi": 4,
+      "intraday_volume": 80,
+      "activity_vs_oi": 1.25,
+      "distance_points": -8.2,
+      "distance_pct": -0.029,
       "location": "below"
     },
     "top_walls": [
@@ -1697,10 +1792,10 @@
         "total_oi": 1067,
         "call_oi": 965,
         "put_oi": 102,
-        "intraday_volume": 0,
-        "activity_vs_oi": 0,
-        "distance_points": 443.2,
-        "distance_pct": 1.552,
+        "intraday_volume": 3,
+        "activity_vs_oi": 0.0028,
+        "distance_points": 341.8,
+        "distance_pct": 1.193,
         "location": "above"
       },
       {
@@ -1713,8 +1808,8 @@
         "put_oi": 19,
         "intraday_volume": 0,
         "activity_vs_oi": 0,
-        "distance_points": 1443.2,
-        "distance_pct": 5.054,
+        "distance_points": 1341.8,
+        "distance_pct": 4.682,
         "location": "above"
       },
       {
@@ -1725,10 +1820,10 @@
         "total_oi": 750,
         "call_oi": 475,
         "put_oi": 275,
-        "intraday_volume": 0,
-        "activity_vs_oi": 0,
-        "distance_points": -556.8,
-        "distance_pct": -1.95,
+        "intraday_volume": 3,
+        "activity_vs_oi": 0.004,
+        "distance_points": -658.2,
+        "distance_pct": -2.297,
         "location": "below"
       },
       {
@@ -1739,10 +1834,10 @@
         "total_oi": 736,
         "call_oi": 592,
         "put_oi": 144,
-        "intraday_volume": 0,
-        "activity_vs_oi": 0,
-        "distance_points": 1443.2,
-        "distance_pct": 5.054,
+        "intraday_volume": 10,
+        "activity_vs_oi": 0.0136,
+        "distance_points": 1341.8,
+        "distance_pct": 4.682,
         "location": "above"
       },
       {
@@ -1753,11 +1848,25 @@
         "total_oi": 631,
         "call_oi": 352,
         "put_oi": 279,
-        "intraday_volume": 0,
-        "activity_vs_oi": 0,
-        "distance_points": -56.8,
-        "distance_pct": -0.199,
+        "intraday_volume": 53,
+        "activity_vs_oi": 0.084,
+        "distance_points": -158.2,
+        "distance_pct": -0.552,
         "location": "below"
+      },
+      {
+        "contract_key": "current",
+        "contract": "Q1AQ6",
+        "strike": 29200.0,
+        "side": "call_wall",
+        "total_oi": 602,
+        "call_oi": 589,
+        "put_oi": 13,
+        "intraday_volume": 17,
+        "activity_vs_oi": 0.0282,
+        "distance_points": 541.8,
+        "distance_pct": 1.891,
+        "location": "above"
       },
       {
         "contract_key": "current",
@@ -1767,11 +1876,25 @@
         "total_oi": 578,
         "call_oi": 100,
         "put_oi": 478,
-        "intraday_volume": 0,
-        "activity_vs_oi": 0,
-        "distance_points": -456.8,
-        "distance_pct": -1.6,
+        "intraday_volume": 164,
+        "activity_vs_oi": 0.2837,
+        "distance_points": -558.2,
+        "distance_pct": -1.948,
         "location": "below"
+      },
+      {
+        "contract_key": "current",
+        "contract": "Q1AQ6",
+        "strike": 29100.0,
+        "side": "call_wall",
+        "total_oi": 543,
+        "call_oi": 536,
+        "put_oi": 7,
+        "intraday_volume": 37,
+        "activity_vs_oi": 0.0681,
+        "distance_points": 441.8,
+        "distance_pct": 1.542,
+        "location": "above"
       },
       {
         "contract_key": "friday",
@@ -1781,10 +1904,10 @@
         "total_oi": 520,
         "call_oi": 8,
         "put_oi": 512,
-        "intraday_volume": 0,
-        "activity_vs_oi": 0,
-        "distance_points": -1256.8,
-        "distance_pct": -4.401,
+        "intraday_volume": 1,
+        "activity_vs_oi": 0.0019,
+        "distance_points": -1358.2,
+        "distance_pct": -4.739,
         "location": "below"
       },
       {
@@ -1795,54 +1918,26 @@
         "total_oi": 507,
         "call_oi": 432,
         "put_oi": 75,
-        "intraday_volume": 0,
-        "activity_vs_oi": 0,
-        "distance_points": 443.2,
-        "distance_pct": 1.552,
+        "intraday_volume": 33,
+        "activity_vs_oi": 0.0651,
+        "distance_points": 341.8,
+        "distance_pct": 1.193,
         "location": "above"
-      },
-      {
-        "contract_key": "friday",
-        "contract": "QN1Q6",
-        "strike": 27500.0,
-        "side": "put_wall",
-        "total_oi": 501,
-        "call_oi": 15,
-        "put_oi": 486,
-        "intraday_volume": 0,
-        "activity_vs_oi": 0,
-        "distance_points": -1056.8,
-        "distance_pct": -3.701,
-        "location": "below"
-      },
-      {
-        "contract_key": "friday",
-        "contract": "QN1Q6",
-        "strike": 28000.0,
-        "side": "put_wall",
-        "total_oi": 431,
-        "call_oi": 91,
-        "put_oi": 340,
-        "intraday_volume": 0,
-        "activity_vs_oi": 0,
-        "distance_points": -556.8,
-        "distance_pct": -1.95,
-        "location": "below"
       }
     ],
     "note": "Use side + activity_vs_oi to distinguish static wall from active wall."
   },
   "execution_read": {
-    "primary_path": "upside_momentum_to_first_gamma_wall",
+    "primary_path": "trade_between_nearest_vol2vol_walls",
     "contract_build_up": "largest fresh OI build at 27300 (friday, +486 contracts, below, put \u2192 support)",
     "oi_magnet": "30000 (call, 848 OI, above)",
-    "gamma_magnet": "28100 (\u03b3113)",
-    "upside_limit": "first 28600 (\u03b355)",
-    "downside_limit": "first 28500 (\u03b381)",
+    "gamma_magnet": "28100 (\u03b3115)",
+    "upside_limit": "first 28700 (\u03b352)",
+    "downside_limit": "first 28600 (\u03b356); major 28500 (\u03b382)",
     "confluence_focus": "29000 (\u00d74: gamma_wall, oi_build, oi_wall, round_500)",
     "nearest_wall_band": {
-      "support": 28550.0,
-      "resistance": 28600.0
+      "support": 28650.0,
+      "resistance": 28700.0
     },
     "how_to_use": "Heatmap build/magnet = likely destination; gamma 1pct first wall = speed bump, major wall = real cap; confluence levels (\u22652 sources) are the highest-conviction strikes."
   },
@@ -1851,17 +1946,17 @@
   "scenarios": [
     {
       "bias": "upside",
-      "trigger": "sustained move above 28600 (confluence \u00d73)",
-      "then": "path toward 28700",
-      "invalidation": "back below 28500"
+      "trigger": "sustained move above 28700 (confluence \u00d72)",
+      "then": "path toward 28750",
+      "invalidation": "back below 28600"
     },
     {
       "bias": "downside",
-      "trigger": "break below 28500 (confluence \u00d73)",
-      "then": "toward 28100",
-      "invalidation": "reclaim 28600"
+      "trigger": "break below 28600 (confluence \u00d73)",
+      "then": "toward 28500 (major gamma wall \u03b382)",
+      "invalidation": "reclaim 28700"
     }
   ],
-  "what_would_change_my_mind": "funds cut longs (COT rolls over).",
+  "what_would_change_my_mind": "real yields fall / DXY rolls over.",
   "disclaimer": "Educational/hypothetical synthesis of options positioning + macro + COT. Not financial advice; produces a directional read and levels, not live entry/stop/target orders."
 }
