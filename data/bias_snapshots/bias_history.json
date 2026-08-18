@@ -2,8 +2,1146 @@
   "schema": 2,
   "description": "Position Bias dashboard snapshots by Bangkok capture time. Use this to measure persistence: e.g. put-heavy P/C across multiple scrapes while price trends lower. flow_ready=false means intraday volume was not populated yet.",
   "records_retention_days": 30,
-  "updated_utc": "2026-08-18T04:26:27Z",
+  "updated_utc": "2026-08-18T07:26:27Z",
   "records": [
+    {
+      "capture_id": "2026-08-18T142627+0700",
+      "date_bangkok": "2026-08-18",
+      "slot": "afternoon",
+      "slot_order": 2,
+      "captured_at_utc": "2026-08-18T07:26:27Z",
+      "captured_at_bangkok": "2026-08-18T14:26:27+07:00",
+      "flow_ready": true,
+      "flow_status": "ready",
+      "asset": "nq",
+      "asset_label": "NQ",
+      "contract_key": "tomorrow",
+      "contract": "Q3CQ6",
+      "dte": 1.52,
+      "future_price": 29864.2,
+      "source_generated_at": "2026-08-18T07:26:26Z",
+      "bias": {
+        "score": -4.26,
+        "label": "neutral",
+        "drivers": [
+          {
+            "name": "position_pressure",
+            "score": -6.47,
+            "detail": "put OI below price as support vs call OI above price as resistance"
+          },
+          {
+            "name": "largest_position_magnet",
+            "score": 4.55,
+            "detail": "largest combined OI at 30000"
+          },
+          {
+            "name": "oi_put_call_ratio",
+            "score": -8,
+            "detail": "OI P/C 1.26"
+          },
+          {
+            "name": "intraday_flow_location",
+            "score": 5.66,
+            "detail": "call volume above price vs put volume below price"
+          }
+        ]
+      },
+      "totals": {
+        "open_interest": 4868,
+        "call_oi": 2158,
+        "put_oi": 2710,
+        "oi_put_call_ratio": 1.256,
+        "intraday_volume": 1637,
+        "call_volume": 933,
+        "put_volume": 704,
+        "volume_put_call_ratio": 0.755,
+        "volume_vs_oi": 0.3363
+      },
+      "structure": {
+        "support_oi_below_price": 887,
+        "resistance_oi_above_price": 1251,
+        "top5_oi_share": 0.1037,
+        "call_volume_above_price": 904,
+        "put_volume_below_price": 595
+      },
+      "walls": {
+        "dominant_call": {
+          "strike": 30400.0,
+          "side": "call_wall",
+          "total_oi": 109,
+          "call_oi": 109,
+          "put_oi": 0,
+          "intraday_volume": 12,
+          "call_volume": 12,
+          "put_volume": 0,
+          "activity_vs_oi": 0.1101,
+          "distance_points": 535.8,
+          "distance_side": "above"
+        },
+        "dominant_put": {
+          "strike": 29000.0,
+          "side": "put_wall",
+          "total_oi": 88,
+          "call_oi": 0,
+          "put_oi": 88,
+          "intraday_volume": 71,
+          "call_volume": 0,
+          "put_volume": 71,
+          "activity_vs_oi": 0.8068,
+          "distance_points": -864.2,
+          "distance_side": "below"
+        },
+        "largest_combined_position": {
+          "strike": 30000.0,
+          "side": "call_wall",
+          "total_oi": 149,
+          "call_oi": 94,
+          "put_oi": 55,
+          "intraday_volume": 116,
+          "call_volume": 92,
+          "put_volume": 24,
+          "activity_vs_oi": 0.7785,
+          "distance_points": 135.8,
+          "distance_side": "above"
+        }
+      },
+      "expected_range": {
+        "expected_move_1d": 202.8,
+        "bands_1d": {
+          "plus1": 30067.0,
+          "minus1": 29661.4,
+          "plus2": 30269.8,
+          "minus2": 29458.6,
+          "plus3": 30472.6,
+          "minus3": 29255.8
+        },
+        "source_generated_at": "2026-08-18T07:26:26Z",
+        "expected_move_to_expiry": 329.0,
+        "bands_to_expiry": {
+          "plus1": 30193.2,
+          "minus1": 29535.2,
+          "plus2": 30522.2,
+          "minus2": 29206.2,
+          "plus3": 30851.2,
+          "minus3": 28877.2
+        },
+        "atm_iv_pct": 17.07,
+        "dte": 1.52
+      }
+    },
+    {
+      "capture_id": "2026-08-18T142627+0700",
+      "date_bangkok": "2026-08-18",
+      "slot": "afternoon",
+      "slot_order": 2,
+      "captured_at_utc": "2026-08-18T07:26:27Z",
+      "captured_at_bangkok": "2026-08-18T14:26:27+07:00",
+      "flow_ready": null,
+      "flow_status": "summary_no_intraday_fields",
+      "asset": "nq",
+      "asset_label": "NQ",
+      "contract_key": "summary",
+      "source_generated_at": "2026-08-18T07:26:26Z",
+      "bias": {
+        "score": -4.8,
+        "label": "neutral",
+        "method": "weighted unique contract position bias"
+      },
+      "contracts": [
+        {
+          "contract_key": "current",
+          "contract": "Q3BQ6",
+          "dte": 0.52,
+          "future_price": 29864.2,
+          "score": -17.17,
+          "label": "bearish",
+          "confidence": "low",
+          "dominant_call_wall": 30300.0,
+          "dominant_put_wall": 29500.0,
+          "largest_position": 29500.0
+        },
+        {
+          "contract_key": "tomorrow",
+          "contract": "Q3CQ6",
+          "dte": 1.52,
+          "future_price": 29864.2,
+          "score": -4.26,
+          "label": "neutral",
+          "confidence": "low",
+          "dominant_call_wall": 30400.0,
+          "dominant_put_wall": 29000.0,
+          "largest_position": 30000.0
+        },
+        {
+          "contract_key": "friday",
+          "contract": "QN3Q6",
+          "dte": 3.52,
+          "future_price": 29864.2,
+          "score": -6.81,
+          "label": "neutral",
+          "confidence": "medium",
+          "dominant_call_wall": 31000.0,
+          "dominant_put_wall": 28500.0,
+          "largest_position": 31000.0
+        },
+        {
+          "contract_key": "monthly",
+          "contract": "NEQ6",
+          "dte": 13.52,
+          "future_price": 29864.2,
+          "score": 21.39,
+          "label": "bullish",
+          "confidence": "medium",
+          "dominant_call_wall": 31250.0,
+          "dominant_put_wall": 28000.0,
+          "largest_position": 31250.0
+        }
+      ]
+    },
+    {
+      "capture_id": "2026-08-18T142627+0700",
+      "date_bangkok": "2026-08-18",
+      "slot": "afternoon",
+      "slot_order": 2,
+      "captured_at_utc": "2026-08-18T07:26:27Z",
+      "captured_at_bangkok": "2026-08-18T14:26:27+07:00",
+      "flow_ready": true,
+      "flow_status": "ready",
+      "asset": "nq",
+      "asset_label": "NQ",
+      "contract_key": "monthly",
+      "contract": "NEQ6",
+      "dte": 13.52,
+      "future_price": 29864.2,
+      "source_generated_at": "2026-08-18T07:26:26Z",
+      "bias": {
+        "score": 21.39,
+        "label": "bullish",
+        "drivers": [
+          {
+            "name": "position_pressure",
+            "score": -15.12,
+            "detail": "put OI below price as support vs call OI above price as resistance"
+          },
+          {
+            "name": "largest_position_magnet",
+            "score": 14,
+            "detail": "largest combined OI at 31250"
+          },
+          {
+            "name": "oi_put_call_ratio",
+            "score": 8,
+            "detail": "OI P/C 0.57"
+          },
+          {
+            "name": "intraday_flow_location",
+            "score": 14.51,
+            "detail": "call volume above price vs put volume below price"
+          }
+        ]
+      },
+      "totals": {
+        "open_interest": 22235,
+        "call_oi": 14122,
+        "put_oi": 8113,
+        "oi_put_call_ratio": 0.574,
+        "intraday_volume": 1294,
+        "call_volume": 1005,
+        "put_volume": 289,
+        "volume_put_call_ratio": 0.288,
+        "volume_vs_oi": 0.0582
+      },
+      "structure": {
+        "support_oi_below_price": 3785,
+        "resistance_oi_above_price": 8788,
+        "top5_oi_share": 0.2318,
+        "call_volume_above_price": 799,
+        "put_volume_below_price": 173
+      },
+      "walls": {
+        "dominant_call": {
+          "strike": 31250.0,
+          "side": "call_wall",
+          "total_oi": 1118,
+          "call_oi": 1118,
+          "put_oi": 0,
+          "intraday_volume": 140,
+          "call_volume": 140,
+          "put_volume": 0,
+          "activity_vs_oi": 0.1252,
+          "distance_points": 1385.8,
+          "distance_side": "above"
+        },
+        "dominant_put": {
+          "strike": 28000.0,
+          "side": "mixed",
+          "total_oi": 861,
+          "call_oi": 475,
+          "put_oi": 386,
+          "intraday_volume": 23,
+          "call_volume": 0,
+          "put_volume": 23,
+          "activity_vs_oi": 0.0267,
+          "distance_points": -1864.2,
+          "distance_side": "below"
+        },
+        "largest_combined_position": {
+          "strike": 31250.0,
+          "side": "call_wall",
+          "total_oi": 1118,
+          "call_oi": 1118,
+          "put_oi": 0,
+          "intraday_volume": 140,
+          "call_volume": 140,
+          "put_volume": 0,
+          "activity_vs_oi": 0.1252,
+          "distance_points": 1385.8,
+          "distance_side": "above"
+        }
+      },
+      "expected_range": {
+        "expected_move_1d": 202.8,
+        "bands_1d": {
+          "plus1": 30067.0,
+          "minus1": 29661.4,
+          "plus2": 30269.8,
+          "minus2": 29458.6,
+          "plus3": 30472.6,
+          "minus3": 29255.8
+        },
+        "source_generated_at": "2026-08-18T07:26:26Z",
+        "expected_move_to_expiry": 992.3,
+        "bands_to_expiry": {
+          "plus1": 30856.5,
+          "minus1": 28871.9,
+          "plus2": 31848.9,
+          "minus2": 27879.5,
+          "plus3": 32841.2,
+          "minus3": 26887.2
+        },
+        "atm_iv_pct": 17.26,
+        "dte": 13.52
+      }
+    },
+    {
+      "capture_id": "2026-08-18T142627+0700",
+      "date_bangkok": "2026-08-18",
+      "slot": "afternoon",
+      "slot_order": 2,
+      "captured_at_utc": "2026-08-18T07:26:27Z",
+      "captured_at_bangkok": "2026-08-18T14:26:27+07:00",
+      "flow_ready": true,
+      "flow_status": "ready",
+      "asset": "nq",
+      "asset_label": "NQ",
+      "contract_key": "friday",
+      "contract": "QN3Q6",
+      "dte": 3.52,
+      "future_price": 29864.2,
+      "source_generated_at": "2026-08-18T07:26:26Z",
+      "bias": {
+        "score": -6.81,
+        "label": "neutral",
+        "drivers": [
+          {
+            "name": "position_pressure",
+            "score": -13.95,
+            "detail": "put OI below price as support vs call OI above price as resistance"
+          },
+          {
+            "name": "largest_position_magnet",
+            "score": 14,
+            "detail": "largest combined OI at 31000"
+          },
+          {
+            "name": "oi_put_call_ratio",
+            "score": 0,
+            "detail": "OI P/C 0.85"
+          },
+          {
+            "name": "intraday_flow_location",
+            "score": -6.87,
+            "detail": "call volume above price vs put volume below price"
+          }
+        ]
+      },
+      "totals": {
+        "open_interest": 41435,
+        "call_oi": 22410,
+        "put_oi": 19025,
+        "oi_put_call_ratio": 0.849,
+        "intraday_volume": 1891,
+        "call_volume": 672,
+        "put_volume": 1219,
+        "volume_put_call_ratio": 1.814,
+        "volume_vs_oi": 0.0456
+      },
+      "structure": {
+        "support_oi_below_price": 5004,
+        "resistance_oi_above_price": 10806,
+        "top5_oi_share": 0.1629,
+        "call_volume_above_price": 641,
+        "put_volume_below_price": 1074
+      },
+      "walls": {
+        "dominant_call": {
+          "strike": 31000.0,
+          "side": "call_wall",
+          "total_oi": 4168,
+          "call_oi": 4151,
+          "put_oi": 17,
+          "intraday_volume": 37,
+          "call_volume": 37,
+          "put_volume": 0,
+          "activity_vs_oi": 0.0089,
+          "distance_points": 1135.8,
+          "distance_side": "above"
+        },
+        "dominant_put": {
+          "strike": 28500.0,
+          "side": "put_wall",
+          "total_oi": 687,
+          "call_oi": 235,
+          "put_oi": 452,
+          "intraday_volume": 0,
+          "call_volume": 0,
+          "put_volume": 0,
+          "activity_vs_oi": 0.0,
+          "distance_points": -1364.2,
+          "distance_side": "below"
+        },
+        "largest_combined_position": {
+          "strike": 31000.0,
+          "side": "call_wall",
+          "total_oi": 4168,
+          "call_oi": 4151,
+          "put_oi": 17,
+          "intraday_volume": 37,
+          "call_volume": 37,
+          "put_volume": 0,
+          "activity_vs_oi": 0.0089,
+          "distance_points": 1135.8,
+          "distance_side": "above"
+        }
+      },
+      "expected_range": {
+        "expected_move_1d": 202.8,
+        "bands_1d": {
+          "plus1": 30067.0,
+          "minus1": 29661.4,
+          "plus2": 30269.8,
+          "minus2": 29458.6,
+          "plus3": 30472.6,
+          "minus3": 29255.8
+        },
+        "source_generated_at": "2026-08-18T07:26:26Z",
+        "expected_move_to_expiry": 513.3,
+        "bands_to_expiry": {
+          "plus1": 30377.5,
+          "minus1": 29350.9,
+          "plus2": 30890.7,
+          "minus2": 28837.7,
+          "plus3": 31404.0,
+          "minus3": 28324.4
+        },
+        "atm_iv_pct": 17.5,
+        "dte": 3.52
+      }
+    },
+    {
+      "capture_id": "2026-08-18T142627+0700",
+      "date_bangkok": "2026-08-18",
+      "slot": "afternoon",
+      "slot_order": 2,
+      "captured_at_utc": "2026-08-18T07:26:27Z",
+      "captured_at_bangkok": "2026-08-18T14:26:27+07:00",
+      "flow_ready": true,
+      "flow_status": "ready",
+      "asset": "nq",
+      "asset_label": "NQ",
+      "contract_key": "current",
+      "contract": "Q3BQ6",
+      "dte": 0.52,
+      "future_price": 29864.2,
+      "source_generated_at": "2026-08-18T07:26:26Z",
+      "bias": {
+        "score": -17.17,
+        "label": "bearish",
+        "drivers": [
+          {
+            "name": "position_pressure",
+            "score": 2.21,
+            "detail": "put OI below price as support vs call OI above price as resistance"
+          },
+          {
+            "name": "largest_position_magnet",
+            "score": -12.2,
+            "detail": "largest combined OI at 29500"
+          },
+          {
+            "name": "oi_put_call_ratio",
+            "score": -8,
+            "detail": "OI P/C 1.48"
+          },
+          {
+            "name": "intraday_flow_location",
+            "score": 0.82,
+            "detail": "call volume above price vs put volume below price"
+          }
+        ]
+      },
+      "totals": {
+        "open_interest": 9464,
+        "call_oi": 3816,
+        "put_oi": 5648,
+        "oi_put_call_ratio": 1.48,
+        "intraday_volume": 7063,
+        "call_volume": 2698,
+        "put_volume": 4365,
+        "volume_put_call_ratio": 1.618,
+        "volume_vs_oi": 0.7463
+      },
+      "structure": {
+        "support_oi_below_price": 1827,
+        "resistance_oi_above_price": 1626,
+        "top5_oi_share": 0.1387,
+        "call_volume_above_price": 2422,
+        "put_volume_below_price": 2230
+      },
+      "walls": {
+        "dominant_call": {
+          "strike": 30300.0,
+          "side": "call_wall",
+          "total_oi": 135,
+          "call_oi": 125,
+          "put_oi": 10,
+          "intraday_volume": 183,
+          "call_volume": 180,
+          "put_volume": 3,
+          "activity_vs_oi": 1.3556,
+          "distance_points": 435.8,
+          "distance_side": "above"
+        },
+        "dominant_put": {
+          "strike": 29500.0,
+          "side": "put_wall",
+          "total_oi": 535,
+          "call_oi": 9,
+          "put_oi": 526,
+          "intraday_volume": 528,
+          "call_volume": 1,
+          "put_volume": 527,
+          "activity_vs_oi": 0.9869,
+          "distance_points": -364.2,
+          "distance_side": "below"
+        },
+        "largest_combined_position": {
+          "strike": 29500.0,
+          "side": "put_wall",
+          "total_oi": 535,
+          "call_oi": 9,
+          "put_oi": 526,
+          "intraday_volume": 528,
+          "call_volume": 1,
+          "put_volume": 527,
+          "activity_vs_oi": 0.9869,
+          "distance_points": -364.2,
+          "distance_side": "below"
+        }
+      },
+      "expected_range": {
+        "expected_move_1d": 202.8,
+        "bands_1d": {
+          "plus1": 30067.0,
+          "minus1": 29661.4,
+          "plus2": 30269.8,
+          "minus2": 29458.6,
+          "plus3": 30472.6,
+          "minus3": 29255.8
+        },
+        "source_generated_at": "2026-08-18T07:26:26Z",
+        "expected_move_to_expiry": 202.7,
+        "bands_to_expiry": {
+          "plus1": 30066.9,
+          "minus1": 29661.5,
+          "plus2": 30269.7,
+          "minus2": 29458.7,
+          "plus3": 30472.4,
+          "minus3": 29256.0
+        },
+        "atm_iv_pct": 17.99,
+        "dte": 0.52
+      }
+    },
+    {
+      "capture_id": "2026-08-18T142627+0700",
+      "date_bangkok": "2026-08-18",
+      "slot": "afternoon",
+      "slot_order": 2,
+      "captured_at_utc": "2026-08-18T07:26:27Z",
+      "captured_at_bangkok": "2026-08-18T14:26:27+07:00",
+      "flow_ready": true,
+      "flow_status": "ready",
+      "asset": "gc",
+      "asset_label": "GC",
+      "contract_key": "tomorrow",
+      "contract": "G3WQ6",
+      "dte": 1.42,
+      "future_price": 4421.2,
+      "source_generated_at": "2026-08-18T07:24:40Z",
+      "bias": {
+        "score": -4.42,
+        "label": "neutral",
+        "drivers": [
+          {
+            "name": "position_pressure",
+            "score": -4.96,
+            "detail": "put OI below price as support vs call OI above price as resistance"
+          },
+          {
+            "name": "largest_position_magnet",
+            "score": -14,
+            "detail": "largest combined OI at 4325"
+          },
+          {
+            "name": "oi_put_call_ratio",
+            "score": 8,
+            "detail": "OI P/C 0.62"
+          },
+          {
+            "name": "intraday_flow_location",
+            "score": 6.55,
+            "detail": "call volume above price vs put volume below price"
+          }
+        ]
+      },
+      "totals": {
+        "open_interest": 3775,
+        "call_oi": 2331,
+        "put_oi": 1444,
+        "oi_put_call_ratio": 0.619,
+        "intraday_volume": 481,
+        "call_volume": 288,
+        "put_volume": 193,
+        "volume_put_call_ratio": 0.67,
+        "volume_vs_oi": 0.1274
+      },
+      "structure": {
+        "support_oi_below_price": 945,
+        "resistance_oi_above_price": 1229,
+        "top5_oi_share": 0.4286,
+        "call_volume_above_price": 272,
+        "put_volume_below_price": 167
+      },
+      "walls": {
+        "dominant_call": {
+          "strike": 4450.0,
+          "side": "call_wall",
+          "total_oi": 518,
+          "call_oi": 425,
+          "put_oi": 93,
+          "intraday_volume": 90,
+          "call_volume": 72,
+          "put_volume": 18,
+          "activity_vs_oi": 0.1737,
+          "distance_points": 28.8,
+          "distance_side": "above"
+        },
+        "dominant_put": {
+          "strike": 4325.0,
+          "side": "mixed",
+          "total_oi": 548,
+          "call_oi": 286,
+          "put_oi": 262,
+          "intraday_volume": 0,
+          "call_volume": 0,
+          "put_volume": 0,
+          "activity_vs_oi": 0.0,
+          "distance_points": -96.2,
+          "distance_side": "below"
+        },
+        "largest_combined_position": {
+          "strike": 4325.0,
+          "side": "mixed",
+          "total_oi": 548,
+          "call_oi": 286,
+          "put_oi": 262,
+          "intraday_volume": 0,
+          "call_volume": 0,
+          "put_volume": 0,
+          "activity_vs_oi": 0.0,
+          "distance_points": -96.2,
+          "distance_side": "below"
+        }
+      },
+      "expected_range": {
+        "expected_move_1d": 36.8,
+        "bands_1d": {
+          "plus1": 4458.0,
+          "minus1": 4384.4,
+          "plus2": 4494.8,
+          "minus2": 4347.6,
+          "plus3": 4531.6,
+          "minus3": 4310.8
+        },
+        "source_generated_at": "2026-08-18T07:24:40Z",
+        "expected_move_to_expiry": 63.3,
+        "bands_to_expiry": {
+          "plus1": 4484.5,
+          "minus1": 4357.9,
+          "plus2": 4547.9,
+          "minus2": 4294.5,
+          "plus3": 4611.2,
+          "minus3": 4231.2
+        },
+        "atm_iv_pct": 22.97,
+        "dte": 1.42
+      }
+    },
+    {
+      "capture_id": "2026-08-18T142627+0700",
+      "date_bangkok": "2026-08-18",
+      "slot": "afternoon",
+      "slot_order": 2,
+      "captured_at_utc": "2026-08-18T07:26:27Z",
+      "captured_at_bangkok": "2026-08-18T14:26:27+07:00",
+      "flow_ready": null,
+      "flow_status": "summary_no_intraday_fields",
+      "asset": "gc",
+      "asset_label": "GC",
+      "contract_key": "summary",
+      "source_generated_at": "2026-08-18T07:24:40Z",
+      "bias": {
+        "score": -3.9,
+        "label": "neutral",
+        "method": "weighted unique contract position bias"
+      },
+      "contracts": [
+        {
+          "contract_key": "current",
+          "contract": "G3TQ6",
+          "dte": 0.42,
+          "future_price": 4421.2,
+          "score": -11.18,
+          "label": "neutral",
+          "confidence": "low",
+          "dominant_call_wall": 4475.0,
+          "dominant_put_wall": 4375.0,
+          "largest_position": 4400.0
+        },
+        {
+          "contract_key": "tomorrow",
+          "contract": "G3WQ6",
+          "dte": 1.42,
+          "future_price": 4421.2,
+          "score": -4.42,
+          "label": "neutral",
+          "confidence": "high",
+          "dominant_call_wall": 4450.0,
+          "dominant_put_wall": 4325.0,
+          "largest_position": 4325.0
+        },
+        {
+          "contract_key": "friday",
+          "contract": "OG3Q6",
+          "dte": 3.42,
+          "future_price": 4421.2,
+          "score": 17.04,
+          "label": "bullish",
+          "confidence": "medium",
+          "dominant_call_wall": 4500.0,
+          "dominant_put_wall": 4200.0,
+          "largest_position": 4500.0
+        },
+        {
+          "contract_key": "monthly",
+          "contract": "OGU6",
+          "dte": 8.42,
+          "future_price": 4421.2,
+          "score": -9.78,
+          "label": "neutral",
+          "confidence": "low",
+          "dominant_call_wall": 4500.0,
+          "dominant_put_wall": 4250.0,
+          "largest_position": 4250.0
+        }
+      ]
+    },
+    {
+      "capture_id": "2026-08-18T142627+0700",
+      "date_bangkok": "2026-08-18",
+      "slot": "afternoon",
+      "slot_order": 2,
+      "captured_at_utc": "2026-08-18T07:26:27Z",
+      "captured_at_bangkok": "2026-08-18T14:26:27+07:00",
+      "flow_ready": true,
+      "flow_status": "ready",
+      "asset": "gc",
+      "asset_label": "GC",
+      "contract_key": "monthly",
+      "contract": "OGU6",
+      "dte": 8.42,
+      "future_price": 4421.2,
+      "source_generated_at": "2026-08-18T07:24:40Z",
+      "bias": {
+        "score": -9.78,
+        "label": "neutral",
+        "drivers": [
+          {
+            "name": "position_pressure",
+            "score": -4.1,
+            "detail": "put OI below price as support vs call OI above price as resistance"
+          },
+          {
+            "name": "largest_position_magnet",
+            "score": -14,
+            "detail": "largest combined OI at 4250"
+          },
+          {
+            "name": "oi_put_call_ratio",
+            "score": 8,
+            "detail": "OI P/C 0.57"
+          },
+          {
+            "name": "intraday_flow_location",
+            "score": 0.32,
+            "detail": "call volume above price vs put volume below price"
+          }
+        ]
+      },
+      "totals": {
+        "open_interest": 157933,
+        "call_oi": 100439,
+        "put_oi": 57494,
+        "oi_put_call_ratio": 0.572,
+        "intraday_volume": 465,
+        "call_volume": 258,
+        "put_volume": 207,
+        "volume_put_call_ratio": 0.802,
+        "volume_vs_oi": 0.0029
+      },
+      "structure": {
+        "support_oi_below_price": 22040,
+        "resistance_oi_above_price": 27374,
+        "top5_oi_share": 0.1303,
+        "call_volume_above_price": 194,
+        "put_volume_below_price": 189
+      },
+      "walls": {
+        "dominant_call": {
+          "strike": 4500.0,
+          "side": "call_wall",
+          "total_oi": 3642,
+          "call_oi": 3009,
+          "put_oi": 633,
+          "intraday_volume": 30,
+          "call_volume": 30,
+          "put_volume": 0,
+          "activity_vs_oi": 0.0082,
+          "distance_points": 78.8,
+          "distance_side": "above"
+        },
+        "dominant_put": {
+          "strike": 4250.0,
+          "side": "put_wall",
+          "total_oi": 5697,
+          "call_oi": 1654,
+          "put_oi": 4043,
+          "intraday_volume": 1,
+          "call_volume": 0,
+          "put_volume": 1,
+          "activity_vs_oi": 0.0002,
+          "distance_points": -171.2,
+          "distance_side": "below"
+        },
+        "largest_combined_position": {
+          "strike": 4250.0,
+          "side": "put_wall",
+          "total_oi": 5697,
+          "call_oi": 1654,
+          "put_oi": 4043,
+          "intraday_volume": 1,
+          "call_volume": 0,
+          "put_volume": 1,
+          "activity_vs_oi": 0.0002,
+          "distance_points": -171.2,
+          "distance_side": "below"
+        }
+      },
+      "expected_range": {
+        "expected_move_1d": 36.8,
+        "bands_1d": {
+          "plus1": 4458.0,
+          "minus1": 4384.4,
+          "plus2": 4494.8,
+          "minus2": 4347.6,
+          "plus3": 4531.6,
+          "minus3": 4310.8
+        },
+        "source_generated_at": "2026-08-18T07:24:40Z",
+        "expected_move_to_expiry": 143.3,
+        "bands_to_expiry": {
+          "plus1": 4564.5,
+          "minus1": 4277.9,
+          "plus2": 4707.8,
+          "minus2": 4134.6,
+          "plus3": 4851.2,
+          "minus3": 3991.2
+        },
+        "atm_iv_pct": 21.34,
+        "dte": 8.42
+      }
+    },
+    {
+      "capture_id": "2026-08-18T142627+0700",
+      "date_bangkok": "2026-08-18",
+      "slot": "afternoon",
+      "slot_order": 2,
+      "captured_at_utc": "2026-08-18T07:26:27Z",
+      "captured_at_bangkok": "2026-08-18T14:26:27+07:00",
+      "flow_ready": true,
+      "flow_status": "ready",
+      "asset": "gc",
+      "asset_label": "GC",
+      "contract_key": "friday",
+      "contract": "OG3Q6",
+      "dte": 3.42,
+      "future_price": 4421.2,
+      "source_generated_at": "2026-08-18T07:24:40Z",
+      "bias": {
+        "score": 17.04,
+        "label": "bullish",
+        "drivers": [
+          {
+            "name": "position_pressure",
+            "score": -1.74,
+            "detail": "put OI below price as support vs call OI above price as resistance"
+          },
+          {
+            "name": "largest_position_magnet",
+            "score": 14,
+            "detail": "largest combined OI at 4500"
+          },
+          {
+            "name": "oi_put_call_ratio",
+            "score": 0,
+            "detail": "OI P/C 0.89"
+          },
+          {
+            "name": "intraday_flow_location",
+            "score": 4.79,
+            "detail": "call volume above price vs put volume below price"
+          }
+        ]
+      },
+      "totals": {
+        "open_interest": 5827,
+        "call_oi": 3082,
+        "put_oi": 2745,
+        "oi_put_call_ratio": 0.891,
+        "intraday_volume": 470,
+        "call_volume": 278,
+        "put_volume": 192,
+        "volume_put_call_ratio": 0.691,
+        "volume_vs_oi": 0.0807
+      },
+      "structure": {
+        "support_oi_below_price": 1715,
+        "resistance_oi_above_price": 1880,
+        "top5_oi_share": 0.2904,
+        "call_volume_above_price": 259,
+        "put_volume_below_price": 184
+      },
+      "walls": {
+        "dominant_call": {
+          "strike": 4500.0,
+          "side": "call_wall",
+          "total_oi": 460,
+          "call_oi": 458,
+          "put_oi": 2,
+          "intraday_volume": 85,
+          "call_volume": 85,
+          "put_volume": 0,
+          "activity_vs_oi": 0.1848,
+          "distance_points": 78.8,
+          "distance_side": "above"
+        },
+        "dominant_put": {
+          "strike": 4200.0,
+          "side": "put_wall",
+          "total_oi": 275,
+          "call_oi": 41,
+          "put_oi": 234,
+          "intraday_volume": 12,
+          "call_volume": 2,
+          "put_volume": 10,
+          "activity_vs_oi": 0.0436,
+          "distance_points": -221.2,
+          "distance_side": "below"
+        },
+        "largest_combined_position": {
+          "strike": 4500.0,
+          "side": "call_wall",
+          "total_oi": 460,
+          "call_oi": 458,
+          "put_oi": 2,
+          "intraday_volume": 85,
+          "call_volume": 85,
+          "put_volume": 0,
+          "activity_vs_oi": 0.1848,
+          "distance_points": 78.8,
+          "distance_side": "above"
+        }
+      },
+      "expected_range": {
+        "expected_move_1d": 36.8,
+        "bands_1d": {
+          "plus1": 4458.0,
+          "minus1": 4384.4,
+          "plus2": 4494.8,
+          "minus2": 4347.6,
+          "plus3": 4531.6,
+          "minus3": 4310.8
+        },
+        "source_generated_at": "2026-08-18T07:24:40Z",
+        "expected_move_to_expiry": 98.6,
+        "bands_to_expiry": {
+          "plus1": 4519.8,
+          "minus1": 4322.6,
+          "plus2": 4618.4,
+          "minus2": 4224.0,
+          "plus3": 4716.9,
+          "minus3": 4125.5
+        },
+        "atm_iv_pct": 23.03,
+        "dte": 3.42
+      }
+    },
+    {
+      "capture_id": "2026-08-18T142627+0700",
+      "date_bangkok": "2026-08-18",
+      "slot": "afternoon",
+      "slot_order": 2,
+      "captured_at_utc": "2026-08-18T07:26:27Z",
+      "captured_at_bangkok": "2026-08-18T14:26:27+07:00",
+      "flow_ready": true,
+      "flow_status": "ready",
+      "asset": "gc",
+      "asset_label": "GC",
+      "contract_key": "current",
+      "contract": "G3TQ6",
+      "dte": 0.42,
+      "future_price": 4421.2,
+      "source_generated_at": "2026-08-18T07:24:40Z",
+      "bias": {
+        "score": -11.18,
+        "label": "neutral",
+        "drivers": [
+          {
+            "name": "position_pressure",
+            "score": -3.42,
+            "detail": "put OI below price as support vs call OI above price as resistance"
+          },
+          {
+            "name": "largest_position_magnet",
+            "score": -4.8,
+            "detail": "largest combined OI at 4400"
+          },
+          {
+            "name": "oi_put_call_ratio",
+            "score": 0,
+            "detail": "OI P/C 1.12"
+          },
+          {
+            "name": "intraday_flow_location",
+            "score": -2.97,
+            "detail": "call volume above price vs put volume below price"
+          }
+        ]
+      },
+      "totals": {
+        "open_interest": 3659,
+        "call_oi": 1727,
+        "put_oi": 1932,
+        "oi_put_call_ratio": 1.119,
+        "intraday_volume": 727,
+        "call_volume": 307,
+        "put_volume": 420,
+        "volume_put_call_ratio": 1.368,
+        "volume_vs_oi": 0.1987
+      },
+      "structure": {
+        "support_oi_below_price": 653,
+        "resistance_oi_above_price": 782,
+        "top5_oi_share": 0.1563,
+        "call_volume_above_price": 272,
+        "put_volume_below_price": 344
+      },
+      "walls": {
+        "dominant_call": {
+          "strike": 4475.0,
+          "side": "call_wall",
+          "total_oi": 120,
+          "call_oi": 116,
+          "put_oi": 4,
+          "intraday_volume": 32,
+          "call_volume": 32,
+          "put_volume": 0,
+          "activity_vs_oi": 0.2667,
+          "distance_points": 53.8,
+          "distance_side": "above"
+        },
+        "dominant_put": {
+          "strike": 4375.0,
+          "side": "put_wall",
+          "total_oi": 125,
+          "call_oi": 8,
+          "put_oi": 117,
+          "intraday_volume": 67,
+          "call_volume": 0,
+          "put_volume": 67,
+          "activity_vs_oi": 0.536,
+          "distance_points": -46.2,
+          "distance_side": "below"
+        },
+        "largest_combined_position": {
+          "strike": 4400.0,
+          "side": "put_wall",
+          "total_oi": 126,
+          "call_oi": 54,
+          "put_oi": 72,
+          "intraday_volume": 110,
+          "call_volume": 0,
+          "put_volume": 110,
+          "activity_vs_oi": 0.873,
+          "distance_points": -21.2,
+          "distance_side": "below"
+        }
+      },
+      "expected_range": {
+        "expected_move_1d": 36.8,
+        "bands_1d": {
+          "plus1": 4458.0,
+          "minus1": 4384.4,
+          "plus2": 4494.8,
+          "minus2": 4347.6,
+          "plus3": 4531.6,
+          "minus3": 4310.8
+        },
+        "source_generated_at": "2026-08-18T07:24:40Z",
+        "expected_move_to_expiry": 36.8,
+        "bands_to_expiry": {
+          "plus1": 4458.0,
+          "minus1": 4384.4,
+          "plus2": 4494.8,
+          "minus2": 4347.6,
+          "plus3": 4531.6,
+          "minus3": 4310.8
+        },
+        "atm_iv_pct": 24.53,
+        "dte": 0.42
+      }
+    },
     {
       "capture_id": "2026-08-18T112627+0700",
       "date_bangkok": "2026-08-18",
